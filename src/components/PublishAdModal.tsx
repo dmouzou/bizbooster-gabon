@@ -119,13 +119,17 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  // Wizard Step: 1 = Categorization, 2 = Content & Media, 'KYC' = Identity Check, 3 = Billing & Payment, 4 = Confirmation
-  const [step, setStep] = useState<1 | 2 | 'KYC' | 3 | 4>(1);
+  // Wizard Step: 1 = Categorization, 2 = Content & Media, 3 = Billing & Payment, 4 = Confirmation
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
   // Exemption and KYC state
-  const isExempt = Boolean(currentUser?.exemptFromPaymentAndKyc || currentUser?.isExempt);
+  const isExempt = Boolean(currentUser?.exemptFromPaymentAndKyc || currentUser?.isExempt || currentUser?.role === 'ADMIN');
   const isKycVerified = currentUser?.idVerificationStatus === 'VERIFIED';
   const isKycPending = currentUser?.idVerificationStatus === 'PENDING';
+  const isKycRejected = currentUser?.idVerificationStatus === 'REJECTED';
+
+  // Standard users MUST be validated by the team before they can start putting an ad
+  const isAllowedToPublish = isExempt || isKycVerified;
 
   const [kycDocType, setKycDocType] = useState<'CNI' | 'CARTE_SEJOUR' | 'PASSPORT'>(
     currentUser?.idDocumentType || 'CNI'
@@ -136,6 +140,46 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   );
   const [isUploadingKyc, setIsUploadingKyc] = useState(false);
   const [kycError, setKycError] = useState<string | null>(null);
+
+  const handleGateKycSubmit = async () => {
+    if (!kycFile && !currentUser?.idDocumentUrl) {
+      setKycError('Veuillez sélectionner une photo lisible de votre pièce d’identité.');
+      return;
+    }
+    const uid = currentUser?.id || auth.currentUser?.uid;
+    if (!uid) {
+      setKycError('Session expirée ou utilisateur non connecté.');
+      return;
+    }
+
+    setIsUploadingKyc(true);
+    setKycError(null);
+
+    try {
+      let finalUrl = currentUser?.idDocumentUrl || '';
+      if (kycFile) {
+        setUploadProgressText("Téléversement sécurisé de votre pièce d'identité...");
+        const storagePath = `kyc/${uid}/${Date.now()}_id_${kycFile.name}`;
+        const storageRef = ref(storage, storagePath);
+        await uploadBytes(storageRef, kycFile);
+        finalUrl = await getDownloadURL(storageRef);
+      }
+
+      await updateDoc(doc(db, 'users', uid), {
+        idDocumentUrl: finalUrl,
+        idDocumentType: kycDocType,
+        idVerificationStatus: 'PENDING',
+        idSubmittedAt: new Date().toISOString(),
+        idRejectionReason: null,
+      });
+    } catch (err: any) {
+      console.error(err);
+      setKycError(err?.message || "Erreur lors de l'enregistrement de votre pièce d'identité.");
+    } finally {
+      setIsUploadingKyc(false);
+      setUploadProgressText('');
+    }
+  };
 
   // Form State
   const [mainCategory, setMainCategory] = useState<MainCategory>('IMMOBILIER');
@@ -469,22 +513,33 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 Publication BIZBOOSTER
               </span>
               <span className="text-xs text-emerald-300 font-semibold">
-                {step === 'KYC' ? 'Vérification d’Identité Obligatoire' : `Étape ${step} sur 4`}
+                {!isAllowedToPublish
+                  ? (isKycPending ? 'Examen en cours' : isKycRejected ? 'Nouvelle pièce requise' : 'Étape préalable obligatoire')
+                  : `Étape ${step} sur 3`}
               </span>
             </div>
             <h2 className="text-base sm:text-lg font-black tracking-tight text-white mt-0.5">
-              {step === 1 && '1. Catégorie & Localisation spatiale'}
-              {step === 2 && '2. Détails, Photos & Description'}
-              {step === 'KYC' && 'Contrôle d’Identité KYC (Lutte anti-fraude Gabon)'}
-              {step === 3 && (isExempt ? '3. Validation Partenaire VIP (Publication Gratuite)' : '3. Facturation & Paiement Mobile (Airtel / Moov)')}
-              {step === 4 && '4. Annonce En Ligne !'}
+              {!isAllowedToPublish ? (
+                isKycPending
+                  ? 'Compte annonceur en cours de validation par l’équipe'
+                  : isKycRejected
+                  ? 'Nouvelle pièce d’identité requise (Refusée)'
+                  : 'Validation préalable de vos identifiants par l’équipe'
+              ) : (
+                <>
+                  {step === 1 && '1. Catégorie & Localisation spatiale'}
+                  {step === 2 && '2. Détails, Photos & Description (min 50 car.)'}
+                  {step === 3 && (isExempt ? '3. Validation Partenaire VIP (Publication Gratuite)' : '3. Facturation & Paiement Mobile (Airtel / Moov)')}
+                  {step === 4 && '4. Annonce En Ligne !'}
+                </>
+              )}
             </h2>
           </div>
 
           <button
             onClick={onClose}
-            disabled={isSubmitting}
-            className="text-emerald-400 hover:text-white p-1 rounded-lg hover:bg-emerald-900 disabled:opacity-30"
+            disabled={isSubmitting || isUploadingKyc}
+            className="text-emerald-400 hover:text-white p-1 rounded-lg hover:bg-emerald-900 disabled:opacity-30 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -494,14 +549,282 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         <div className="bg-emerald-900 h-1.5 w-full">
           <div
             className="bg-amber-400 h-full transition-all duration-300"
-            style={{ width: `${step === 1 ? 25 : step === 2 ? 50 : step === 'KYC' ? 65 : step === 3 ? 80 : 100}%` }}
+            style={{
+              width: !isAllowedToPublish
+                ? '100%'
+                : `${step === 1 ? 33 : step === 2 ? 66 : 100}%`
+            }}
           />
         </div>
 
         {/* Modal Body */}
         <div className="p-5 sm:p-7 overflow-y-auto space-y-6 flex-1">
-          {/* STEP 1: CATEGORIZATION & SPATIAL RUBRICS */}
-          {step === 1 && (
+          {/* PREREQUISITE GATE: STANDARD USERS MUST HAVE CREDENTIALS VALIDATED BEFORE PUTTING AN AD */}
+          {!isAllowedToPublish ? (
+            <div className="space-y-6">
+              {isKycPending ? (
+                /* Gate Pending View */
+                <div className="text-center py-6 sm:py-8 space-y-5 animate-in fade-in">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-amber-100 text-amber-600 rounded-3xl flex items-center justify-center mx-auto border-2 border-amber-400 shadow-md">
+                    <Clock className="w-9 h-9 sm:w-11 sm:h-11" />
+                  </div>
+
+                  <div className="max-w-md mx-auto space-y-2">
+                    <span className="bg-amber-100 text-amber-900 border border-amber-300 text-xs font-black uppercase px-3 py-1 rounded-full inline-block">
+                      Dossier en cours d’examen
+                    </span>
+                    <h3 className="text-xl sm:text-2xl font-black text-slate-900">
+                      Votre compte est en cours de validation
+                    </h3>
+                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                      Pour garantir la sécurité des transactions et éliminer les faux démarcheurs et arnaques au Gabon,{' '}
+                      <strong>votre compte doit être validé par notre équipe avant de pouvoir commencer le dépôt d’une annonce</strong>.
+                    </p>
+                  </div>
+
+                  {/* Status Summary Card */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 sm:p-5 max-w-md mx-auto text-left space-y-2.5">
+                    <div className="flex items-center justify-between text-xs border-b border-slate-200 pb-2">
+                      <span className="text-slate-500 font-bold">Document transmis :</span>
+                      <span className="font-extrabold text-slate-900">
+                        {currentUser?.idDocumentType === 'CNI'
+                          ? 'Carte Nationale d’Identité (CNI)'
+                          : currentUser?.idDocumentType === 'PASSPORT'
+                          ? 'Passeport'
+                          : 'Carte de Séjour'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs border-b border-slate-200 pb-2">
+                      <span className="text-slate-500 font-bold">Contact associé :</span>
+                      <span className="font-mono font-bold text-slate-900">{currentUser?.contactPhone}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500 font-bold">Délai d’examen :</span>
+                      <span className="font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                        Sous 24 heures maximum
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs p-3.5 rounded-2xl max-w-md mx-auto flex items-start gap-2.5 text-left">
+                    <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                    <p className="leading-relaxed">
+                      Dès que notre équipe aura approuvé votre document, vous pourrez immédiatement déposer vos annonces sur BIZBOOSTER Gabon.
+                    </p>
+                  </div>
+
+                  <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                    {onSwitchToUserDashboard && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSwitchToUserDashboard();
+                          onClose();
+                        }}
+                        className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors cursor-pointer"
+                      >
+                        Consulter mon Espace Annonceur
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="px-5 py-3 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                    >
+                      Fermer
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Gate Upload View */
+                <div className="space-y-5 animate-in fade-in">
+                  {isKycRejected ? (
+                    <div className="bg-red-50 border-2 border-red-300 p-4 rounded-2xl flex items-start gap-3">
+                      <AlertCircle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="font-extrabold text-sm text-red-950">
+                          Pièce d’identité refusée par l’équipe
+                        </h4>
+                        <p className="text-xs text-red-800 mt-1 leading-relaxed">
+                          Motif du refus : <strong>{currentUser?.idRejectionReason || 'Document illisible ou non conforme'}</strong>.
+                        </p>
+                        <p className="text-xs text-red-700 mt-1">
+                          Veuillez transmettre une photo nette et lisible d’un document officiel en cours de validité ci-dessous pour que l’équipe puisse valider votre compte.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-amber-500/10 border-2 border-amber-400 p-4 rounded-2xl flex items-start gap-3">
+                      <ShieldCheck className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <h3 className="font-extrabold text-sm text-slate-900">
+                          Validation préalable obligatoire de vos identifiants (Lutte anti-fraude Gabon)
+                        </h3>
+                        <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                          Vous ne pouvez pas commencer le dépôt d’une annonce avant que votre pièce d’identité n’ait été validée par notre équipe. 
+                          Cette mesure protège les acheteurs et élimine les fraudes au Gabon. L’examen est réalisé <strong>sous 24 heures</strong>.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {kycError && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-xl flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                      <span>{kycError}</span>
+                    </div>
+                  )}
+
+                  {/* Document Type Selector */}
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
+                      1. Choisissez le type de pièce d’identité
+                    </label>
+                    <div className="grid grid-cols-3 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setKycDocType('CNI')}
+                        className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
+                          kycDocType === 'CNI'
+                            ? 'border-emerald-600 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
+                            : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <CreditCard className="w-4 h-4 mx-auto mb-1 text-emerald-600" />
+                        <span className="block font-black">CNI Gabonaise</span>
+                        <span className="text-[10px] text-slate-500 font-normal">Carte d’Identité</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setKycDocType('CARTE_SEJOUR')}
+                        className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
+                          kycDocType === 'CARTE_SEJOUR'
+                            ? 'border-emerald-600 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
+                            : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <FileText className="w-4 h-4 mx-auto mb-1 text-blue-600" />
+                        <span className="block font-black">Carte de Séjour</span>
+                        <span className="text-[10px] text-slate-500 font-normal">Résident Gabon</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setKycDocType('PASSPORT')}
+                        className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
+                          kycDocType === 'PASSPORT'
+                            ? 'border-emerald-600 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
+                            : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <ShieldCheck className="w-4 h-4 mx-auto mb-1 text-indigo-600" />
+                        <span className="block font-black">Passeport</span>
+                        <span className="text-[10px] text-slate-500 font-normal">En cours de validité</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Document Photo Picker */}
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
+                      2. Photo nette de votre pièce (≤ 10 Mo)
+                    </label>
+
+                    {kycPreviewUrl ? (
+                      <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 p-2.5">
+                        <img
+                          src={kycPreviewUrl}
+                          alt="Pièce d'identité"
+                          className="w-full max-h-56 object-contain rounded-xl"
+                        />
+                        <label className="mt-2 block cursor-pointer text-center text-xs font-bold text-emerald-700 hover:underline">
+                          Changer la photo
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) {
+                                if (f.size > 10 * 1024 * 1024) {
+                                  setKycError('La photo dépasse la taille maximale autorisée de 10 Mo.');
+                                  return;
+                                }
+                                setKycError(null);
+                                setKycFile(f);
+                                setKycPreviewUrl(URL.createObjectURL(f));
+                              }
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    ) : (
+                      <label className="cursor-pointer border-2 border-dashed border-emerald-300 bg-emerald-50/50 hover:bg-emerald-50 rounded-2xl p-6 flex flex-col items-center justify-center text-center transition-all">
+                        <Upload className="w-8 h-8 text-emerald-600 mb-2" />
+                        <span className="text-xs font-extrabold text-slate-900 block">
+                          Cliquez pour sélectionner la photo de votre pièce d’identité
+                        </span>
+                        <span className="text-[11px] text-slate-500 mt-0.5">
+                          Format photo (JPG, PNG) • Document net, lisible et non rogné
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) {
+                              if (f.size > 10 * 1024 * 1024) {
+                                setKycError('La photo dépasse la taille maximale autorisée de 10 Mo.');
+                                return;
+                              }
+                              setKycError(null);
+                              setKycFile(f);
+                              setKycPreviewUrl(URL.createObjectURL(f));
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="text-xs font-bold text-slate-600 hover:text-slate-900 px-4 py-2.5 rounded-xl transition-colors cursor-pointer"
+                    >
+                      Annuler & Fermer
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isUploadingKyc || (!kycFile && !currentUser?.idDocumentUrl)}
+                      onClick={handleGateKycSubmit}
+                      className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black px-5 py-2.5 rounded-xl shadow-md transition-all cursor-pointer"
+                    >
+                      {isUploadingKyc ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Téléversement…</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Transmettre ma pièce pour validation</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {/* STEP 1: CATEGORIZATION & SPATIAL RUBRICS */}
+              {step === 1 && (
             <div className="space-y-5">
               {/* Category Selector (4 options from document) */}
               <div>
@@ -898,20 +1221,22 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </div>
               </div>
 
-              {/* Section C: Short description with character limitation */}
+              {/* Section C: Mandatory detailed description with min 50 and max chars */}
               <div>
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
-                    Court texte descriptif (Max {PRICING_CONFIG.maxCharLength} caractères)
+                    Description détaillée du bien / produit / offre * (Min 50, Max {PRICING_CONFIG.maxCharLength} car.)
                   </label>
                   <span
-                    className={`text-[11px] font-bold ${
-                      description.length > PRICING_CONFIG.maxCharLength
-                        ? 'text-red-600'
-                        : 'text-emerald-700'
+                    className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                      description.trim().length < 50
+                        ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                        : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
                     }`}
                   >
-                    {description.length} / {PRICING_CONFIG.maxCharLength}
+                    {description.trim().length < 50
+                      ? `${description.trim().length} / 50 min (${50 - description.trim().length} restant${50 - description.trim().length > 1 ? 's' : ''})`
+                      : `${description.trim().length} / ${PRICING_CONFIG.maxCharLength} (Conforme ✓)`}
                   </span>
                 </div>
                 <textarea
@@ -919,13 +1244,25 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   onChange={(e) => {
                     if (e.target.value.length <= PRICING_CONFIG.maxCharLength) {
                       setDescription(e.target.value);
+                      if (mediaError && e.target.value.trim().length >= 50) {
+                        setMediaError(null);
+                      }
                     }
                   }}
-                  rows={3}
-                  placeholder="Décrivez brièvement les atouts de votre bien (climatisation, groupe électrogène, bâche d'eau, etc.). Concis pour éviter la perte de temps des acheteurs."
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                  rows={4}
+                  placeholder="Description détaillée obligatoire (au moins 50 caractères) : décrivez précisément l'article, ses caractéristiques techniques, dimensions, commodités (climatiseur, bâche d'eau, groupe...), situation géographique exacte, conditions de vente ou de location."
+                  className={`w-full bg-slate-50 border rounded-xl p-3 text-xs text-slate-800 focus:bg-white focus:ring-2 transition-all ${
+                    description.trim().length > 0 && description.trim().length < 50
+                      ? 'border-amber-400 focus:ring-amber-400'
+                      : description.trim().length >= 50
+                      ? 'border-emerald-400 focus:ring-emerald-500'
+                      : 'border-slate-300 focus:ring-emerald-500'
+                  }`}
                   id="publish-desc-input"
                 />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  * La description est obligatoire et doit comporter au moins 50 caractères afin d'offrir des informations fiables et précises aux acquéreurs.
+                </p>
               </div>
 
               {/* Section C-a: Choix de joindre des images (max 5) ou courte vidéo (max 30s) */}
@@ -1158,225 +1495,6 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     />
                   </div>
                 </div>
-              </div>
-            </div>
-          )}
-
-          {/* STEP KYC: MANDATORY IDENTITY VERIFICATION FOR STANDARD USERS */}
-          {step === 'KYC' && (
-            <div className="space-y-5 animate-in fade-in">
-              <div className="bg-amber-500/10 border-2 border-amber-400 p-4 rounded-2xl flex items-start gap-3">
-                <ShieldCheck className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <h3 className="font-extrabold text-sm text-slate-900">
-                    Vérification d’Identité Obligatoire (Lutte anti-fraude Gabon)
-                  </h3>
-                  <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                    Pour protéger les acheteurs et éliminer les faux démarcheurs et arnaques au Gabon, BIZBOOSTER exige que tout annonceur standard transmette une photo lisible d’une pièce d’identité officielle en cours de validité avant de publier.
-                  </p>
-                </div>
-              </div>
-
-              {currentUser?.idRejectionReason && (
-                <div className="bg-red-50 border border-red-200 text-red-800 text-xs p-3.5 rounded-xl flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                  <div>
-                    <strong>Votre précédente pièce d'identité a été refusée :</strong> {currentUser.idRejectionReason}
-                    <div className="text-[11px] text-red-700 mt-0.5">
-                      Veuillez transmettre un document lisible et conforme avant de continuer.
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {kycError && (
-                <div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-xl flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-                  <span>{kycError}</span>
-                </div>
-              )}
-
-              {/* Document Type Selector */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                  1. Choisissez le type de document
-                </label>
-                <div className="grid grid-cols-3 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setKycDocType('CNI')}
-                    className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
-                      kycDocType === 'CNI'
-                        ? 'border-emerald-600 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <CreditCard className="w-4 h-4 mx-auto mb-1 text-emerald-600" />
-                    <span className="block font-black">CNI Gabonaise</span>
-                    <span className="text-[10px] text-slate-500 font-normal">Carte d'Identité</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setKycDocType('CARTE_SEJOUR')}
-                    className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
-                      kycDocType === 'CARTE_SEJOUR'
-                        ? 'border-emerald-600 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <FileText className="w-4 h-4 mx-auto mb-1 text-blue-600" />
-                    <span className="block font-black">Carte de Séjour</span>
-                    <span className="text-[10px] text-slate-500 font-normal">Résident Gabon</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setKycDocType('PASSPORT')}
-                    className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
-                      kycDocType === 'PASSPORT'
-                        ? 'border-emerald-600 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <ShieldCheck className="w-4 h-4 mx-auto mb-1 text-indigo-600" />
-                    <span className="block font-black">Passeport</span>
-                    <span className="text-[10px] text-slate-500 font-normal">En cours de validité</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Document Photo Picker */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                  2. Photo nette de votre pièce (≤ 10 Mo)
-                </label>
-
-                {kycPreviewUrl ? (
-                  <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 p-2.5">
-                    <img
-                      src={kycPreviewUrl}
-                      alt="Pièce d'identité"
-                      className="w-full max-h-56 object-contain rounded-xl"
-                    />
-                    <label className="mt-2 block cursor-pointer text-center text-xs font-bold text-emerald-700 hover:underline">
-                      Changer la photo
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) {
-                            if (f.size > 10 * 1024 * 1024) {
-                              setKycError('La photo dépasse la taille maximale autorisée de 10 Mo.');
-                              return;
-                            }
-                            setKycError(null);
-                            setKycFile(f);
-                            setKycPreviewUrl(URL.createObjectURL(f));
-                          }
-                        }}
-                        className="hidden"
-                      />
-                    </label>
-                  </div>
-                ) : (
-                  <label className="cursor-pointer border-2 border-dashed border-emerald-300 bg-emerald-50/50 hover:bg-emerald-50 rounded-2xl p-6 flex flex-col items-center justify-center text-center transition-all">
-                    <Upload className="w-8 h-8 text-emerald-600 mb-2" />
-                    <span className="text-xs font-extrabold text-slate-900 block">
-                      Cliquez pour sélectionner la photo de votre pièce d’identité
-                    </span>
-                    <span className="text-[11px] text-slate-500 mt-0.5">
-                      Format photo (JPG, PNG) • Document net, lisible et non rogné
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) {
-                          if (f.size > 10 * 1024 * 1024) {
-                            setKycError('La photo dépasse la taille maximale autorisée de 10 Mo.');
-                            return;
-                          }
-                          setKycError(null);
-                          setKycFile(f);
-                          setKycPreviewUrl(URL.createObjectURL(f));
-                        }
-                      }}
-                      className="hidden"
-                    />
-                  </label>
-                )}
-              </div>
-
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => setStep(2)}
-                  className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 px-3 py-2 rounded-xl transition-colors"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Précédent</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isUploadingKyc || (!kycFile && !currentUser?.idDocumentUrl)}
-                  onClick={async () => {
-                    if (!kycFile && !currentUser?.idDocumentUrl) {
-                      setKycError('Veuillez sélectionner une photo de votre pièce d’identité.');
-                      return;
-                    }
-                    if (!currentUser?.id) {
-                      setKycError('Utilisateur non connecté.');
-                      return;
-                    }
-
-                    setIsUploadingKyc(true);
-                    setKycError(null);
-
-                    try {
-                      let finalUrl = currentUser.idDocumentUrl;
-                      if (kycFile) {
-                        setUploadProgressText("Téléversement de votre pièce d'identité sur Firebase...");
-                        const storagePath = `kyc/${currentUser.id}/${Date.now()}_id_${kycFile.name}`;
-                        const storageRef = ref(storage, storagePath);
-                        await uploadBytes(storageRef, kycFile);
-                        finalUrl = await getDownloadURL(storageRef);
-                      }
-
-                      await updateDoc(doc(db, 'users', currentUser.id), {
-                        idDocumentUrl: finalUrl,
-                        idDocumentType: kycDocType,
-                        idVerificationStatus: 'PENDING',
-                        idSubmittedAt: new Date().toISOString(),
-                        idRejectionReason: null,
-                      });
-
-                      setStep(3);
-                    } catch (err: any) {
-                      console.error(err);
-                      setKycError(err?.message || "Erreur lors de l'enregistrement de la pièce d'identité.");
-                    } finally {
-                      setIsUploadingKyc(false);
-                      setUploadProgressText('');
-                    }
-                  }}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black px-5 py-2.5 rounded-xl shadow-md transition-all cursor-pointer"
-                >
-                  {isUploadingKyc ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Téléversement…</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Valider ma pièce & Continuer</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </>
-                  )}
-                </button>
               </div>
             </div>
           )}
@@ -1635,17 +1753,19 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </button>
               </div>
             </div>
+              )}
+            </>
           )}
         </div>
 
-        {/* Modal Footer Controls (Step 1 & Step 2) */}
-        {step < 3 && (
+        {/* Modal Footer Controls (Step 1 & Step 2 for authorized users only) */}
+        {isAllowedToPublish && step < 3 && (
           <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
             {step > 1 ? (
               <button
                 type="button"
                 onClick={() => setStep((step - 1) as 1 | 2)}
-                className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 px-3 py-2 rounded-xl transition-colors"
+                className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 px-3 py-2 rounded-xl transition-colors cursor-pointer"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
                 <span>Précédent</span>
@@ -1660,10 +1780,31 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 if (step === 1) {
                   setStep(2);
                 } else if (step === 2) {
+                  const trimmedDesc = description.trim();
+                  if (trimmedDesc.length < 50) {
+                    setMediaError(
+                      `La description détaillée est obligatoire et doit comporter au moins 50 caractères (actuellement : ${trimmedDesc.length}/50 caractères). Veuillez détailler davantage votre bien ou service.`
+                    );
+                    const el = document.getElementById('publish-desc-input');
+                    if (el) el.focus();
+                    return;
+                  }
+
                   if (photos.length === 0) {
                     setMediaError('Veuillez ajouter au moins une photo pour votre annonce.');
                     return;
                   }
+
+                  if (!contactName.trim()) {
+                    setMediaError('Veuillez renseigner votre nom ou le nom de votre agence.');
+                    return;
+                  }
+
+                  if (!contactPhone.trim()) {
+                    setMediaError('Veuillez renseigner un contact téléphonique valide au Gabon.');
+                    return;
+                  }
+
                   if (!title.trim()) {
                     setTitle(
                       `${transactionType === 'VENTE' ? 'Vente' : 'Location'} - ${
@@ -1679,7 +1820,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   setStep(3);
                 }
               }}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black px-5 py-2.5 rounded-xl shadow-md transition-all"
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black px-5 py-2.5 rounded-xl shadow-md transition-all cursor-pointer"
               id="publish-next-step"
             >
               <span>{step === 2 ? 'Passer à la facturation & paiement' : 'Suivant'}</span>

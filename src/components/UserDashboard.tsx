@@ -191,7 +191,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-600 mt-1">
-                Votre pièce d'identité a bien été reçue et est en cours d'examen. Vous pouvez déjà préparer vos annonces.
+                Votre pièce d'identité a bien été reçue et est en cours de validation par notre équipe (sous 24 heures). Dès validation de vos identifiants, vous pourrez commencer à déposer vos annonces.
               </p>
             </div>
           </div>
