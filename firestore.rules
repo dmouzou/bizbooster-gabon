@@ -1,0 +1,117 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Admin = custom claim OR users/{uid}.role == 'ADMIN'.
+    // Users can never write their own role (see /users rules below).
+    function isAdmin() {
+      return isSignedIn() &&
+        (request.auth.token.role == 'ADMIN' ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN');
+    }
+
+    // Fields an advertiser must never change on their own ad.
+    function touchesProtectedAdFields() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'userId',
+        'status',
+        'publishedAt',
+        'expiresAt',
+        'moderatedAt',
+        'moderationReason',
+        'paymentVerified'
+      ]);
+    }
+
+    // ---------------------------------------------------------------
+    // ADS
+    // ---------------------------------------------------------------
+    match /ads/{adId} {
+
+      // Public: only ACTIVE ads. Owner: own ads in any status. Admin: all.
+      allow read: if resource.data.status == 'ACTIVE'
+                  || isOwner(resource.data.userId)
+                  || isAdmin();
+
+      // Advertiser creates an ad for themselves, never already ACTIVE.
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.status in ['PENDING_PAYMENT', 'PENDING_REVIEW'];
+
+      // Admin can change anything (approve, reject, extend, expire).
+      // Owner can edit content, but not status, dates, ownership or moderation fields.
+      // Anyone can increment view counters or reportsCount.
+      allow update: if isAdmin()
+                    || (isOwner(resource.data.userId) && !touchesProtectedAdFields())
+                    || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportsCount', 'viewsCount']));
+
+      allow delete: if isAdmin() || isOwner(resource.data.userId);
+    }
+
+    // ---------------------------------------------------------------
+    // USERS
+    // ---------------------------------------------------------------
+    match /users/{userId} {
+
+      allow read: if isOwner(userId) || isAdmin();
+
+      // A new profile can only be created for yourself, and only as a plain USER.
+      allow create: if isOwner(userId)
+                    && request.resource.data.role == 'USER';
+
+      // Admin can update any user (KYC status, role, exemptions).
+      // Owner can update their profile and submit KYC for review (PENDING), but cannot self-approve or self-exempt.
+      allow update: if isAdmin()
+                    || (isOwner(userId)
+                        && request.resource.data.role == resource.data.role
+                        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['exemptFromPaymentAndKyc', 'isExempt', 'role']))
+                        && (request.resource.data.idVerificationStatus != 'VERIFIED' || resource.data.idVerificationStatus == 'VERIFIED'));
+
+      allow delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------
+    // FRAUD REPORTS
+    // ---------------------------------------------------------------
+    match /reports/{reportId} {
+      // Anyone can submit a report for an ad
+      allow create: if request.resource.data.adId is string
+                    && request.resource.data.reason is string;
+
+      // Only admins can view, update or resolve reports
+      allow read, update, delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------
+    // MODERATION LOGS (admin only)
+    // ---------------------------------------------------------------
+    match /moderation_logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------
+    // SYSTEM COUNTERS (public read, written by Cloud Functions or admin)
+    // ---------------------------------------------------------------
+    match /system_counters/{counterId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------
+    // Everything else is denied by default.
+    // ---------------------------------------------------------------
+  }
+}

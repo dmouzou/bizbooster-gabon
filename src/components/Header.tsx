@@ -1,0 +1,198 @@
+import React from 'react';
+import {
+  PlusCircle,
+  Grid,
+  ShieldCheck,
+  User,
+  LogOut,
+} from 'lucide-react';
+import { MainCategory, UserProfile } from '../types';
+
+interface HeaderProps {
+  currentTab: 'catalog' | 'user-dashboard';
+  setCurrentTab: (tab: 'catalog' | 'user-dashboard') => void;
+  activeCategory: MainCategory | 'ALL';
+  setActiveCategory: (cat: MainCategory | 'ALL') => void;
+  onOpenPublishModal: () => void;
+  onOpenPhoneAuth: () => void;
+  currentUser: UserProfile | null;
+  onLogout: () => void;
+  totalActiveAdsCount: number;
+}
+
+export const Header: React.FC<HeaderProps> = ({
+  currentTab,
+  setCurrentTab,
+  onOpenPublishModal,
+  onOpenPhoneAuth,
+  currentUser,
+  onLogout,
+  totalActiveAdsCount,
+}) => {
+  return (
+    <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+      {/* Top micro-bar: Gabon context & assurances */}
+      <div className="bg-emerald-950 text-emerald-100 text-xs py-1.5 px-4">
+        <div className="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+            </span>
+            <span className="font-semibold tracking-wide text-[11px] sm:text-xs">
+              BIZBOOSTER GABON • Portail Annonces Particuliers & Professionnels
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3 sm:gap-4 text-emerald-200 text-xs">
+            <span className="hidden md:flex items-center gap-1 text-[11px]">
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-300" />
+              Paiements sécurisés Airtel Money & Moov Money
+            </span>
+            <span className="text-emerald-400 font-bold text-[11px]">
+              Consultation 100% Gratuite
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main navigation header (Strictly Frontend App) */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col md:flex-row items-center justify-between gap-3">
+        {/* Logo and Brand */}
+        <div className="flex items-center justify-between w-full md:w-auto">
+          <div
+            onClick={() => setCurrentTab('catalog')}
+            className="cursor-pointer flex items-center gap-3 group"
+            id="brand-logo"
+          >
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-900 flex items-center justify-center text-white font-black text-xl shadow-md shadow-emerald-700/20 group-hover:scale-105 transition-transform border border-emerald-500/30">
+              <span className="text-amber-400">B</span>Z
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-extrabold text-xl tracking-tight text-slate-900">
+                  BIZ<span className="text-emerald-600">BOOSTER</span>
+                </span>
+                <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider">
+                  Gabon
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium">
+                Vente & Location • Annonces Commerciales
+              </p>
+            </div>
+          </div>
+
+          {/* Mobile Actions: Phone login & Publish */}
+          <div className="flex items-center gap-2 md:hidden">
+            {currentUser ? (
+              <button
+                onClick={() => setCurrentTab('user-dashboard')}
+                className="p-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold flex items-center gap-1"
+              >
+                <User className="w-4 h-4" />
+                <span className="max-w-[80px] truncate">{currentUser.name.split(' ')[0]}</span>
+              </button>
+            ) : (
+              <button
+                onClick={onOpenPhoneAuth}
+                className="py-1.5 px-2.5 rounded-lg bg-slate-100 text-slate-800 text-xs font-bold border border-slate-200"
+              >
+                Connexion
+              </button>
+            )}
+
+            <button
+              onClick={onOpenPublishModal}
+              className="flex items-center gap-1 bg-emerald-600 active:bg-emerald-700 text-white text-xs font-semibold py-1.5 px-3 rounded-lg shadow-xs"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Publier</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Center Tabs: Strictly Frontend Only (Catalogue & Espace Annonceur) */}
+        <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 w-full md:w-auto justify-center">
+          {/* TAB 1: CATALOGUE (PUBLIC & FREE) */}
+          <button
+            onClick={() => setCurrentTab('catalog')}
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              currentTab === 'catalog'
+                ? 'bg-white text-slate-900 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+            id="tab-catalog"
+          >
+            <Grid className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Catalogue Public ({totalActiveAdsCount})</span>
+          </button>
+
+          {/* TAB 2: USER DEDICATED DASHBOARD */}
+          <button
+            onClick={() => {
+              if (currentUser) {
+                setCurrentTab('user-dashboard');
+              } else {
+                onOpenPhoneAuth();
+              }
+            }}
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              currentTab === 'user-dashboard'
+                ? 'bg-white text-slate-900 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+            id="tab-user-dashboard"
+          >
+            <User className="w-3.5 h-3.5 text-indigo-600" />
+            <span>{currentUser ? 'Mon Espace Annonceur' : 'Espace Annonceur'}</span>
+            {currentUser && (
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            )}
+          </button>
+        </div>
+
+        {/* Right CTA & Profile status */}
+        <div className="hidden md:flex items-center gap-3">
+          {currentUser ? (
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl">
+              <div className="text-right">
+                <span className="block text-xs font-bold text-slate-800 leading-tight">
+                  {currentUser.name}
+                </span>
+                <span className="text-[10px] text-slate-500 font-medium">
+                  {currentUser.contactPhone}
+                </span>
+              </div>
+              <button
+                onClick={onLogout}
+                className="text-slate-400 hover:text-red-600 p-1 hover:bg-slate-100 rounded-lg transition-colors"
+                title="Se déconnecter"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={onOpenPhoneAuth}
+              className="flex items-center gap-1.5 text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/80 text-xs font-bold px-3.5 py-2 rounded-xl transition-colors border border-slate-200/80"
+              id="header-login-btn"
+            >
+              <User className="w-3.5 h-3.5 text-slate-600" />
+              <span>Connexion (+241)</span>
+            </button>
+          )}
+
+          <button
+            onClick={onOpenPublishModal}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold px-4 py-2 rounded-xl shadow-md shadow-emerald-700/15 hover:shadow-lg transition-all active:scale-98"
+            id="desktop-publish-button"
+          >
+            <PlusCircle className="w-4 h-4 text-emerald-100" />
+            <span>Déposer une annonce</span>
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+};

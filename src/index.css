@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+/* Custom visible scrollbar for horizontal categories & filters */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 #f8fafc;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 9999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+  cursor: grab;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #10b981;
+}

@@ -1,0 +1,14 @@
+node_modules/
+admin/node_modules/
+functions/node_modules/
+build/
+dist/
+dist-frontend/
+dist-admin/
+functions/lib/
+.firebase/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example

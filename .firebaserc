@@ -1,0 +1,18 @@
+{
+  "projects": {
+    "default": "bizbooster-gabon"
+  },
+  "targets": {
+    "bizbooster-gabon": {
+      "hosting": {
+        "frontend": [
+          "bizbooster-gabon"
+        ],
+        "admin": [
+          "bizbooster-admin"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

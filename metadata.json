@@ -1,0 +1,6 @@
+{
+  "name": "BIZBOOSTER - Annonces Gabon",
+  "description": "Plateforme d'annonces classées au Gabon : Immobilier (vente et location par province, ville et quartier), Matériel Roulant, Bric-à-Brac et Emploi avec paiement Airtel Money & Moov Money et visualisation en temps réel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
