@@ -1,11 +1,12 @@
 import React from 'react';
-import { RefreshCw, Clock, Eye, AlertCircle, PlusCircle, Calendar, ShieldCheck } from 'lucide-react';
+import { RefreshCw, Clock, Eye, AlertCircle, PlusCircle, Calendar, ShieldCheck, Edit3 } from 'lucide-react';
 import { Ad } from '../types';
 import { formatFCFA, formatRemainingTime } from '../utils/formatters';
 
 interface MyAdsManagerProps {
   ads: Ad[];
   onOpenExtendModal: (ad: Ad) => void;
+  onEditAd: (ad: Ad) => void;
   onOpenPublishModal: () => void;
   onSelectAd: (ad: Ad) => void;
 }
@@ -13,6 +14,7 @@ interface MyAdsManagerProps {
 export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
   ads,
   onOpenExtendModal,
+  onEditAd,
   onOpenPublishModal,
   onSelectAd,
 }) => {
@@ -109,7 +111,7 @@ export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
                       {formatFCFA(ad.price)}
                     </p>
                     <p className="text-[10px] text-slate-500 truncate mt-0.5">
-                      {ad.location ? `${ad.location.city} (${ad.location.neighborhood})` : 'Gabon'} • {ad.viewsCount} vues
+                      {ad.location ? `${ad.location.city} (${ad.location.neighborhood})` : 'Gabon'} • {ad.viewsCount || 0} vue{(ad.viewsCount || 0) > 1 ? 's' : ''}
                     </p>
                   </div>
                 </div>
@@ -120,15 +122,26 @@ export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
                   Ref: {ad.transactionRef || 'AM-GAB'}
                 </div>
 
-                {/* Prolonger Button explicitly honoring section C-NB */}
-                <button
-                  onClick={() => onOpenExtendModal(ad)}
-                  className="bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
-                  id={`prolong-my-ad-${ad.id}`}
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Prolonger la durée (+jours)</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => onEditAd(ad)}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 border border-slate-200"
+                    title="Modifier cette annonce"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Modifier</span>
+                  </button>
+
+                  {/* Prolonger Button explicitly honoring section C-NB */}
+                  <button
+                    onClick={() => onOpenExtendModal(ad)}
+                    className="bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+                    id={`prolong-my-ad-${ad.id}`}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Prolonger (+jours)</span>
+                  </button>
+                </div>
               </div>
             </div>
           );

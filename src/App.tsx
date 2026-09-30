@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   User,
   ArrowRight,
+  Clock,
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CategoryBar } from './components/CategoryBar';
@@ -23,10 +24,13 @@ import { AdCard } from './components/AdCard';
 import { AdDetailModal } from './components/AdDetailModal';
 import { PublishAdModal } from './components/PublishAdModal';
 import { ExtendAdModal } from './components/ExtendAdModal';
+import { EditAdModal } from './components/EditAdModal';
+import { ConfirmEditOnlineModal } from './components/ConfirmEditOnlineModal';
 import { UserDashboard } from './components/UserDashboard';
 import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { LogoutConfirmModal } from './components/LogoutConfirmModal';
 import { isAdOwner } from './utils/formatters';
+import { sortAdsPersonalized, sortAdsRecent, recordCategoryInterest } from './utils/personalization';
 import {
   Ad,
   MainCategory,
@@ -37,7 +41,7 @@ import {
   UserProfile,
 } from './types';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment } from 'firebase/firestore';
 import { auth, db } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
 import AdminApp from './AdminApp';
@@ -106,24 +110,35 @@ function PublicApp() {
     );
   }, [currentUser?.id]);
 
+  // Local views overrides for instant UI updates & non-duplicated views tracking
+  const [localViewOverrides, setLocalViewOverrides] = useState<Record<string, number>>({});
+
   // Merge initial demonstration ads with live Firestore publicAds and myAds
   const ads = useMemo(() => {
     const map = new Map<string, Ad>();
     const now = Date.now();
 
-    // 1. Initial test ads (kept displayed on the site for demonstration & test)
-    INITIAL_ADS.forEach((a) => map.set(a.id, a));
+    // 1. Initial test ads (kept displayed on the site for demonstration & test - strictly active and non-expired)
+    INITIAL_ADS
+      .filter((a) => a.status === 'ACTIVE' && new Date(a.expiresAt).getTime() > now)
+      .forEach((a) => map.set(a.id, a));
 
     // 2. Real-time active public ads from Firestore
     publicAds
-      .filter((a) => new Date(a.expiresAt).getTime() > now)
+      .filter((a) => a.status === 'ACTIVE' && new Date(a.expiresAt).getTime() > now)
       .forEach((a) => map.set(a.id, a));
 
-    // 3. Current user's own ads from Firestore (even if PENDING_REVIEW)
+    // 3. Current user's own ads from Firestore (even if PENDING_REVIEW or EXPIRED, for dashboard management)
     myAds.forEach((a) => map.set(a.id, a));
 
-    return Array.from(map.values());
-  }, [publicAds, myAds]);
+    return Array.from(map.values()).map((a) => {
+      const override = localViewOverrides[a.id];
+      if (override !== undefined && override > (a.viewsCount || 0)) {
+        return { ...a, viewsCount: override };
+      }
+      return a;
+    });
+  }, [publicAds, myAds, localViewOverrides]);
 
   // Frontend Tab State: 'catalog' | 'user-dashboard'
   const [frontendTab, setFrontendTab] = useState<'catalog' | 'user-dashboard'>('catalog');
@@ -155,7 +170,18 @@ function PublicApp() {
   const [authTriggerPurpose, setAuthTriggerPurpose] = useState<'PUBLISH' | 'DASHBOARD'>('DASHBOARD');
   const [selectedAdForDetail, setSelectedAdForDetail] = useState<Ad | null>(null);
   const [selectedAdForExtend, setSelectedAdForExtend] = useState<Ad | null>(null);
+  const [adToEdit, setAdToEdit] = useState<Ad | null>(null);
+  const [adPendingEditConfirm, setAdPendingEditConfirm] = useState<Ad | null>(null);
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
+
+  // Computed selected ad with freshest views count
+  const activeSelectedAd = useMemo(() => {
+    if (!selectedAdForDetail) return null;
+    const found = ads.find((a) => a.id === selectedAdForDetail.id);
+    return found
+      ? { ...found, viewsCount: Math.max(found.viewsCount || 0, selectedAdForDetail.viewsCount || 0) }
+      : selectedAdForDetail;
+  }, [ads, selectedAdForDetail]);
 
   // Show quick toast notification
   const showToast = (msg: string) => {
@@ -165,13 +191,15 @@ function PublicApp() {
     }, 4500);
   };
 
-  // Total active (publicly visible) ads count
+  // Total active (publicly visible) ads count (strictly active & non-expired)
   const activeAdsCount = useMemo(() => {
-    return ads.filter((ad) => ad.status === 'ACTIVE').length;
+    const now = Date.now();
+    return ads.filter((ad) => ad.status === 'ACTIVE' && new Date(ad.expiresAt).getTime() > now).length;
   }, [ads]);
 
-  // Category counts calculation for ACTIVE ads only (general visitors)
+  // Category counts calculation for ACTIVE and non-expired ads only (general visitors)
   const categoryCounts = useMemo(() => {
+    const now = Date.now();
     const counts: Record<MainCategory | 'ALL', number> = {
       ALL: 0,
       IMMOBILIER: 0,
@@ -180,7 +208,7 @@ function PublicApp() {
       EMPLOI: 0,
     };
     ads.forEach((ad) => {
-      if (ad.status === 'ACTIVE') {
+      if (ad.status === 'ACTIVE' && new Date(ad.expiresAt).getTime() > now) {
         counts.ALL++;
         if (counts[ad.mainCategory] !== undefined) {
           counts[ad.mainCategory]++;
@@ -190,11 +218,20 @@ function PublicApp() {
     return counts;
   }, [ads]);
 
-  // Public Catalog Filtering engine (ONLY ACTIVE APPROVED ADS)
+  // Feed Sort Mode: 'RECOMMENDED' (personalisation selon historique & affinités) ou 'RECENT' (plus récentes en premier)
+  const [feedSortMode, setFeedSortMode] = useState<'RECOMMENDED' | 'RECENT'>('RECOMMENDED');
+
+  // Public Catalog Filtering engine (ONLY ACTIVE AND NON-EXPIRED APPROVED ADS)
   const filteredAds = useMemo(() => {
-    return ads.filter((ad) => {
+    const now = Date.now();
+    const list = ads.filter((ad) => {
       // 0. Only show ACTIVE ads to public viewers!
       if (ad.status !== 'ACTIVE') {
+        return false;
+      }
+
+      // Requirement 3: Ensure expired ads are never shown in public catalog
+      if (new Date(ad.expiresAt).getTime() <= now) {
         return false;
       }
 
@@ -262,8 +299,16 @@ function PublicApp() {
 
       return true;
     });
+
+    // Requirement 5: Personalization & recency sorting
+    if (feedSortMode === 'RECOMMENDED') {
+      return sortAdsPersonalized(list);
+    } else {
+      return sortAdsRecent(list);
+    }
   }, [
     ads,
+    feedSortMode,
     activeCategory,
     searchQuery,
     globalTransaction,
@@ -307,12 +352,16 @@ function PublicApp() {
   };
 
   const handleConfirmLogout = async () => {
-    await signOut(auth);
-    setCurrentUser(null);
-    showToast('Vous avez été déconnecté avec succès.');
-    if (frontendTab === 'user-dashboard') {
-      setFrontendTab('catalog');
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.warn('Sign out error:', e);
     }
+    setCurrentUser(null);
+    setIsLogoutConfirmOpen(false);
+    sessionStorage.clear();
+    // Requirement 5: Reload page on logout to completely reset session and reCAPTCHA state
+    window.location.reload();
   };
 
   // Handle adding new ad (received from PublishAdModal). Errors propagate to the modal.
@@ -337,6 +386,86 @@ function PublicApp() {
     }
   };
 
+  // Handle selecting an ad detail with view counting
+  const handleSelectAdDetail = async (ad: Ad) => {
+    setSelectedAdForDetail(ad);
+
+    const sessionKey = `bizbooster_view_${ad.id}`;
+    if (!sessionStorage.getItem(sessionKey)) {
+      sessionStorage.setItem(sessionKey, '1');
+      const nextViews = (ad.viewsCount || 0) + 1;
+      setSelectedAdForDetail((curr) =>
+        curr && curr.id === ad.id ? { ...curr, viewsCount: nextViews } : curr
+      );
+      setLocalViewOverrides((prev) => ({
+        ...prev,
+        [ad.id]: Math.max(nextViews, (prev[ad.id] || 0) + 1),
+      }));
+
+      try {
+        await updateDoc(doc(db, 'ads', ad.id), {
+          viewsCount: increment(1),
+        });
+      } catch (err) {
+        console.warn('Could not increment viewsCount in Firestore:', err);
+      }
+    }
+  };
+
+  // Trigger editing ad - STRICTEMENT RÉSERVÉ AU DÉTENTEUR DE L'ANNONCE
+  const handleTriggerEdit = (ad: Ad) => {
+    if (!currentUser) {
+      showToast("Veuillez vous connecter avec votre numéro gabonais pour modifier cette annonce.");
+      setAuthTriggerPurpose('DASHBOARD');
+      setIsPhoneAuthOpen(true);
+      return;
+    }
+
+    if (!isAdOwner(ad, currentUser)) {
+      showToast("Accès refusé : Seul le détenteur de l'annonce est autorisé à la modifier.");
+      return;
+    }
+
+    // If ad is already ACTIVE (live online), warn user first via pop-up
+    if (ad.status === 'ACTIVE') {
+      setAdPendingEditConfirm(ad);
+    } else {
+      // Unverified ad (PENDING_REVIEW / PENDING_PAYMENT / REJECTED): can edit freely
+      setAdToEdit(ad);
+    }
+  };
+
+  // Save edited ad handler
+  const handleSaveEditedAd = async (
+    adId: string,
+    updatedFields: Partial<Ad>,
+    wasActive: boolean
+  ) => {
+    const targetAd = ads.find((a) => a.id === adId);
+    if (!targetAd || !isAdOwner(targetAd, currentUser)) {
+      showToast("Opération refusée : Vous n'êtes pas le détenteur autorisé de cette annonce.");
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'ads', adId), {
+        ...updatedFields,
+        ...(wasActive ? { status: 'PENDING_REVIEW' } : {}),
+        updatedAt: new Date().toISOString(),
+      });
+
+      if (wasActive) {
+        showToast("Modifications enregistrées ! Votre annonce a été renvoyée en modération administrative pour vérification.");
+      } else {
+        showToast("Modifications enregistrées avec succès !");
+      }
+      setAdToEdit(null);
+    } catch (e) {
+      console.error('Failed to update ad:', e);
+      showToast("Erreur lors de l'enregistrement des modifications.");
+    }
+  };
+
   // Trigger extending ad duration - STRICTEMENT RÉSERVÉ AU DÉTENTEUR DE L'ANNONCE
   const handleTriggerExtend = (ad: Ad) => {
     if (!currentUser) {
@@ -354,12 +483,11 @@ function PublicApp() {
     setSelectedAdForExtend(ad);
   };
 
-  // Handle extending ad duration (Section C-NB)
-  // The owner only files a REQUEST; an admin applies it after checking the payment.
+  // Handle extending ad duration with VIP free advantage and strict 365 days limit
   const handleExtendSuccess = async (
     adId: string,
     additionalDays: number,
-    paymentInfo: { operator: PaymentOperator; transactionRef: string }
+    paymentInfo: { operator: PaymentOperator; transactionRef: string; isFreeVip?: boolean }
   ) => {
     const targetAd = ads.find((a) => a.id === adId);
     if (!targetAd || !isAdOwner(targetAd, currentUser)) {
@@ -367,20 +495,57 @@ function PublicApp() {
       setSelectedAdForExtend(null);
       return;
     }
+
+    const base = Math.max(new Date(targetAd.expiresAt).getTime(), Date.now());
+    const maxExpiry = Date.now() + 365 * 86400000;
+    const computedExpiry = base + Math.min(additionalDays, 365) * 86400000;
+    const finalExpiry = Math.min(computedExpiry, maxExpiry);
+    const effectiveDays = Math.max(1, Math.round((finalExpiry - base) / 86400000));
+
+    if (finalExpiry <= base) {
+      showToast("Cette annonce a déjà atteint la durée maximale autorisée de validité continue (365 jours).");
+      setSelectedAdForExtend(null);
+      return;
+    }
+
+    const isVip = Boolean(
+      paymentInfo.isFreeVip ||
+      currentUser?.exemptFromPaymentAndKyc ||
+      currentUser?.isExempt ||
+      currentUser?.role === 'ADMIN'
+    );
+
     try {
-      await updateDoc(doc(db, 'ads', adId), {
-        pendingExtension: {
-          days: additionalDays,
-          operator: paymentInfo.operator,
-          transactionRef: paymentInfo.transactionRef,
-          requestedAt: new Date().toISOString(),
-        },
-      });
-      showToast(`Prolongation de +${additionalDays} jours demandée. Elle sera appliquée après vérification du paiement.`);
+      if (isVip) {
+        // VIP partner: instant free extension applied immediately to Firestore
+        await updateDoc(doc(db, 'ads', adId), {
+          expiresAt: new Date(finalExpiry).toISOString(),
+          durationDays: Math.min(365, (targetAd.durationDays || 0) + effectiveDays),
+          status: targetAd.status === 'EXPIRED' ? 'ACTIVE' : targetAd.status,
+          paymentMethod: 'AIRTEL',
+          transactionRef: paymentInfo.transactionRef || `VIP-EXT-${Date.now().toString(36).toUpperCase()}`,
+          paidAmount: 0,
+          paymentVerified: true,
+          lastExtendedAt: new Date().toISOString(),
+        });
+        showToast(`Prolongation VIP de +${effectiveDays} jours appliquée avec succès (Gratuit Partenaire VIP) !`);
+      } else {
+        // Standard user: Filed for administrative payment check
+        await updateDoc(doc(db, 'ads', adId), {
+          pendingExtension: {
+            days: effectiveDays,
+            operator: paymentInfo.operator,
+            transactionRef: paymentInfo.transactionRef,
+            requestedAt: new Date().toISOString(),
+          },
+        });
+        showToast(`Prolongation de +${effectiveDays} jours demandée. Elle sera validée après vérification du paiement.`);
+      }
     } catch (e) {
       console.error(e);
-      showToast('Erreur lors de la demande de prolongation.');
+      showToast('Erreur lors de la prolongation.');
     }
+    setSelectedAdForExtend(null);
   };
 
   // Reset helpers
@@ -401,8 +566,52 @@ function PublicApp() {
 
   const handleSelectCategory = (category: MainCategory | 'ALL') => {
     setActiveCategory(category);
+    if (category !== 'ALL') {
+      recordCategoryInterest(category);
+    }
     handleResetImmoFilters();
     handleResetVehiclesFilters();
+  };
+
+  // Update user profile in Firestore (for subscriptions, ad packs, free boosts)
+  const handleUpdateUserProfile = async (updated: Partial<UserProfile>) => {
+    if (!currentUser) return;
+    try {
+      await updateDoc(doc(db, 'users', currentUser.id), updated);
+      setCurrentUser((prev) => (prev ? { ...prev, ...updated } : null));
+    } catch (e) {
+      console.error('Failed to update user profile:', e);
+      showToast("Erreur lors de la mise à jour du profil.");
+    }
+  };
+
+  // Boost ad to top ("En Tête de Liste" - 7 jours)
+  const handleBoostAd = async (adId: string) => {
+    const targetAd = ads.find((a) => a.id === adId);
+    if (!targetAd || !isAdOwner(targetAd, currentUser)) {
+      showToast("Opération refusée : Vous n'êtes pas le détenteur de cette annonce.");
+      return;
+    }
+
+    try {
+      const featuredUntil = new Date(Date.now() + 7 * 86400000).toISOString();
+      await updateDoc(doc(db, 'ads', adId), {
+        isFeatured: true,
+        featuredUntil,
+      });
+
+      // If user has free boosts remaining, decrement
+      if (currentUser && (currentUser.freeBoostsRemaining || 0) > 0) {
+        await updateDoc(doc(db, 'users', currentUser.id), {
+          freeBoostsRemaining: (currentUser.freeBoostsRemaining || 0) - 1,
+        });
+      }
+
+      showToast("🚀 Votre annonce a été propulsée 'En Tête de Liste' pour 7 jours !");
+    } catch (e) {
+      console.error('Failed to boost ad:', e);
+      showToast("Erreur lors de la mise en avant.");
+    }
   };
 
   return (
@@ -566,8 +775,8 @@ function PublicApp() {
               />
             )}
 
-            {/* Ads Grid Section */}
-            <div className="flex items-center justify-between pt-2">
+            {/* Ads Grid Section Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
               <div>
                 <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
                   <span>
@@ -590,26 +799,56 @@ function PublicApp() {
                 </p>
               </div>
 
-              {(searchQuery ||
-                activeCategory !== 'ALL' ||
-                immoProvince ||
-                immoCity ||
-                immoNeighborhood ||
-                vehicleBrand ||
-                globalTransaction !== 'ALL') && (
-                <button
-                  onClick={() => {
-                    handleResetImmoFilters();
-                    handleResetVehiclesFilters();
-                    setSearchQuery('');
-                    setActiveCategory('ALL');
-                    setGlobalTransaction('ALL');
-                  }}
-                  className="text-xs text-emerald-700 hover:text-emerald-800 font-bold underline cursor-pointer"
-                >
-                  Réinitialiser la recherche
-                </button>
-              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Sort Mode Switcher: Requirement 5 */}
+                <div className="inline-flex items-center bg-white p-1 rounded-xl border border-slate-200 shadow-xs text-xs font-bold">
+                  <button
+                    onClick={() => setFeedSortMode('RECOMMENDED')}
+                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                      feedSortMode === 'RECOMMENDED'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title="Annonces adaptées à vos préférences et recherches récentes"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Pour vous</span>
+                  </button>
+                  <button
+                    onClick={() => setFeedSortMode('RECENT')}
+                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                      feedSortMode === 'RECENT'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title="Annonces triées par ordre chronologique de publication"
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Plus récentes</span>
+                  </button>
+                </div>
+
+                {(searchQuery ||
+                  activeCategory !== 'ALL' ||
+                  immoProvince ||
+                  immoCity ||
+                  immoNeighborhood ||
+                  vehicleBrand ||
+                  globalTransaction !== 'ALL') && (
+                  <button
+                    onClick={() => {
+                      handleResetImmoFilters();
+                      handleResetVehiclesFilters();
+                      setSearchQuery('');
+                      setActiveCategory('ALL');
+                      setGlobalTransaction('ALL');
+                    }}
+                    className="text-xs text-emerald-700 hover:text-emerald-800 font-bold underline cursor-pointer px-2 py-1"
+                  >
+                    Réinitialiser filtres
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Listings Grid */}
@@ -622,8 +861,9 @@ function PublicApp() {
                       key={ad.id}
                       ad={ad}
                       isOwner={isOwner}
-                      onSelectAd={(selected) => setSelectedAdForDetail(selected)}
+                      onSelectAd={(selected) => handleSelectAdDetail(selected)}
                       onOpenExtendModal={isOwner ? () => handleTriggerExtend(ad) : undefined}
+                      onEditAd={isOwner ? () => handleTriggerEdit(ad) : undefined}
                     />
                   );
                 })}
@@ -666,9 +906,12 @@ function PublicApp() {
               ads={ads}
               onOpenPublishModal={handleTriggerPublish}
               onOpenExtendModal={(ad) => handleTriggerExtend(ad)}
-              onSelectAdDetail={(ad) => setSelectedAdForDetail(ad)}
+              onEditAd={(ad) => handleTriggerEdit(ad)}
+              onSelectAdDetail={(ad) => handleSelectAdDetail(ad)}
               onDeleteAd={handleDeleteAd}
               onLogout={handleLogout}
+              onBoostAd={handleBoostAd}
+              onUpdateUser={handleUpdateUserProfile}
             />
           ) : (
             <div className="bg-white rounded-3xl p-8 sm:p-12 text-center border border-slate-200 shadow-sm max-w-lg mx-auto space-y-4">
@@ -730,9 +973,10 @@ function PublicApp() {
 
       {/* 2. Detail Modal */}
       <AdDetailModal
-        ad={selectedAdForDetail}
+        ad={activeSelectedAd}
         onClose={() => setSelectedAdForDetail(null)}
         onOpenExtendModal={(ad) => handleTriggerExtend(ad)}
+        onEditAd={(ad) => handleTriggerEdit(ad)}
         currentUser={currentUser}
       />
 
@@ -742,6 +986,8 @@ function PublicApp() {
         onClose={() => setIsPublishModalOpen(false)}
         onAdPublished={handleAdPublished}
         currentUser={currentUser}
+        userAds={myAds}
+        onUpdateUser={handleUpdateUserProfile}
         onSwitchToUserDashboard={() => {
           setFrontendTab('user-dashboard');
         }}
@@ -750,8 +996,30 @@ function PublicApp() {
       {/* 4. Extend Ad Validity Modal */}
       <ExtendAdModal
         ad={selectedAdForExtend}
+        currentUser={currentUser}
         onClose={() => setSelectedAdForExtend(null)}
         onExtendSuccess={handleExtendSuccess}
+      />
+
+      {/* 5. Warning confirmation modal for editing an already online ad */}
+      <ConfirmEditOnlineModal
+        isOpen={!!adPendingEditConfirm}
+        ad={adPendingEditConfirm}
+        onClose={() => setAdPendingEditConfirm(null)}
+        onConfirm={() => {
+          if (adPendingEditConfirm) {
+            setAdToEdit(adPendingEditConfirm);
+            setAdPendingEditConfirm(null);
+          }
+        }}
+      />
+
+      {/* 6. Edit Ad Modal */}
+      <EditAdModal
+        isOpen={!!adToEdit}
+        ad={adToEdit}
+        onClose={() => setAdToEdit(null)}
+        onSave={handleSaveEditedAd}
       />
 
       {/* 5. Logout Confirmation Modal */}

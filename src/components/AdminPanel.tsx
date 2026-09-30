@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../services/firebase';
-import { Ad, AdReport, MainCategory, UserProfile } from '../types';
+import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile } from '../types';
 import { formatFCFA, formatRemainingTime } from '../utils/formatters';
 import { RealTimeAnalytics } from './RealTimeAnalytics';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
@@ -46,6 +46,8 @@ interface AdminPanelProps {
   onToggleExemption?: (userId: string, isExempt: boolean) => Promise<void> | void;
   onApproveKyc?: (userId: string) => Promise<void> | void;
   onRejectKyc?: (userId: string, reason: string) => Promise<void> | void;
+  onUpdateUserSubscription?: (userId: string, tier: SubscriptionTier) => Promise<void> | void;
+  onUpdateUserBoosters?: (userId: string, count: number) => Promise<void> | void;
   onResolveReport?: (reportId: string, notes?: string) => Promise<void> | void;
   onDismissReport?: (reportId: string, notes?: string) => Promise<void> | void;
   onDeleteReportedAd?: (adId: string, reportId: string) => Promise<void> | void;
@@ -63,6 +65,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onToggleExemption,
   onApproveKyc,
   onRejectKyc,
+  onUpdateUserSubscription,
+  onUpdateUserBoosters,
   onResolveReport,
   onDismissReport,
   onDeleteReportedAd,
@@ -117,12 +121,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     let active = 0;
     let rejected = 0;
     let totalRevenue = 0;
+    let totalViews = 0;
 
     ads.forEach((ad) => {
       if (ad.status === 'PENDING_REVIEW' || !!ad.pendingExtension) pending++;
       else if (ad.status === 'ACTIVE') active++;
       else if (ad.status === 'REJECTED') rejected++;
       totalRevenue += Number(ad.paidAmount) || 0;
+      totalViews += Number(ad.viewsCount) || 0;
     });
 
     return {
@@ -131,6 +137,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       active,
       rejected,
       totalRevenue,
+      totalViews,
     };
   }, [ads]);
 
@@ -380,7 +387,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {activeTab === 'MODERATION' && (
         <div className="space-y-4">
           {/* Quick Metrics Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             <div
               onClick={() => setStatusFilter('PENDING')}
               className={`p-3.5 rounded-2xl cursor-pointer transition-all border ${
@@ -444,6 +451,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 {formatFCFA(stats.totalRevenue)}
               </div>
               <span className="text-[10px] text-slate-500 font-medium">Airtel & Moov encaissés</span>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-white border border-slate-200">
+              <div className="flex items-center justify-between text-xs text-blue-700 font-bold mb-1">
+                <span>Audience (Vues)</span>
+                <Eye className="w-4 h-4 text-blue-600" />
+              </div>
+              <div className="text-xl sm:text-2xl font-black text-blue-700 font-mono">
+                {stats.totalViews.toLocaleString('fr-FR')}
+              </div>
+              <span className="text-[10px] text-slate-500 font-medium">Total vues enregistrées</span>
             </div>
           </div>
 
@@ -607,7 +625,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           )}
                         </div>
 
-                        {/* Meta info: Location + Advertiser contact */}
+                        {/* Meta info: Location + Advertiser contact + Views */}
                         <div className="flex flex-wrap items-center gap-y-1 gap-x-3 text-xs text-slate-500">
                           {ad.location && (
                             <span className="flex items-center gap-1">
@@ -619,6 +637,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           <span className="flex items-center gap-1 font-semibold text-slate-700">
                             <Smartphone className="w-3 h-3 text-emerald-600" />
                             {ad.contactPhone} ({ad.contactName})
+                          </span>
+
+                          <span className="flex items-center gap-1 font-bold text-blue-700 bg-blue-50 border border-blue-200/60 px-2 py-0.5 rounded-md">
+                            <Eye className="w-3.5 h-3.5 text-blue-600" />
+                            <span>{ad.viewsCount || 0} vue{(ad.viewsCount || 0) > 1 ? 's' : ''}</span>
                           </span>
 
                           <span className="text-slate-400">
@@ -792,6 +815,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <th className="p-3">Annonces (Actives)</th>
                     <th className="p-3">Total Payé</th>
                     <th className="p-3">Statut Exonération</th>
+                    <th className="p-3">Forfait / Abonnement</th>
+                    <th className="p-3">Boosters (max 20)</th>
                     <th className="p-3">Pièce d'Identité (KYC)</th>
                     <th className="p-3 rounded-r-xl text-right">Actions Superviseur</th>
                   </tr>
@@ -861,6 +886,88 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               Standard (Payant)
                             </span>
                           )}
+                        </td>
+
+                        {/* Subscription Tier (Forfait) */}
+                        <td className="p-3">
+                          <div className="space-y-1">
+                            <div>
+                              <span
+                                className={`text-[10px] font-black px-2 py-0.5 rounded-full inline-flex items-center gap-1 border ${
+                                  u.subscriptionTier === 'BUSINESS'
+                                    ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                    : u.subscriptionTier === 'ELITE'
+                                    ? 'bg-purple-100 text-purple-900 border-purple-300'
+                                    : u.subscriptionTier === 'PRO'
+                                    ? 'bg-blue-100 text-blue-900 border-blue-300'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                                }`}
+                              >
+                                {u.subscriptionTier === 'BUSINESS'
+                                  ? '🥇 Business (20 ads)'
+                                  : u.subscriptionTier === 'ELITE'
+                                  ? '🥈 Élite (14 ads)'
+                                  : u.subscriptionTier === 'PRO'
+                                  ? '🥉 Pro (8 ads)'
+                                  : 'Standard (3 ads)'}
+                              </span>
+                            </div>
+                            {onUpdateUserSubscription && (
+                              <select
+                                value={u.subscriptionTier || 'STANDARD'}
+                                onChange={(e) => onUpdateUserSubscription(u.id, e.target.value as SubscriptionTier)}
+                                className="text-[11px] font-bold bg-white border border-slate-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden cursor-pointer"
+                                title="Modifier ou révoquer le forfait d'abonnement"
+                              >
+                                <option value="STANDARD">Standard (Sans forfait)</option>
+                                <option value="PRO">Pro (8 annonces)</option>
+                                <option value="ELITE">Élite (14 annonces)</option>
+                                <option value="BUSINESS">Business (20 annonces)</option>
+                              </select>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Boosters (Solde & Attribution max 20) */}
+                        <td className="p-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1">
+                              <span className="font-extrabold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md text-[11px]">
+                                ⚡ {u.freeBoostsRemaining || 0} / 20
+                              </span>
+                            </div>
+                            {onUpdateUserBoosters && (
+                              <div className="flex items-center gap-1 pt-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => onUpdateUserBoosters(u.id, Math.max(0, (u.freeBoostsRemaining || 0) - 1))}
+                                  disabled={(u.freeBoostsRemaining || 0) <= 0}
+                                  className="w-6 h-6 rounded-md bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed font-black text-xs flex items-center justify-center cursor-pointer"
+                                  title="Diminuer de 1 booster"
+                                >
+                                  -
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onUpdateUserBoosters(u.id, Math.min(20, (u.freeBoostsRemaining || 0) + 1))}
+                                  disabled={(u.freeBoostsRemaining || 0) >= 20}
+                                  className="w-6 h-6 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-800 disabled:opacity-30 disabled:cursor-not-allowed font-black text-xs flex items-center justify-center cursor-pointer border border-emerald-200"
+                                  title="Ajouter 1 booster"
+                                >
+                                  +1
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onUpdateUserBoosters(u.id, Math.min(20, (u.freeBoostsRemaining || 0) + 5))}
+                                  disabled={(u.freeBoostsRemaining || 0) >= 20}
+                                  className="px-1.5 h-6 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 disabled:opacity-30 disabled:cursor-not-allowed font-black text-[10px] flex items-center justify-center cursor-pointer border border-amber-200"
+                                  title="Ajouter 5 boosters (max 20)"
+                                >
+                                  +5
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </td>
 
                         {/* KYC Status & Thumbnail */}

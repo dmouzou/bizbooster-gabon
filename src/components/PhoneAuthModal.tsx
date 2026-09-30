@@ -76,6 +76,102 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     return () => clearInterval(interval);
   }, [stage, resendTimer]);
 
+  // Safe RecaptchaVerifier initializer & recycler
+  const getOrCreateRecaptcha = () => {
+    let container = document.getElementById('recaptcha-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'recaptcha-container';
+      document.body.appendChild(container);
+    }
+
+    if (recaptchaRef.current) {
+      try {
+        recaptchaRef.current.clear();
+      } catch (e) {
+        console.warn('Recaptcha clear warn:', e);
+      }
+      recaptchaRef.current = null;
+    }
+    try {
+      if ((window as any).recaptchaVerifier) {
+        (window as any).recaptchaVerifier.clear();
+        (window as any).recaptchaVerifier = null;
+      }
+    } catch (e) {
+      // ignore
+    }
+    container.innerHTML = '';
+
+    recaptchaRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
+      size: 'invisible',
+      callback: () => {
+        // reCAPTCHA solved
+      },
+      'expired-callback': () => {
+        if (recaptchaRef.current) {
+          try {
+            recaptchaRef.current.clear();
+          } catch (e) {
+            // ignore
+          }
+          recaptchaRef.current = null;
+        }
+      }
+    });
+
+    return recaptchaRef.current;
+  };
+
+  // Cleanup recaptcha when modal closes or unmounts
+  useEffect(() => {
+    return () => {
+      if (recaptchaRef.current) {
+        try {
+          recaptchaRef.current.clear();
+        } catch (e) {
+          // ignore
+        }
+        recaptchaRef.current = null;
+      }
+      try {
+        if ((window as any).recaptchaVerifier) {
+          (window as any).recaptchaVerifier.clear();
+          (window as any).recaptchaVerifier = null;
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setErrorMessage(null);
+      setStage(1);
+      setOtpCode('');
+      confirmationRef.current = null;
+      setIsLoading(false);
+      if (recaptchaRef.current) {
+        try {
+          recaptchaRef.current.clear();
+        } catch (e) {
+          // ignore
+        }
+        recaptchaRef.current = null;
+      }
+      const container = document.getElementById('recaptcha-container');
+      if (container) {
+        container.innerHTML = '';
+      }
+    } else {
+      setErrorMessage(null);
+      setOtpCode('');
+      confirmationRef.current = null;
+      setIsLoading(false);
+    }
+  }, [isOpen]);
+
   const sendCode = async () => {
     setErrorMessage(null);
     const e164 = formatGabonPhone(phoneNumber);
@@ -85,20 +181,29 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     }
     setIsLoading(true);
     try {
-      if (!recaptchaRef.current) {
-        recaptchaRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', { size: 'invisible' });
-      }
-      confirmationRef.current = await signInWithPhoneNumber(auth, e164, recaptchaRef.current);
+      const verifier = getOrCreateRecaptcha();
+      confirmationRef.current = await signInWithPhoneNumber(auth, e164, verifier);
       return true;
     } catch (err: any) {
       console.error('Firebase signInWithPhoneNumber error:', err);
-      recaptchaRef.current?.clear();
-      recaptchaRef.current = null;
+      if (recaptchaRef.current) {
+        try {
+          recaptchaRef.current.clear();
+        } catch (e) {
+          // ignore
+        }
+        recaptchaRef.current = null;
+      }
+      const errStr = (err?.message || '') + ' ' + (err?.code || '');
+      if (errStr.includes('reCAPTCHA') || errStr.includes('element has been removed') || errStr.includes('captcha-check-failed')) {
+        setErrorMessage('La vérification de sécurité a été réinitialisée. Veuillez cliquer à nouveau pour envoyer le SMS.');
+        return false;
+      }
       const messages: Record<string, string> = {
         'auth/invalid-phone-number': 'Numéro de téléphone invalide.',
         'auth/too-many-requests': 'Trop de tentatives. Réessayez dans quelques minutes.',
         'auth/quota-exceeded': 'Quota SMS dépassé. Réessayez plus tard.',
-        'auth/captcha-check-failed': 'Vérification anti-robot échouée. Rechargez la page.',
+        'auth/captcha-check-failed': 'Vérification anti-robot échouée. Veuillez cliquer à nouveau pour réessayer.',
         'auth/operation-not-allowed':
           'Politique de région SMS : vérifiez que le Gabon (+241) est activé dans Firebase Console > Authentication > Paramètres > Politique de région SMS (SMS Region Policy).',
       };
@@ -121,9 +226,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    if (!confirmationRef.current) {
+      setErrorMessage('La session de vérification a expiré. Veuillez renvoyer un code SMS.');
+      setStage(1);
+      return;
+    }
     setIsLoading(true);
     try {
-      const cred = await confirmationRef.current!.confirm(otpCode);
+      const cred = await confirmationRef.current.confirm(otpCode);
       const snap = await getDoc(doc(db, 'users', cred.user.uid));
       if (snap.exists() && snap.data().termsAccepted) {
         onSuccessLogin(snap.data() as UserProfile);
@@ -220,7 +330,6 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
         {/* Body Content */}
         <div className="p-6">
-          <div id="recaptcha-container"></div>
           {errorMessage && (
             <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-xl flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
@@ -298,24 +407,6 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                 <span className="text-xs text-slate-500">Code de sécurité à 6 chiffres envoyé au :</span>
                 <p className="font-extrabold text-slate-800">{contactPhone}</p>
               </div>
-
-              {formatGabonPhone(contactPhone) === '+24177905165' && (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-center justify-between">
-                  <div>
-                    <span className="font-bold flex items-center gap-1">
-                      🧪 Numéro de test Firebase
-                    </span>
-                    <p className="text-[11px] text-amber-700">Code configuré : <strong>000000</strong></p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setOtpCode('000000')}
-                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer"
-                  >
-                    Remplir 000000
-                  </button>
-                </div>
-              )}
 
               <div>
                 <input

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert } from 'lucide-react';
+import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3 } from 'lucide-react';
 import { Ad, UserProfile } from '../types';
 import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner } from '../utils/formatters';
 import { ReportAdModal } from './ReportAdModal';
@@ -9,10 +9,11 @@ interface AdDetailModalProps {
   ad: Ad | null;
   onClose: () => void;
   onOpenExtendModal: (ad: Ad) => void;
+  onEditAd?: (ad: Ad) => void;
   currentUser?: UserProfile | null;
 }
 
-export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpenExtendModal, currentUser }) => {
+export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpenExtendModal, onEditAd, currentUser }) => {
   if (!ad) return null;
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -63,7 +64,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
           {/* Main Title & Badges */}
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-2">
-              {ad.transactionType && (
+              {ad.mainCategory !== 'EMPLOI' && ad.transactionType && (
                 <span
                   className={`text-xs font-black uppercase px-2.5 py-1 rounded-lg ${
                     ad.transactionType === 'VENTE'
@@ -96,6 +97,11 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
               >
                 <Clock className="w-3.5 h-3.5 text-emerald-600" />
                 <span>{remainingTimeLabel}</span>
+              </div>
+
+              <div className="text-xs font-bold px-2.5 py-1 rounded-lg flex items-center gap-1.5 bg-blue-50 text-blue-800 border border-blue-200">
+                <Eye className="w-3.5 h-3.5 text-blue-600" />
+                <span>{ad.viewsCount || 0} vue{(ad.viewsCount || 0) > 1 ? 's' : ''}</span>
               </div>
             </div>
 
@@ -163,7 +169,9 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
           {/* Pricing & Expiration Panel */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <span className="text-xs font-bold uppercase text-slate-500 tracking-wider">Prix fixé par l'annonceur</span>
+              <span className="text-xs font-bold uppercase text-slate-500 tracking-wider">
+                {ad.mainCategory === 'EMPLOI' ? "Salaire proposé par l'employeur" : "Prix fixé par l'annonceur"}
+              </span>
               <div className="flex items-baseline gap-1.5">
                 <span className="text-2xl sm:text-3xl font-black text-emerald-700">
                   {formatFCFA(ad.price)}
@@ -184,12 +192,25 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
                 </div>
               </div>
 
-              {/* Prolonger l'annonce: STRICTEMENT RÉSERVÉ AU DÉTENTEUR DE L'ANNONCE */}
+              {/* Owner actions: Edit & Prolonger */}
               {isOwner && (
                 <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2">
                   <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-emerald-300">
                     Votre annonce
                   </span>
+                  {onEditAd && (
+                    <button
+                      onClick={() => {
+                        onClose();
+                        onEditAd(ad);
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs px-3.5 py-2.5 rounded-xl flex items-center gap-1.5 shadow-sm transition-colors"
+                      id="modal-edit-button"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 text-white" />
+                      <span>Modifier l'annonce</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       onClose();

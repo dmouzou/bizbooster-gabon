@@ -68,8 +68,12 @@ export interface Ad {
   domesticJobType?: DomesticJobType; // For Emploi
   
   price: number; // in FCFA (XAF)
-  priceUnit?: 'total' | 'mois' | 'jour' | 'heure'; // ex: FCFA/mois for rental
+  priceUnit?: 'total' | 'mois' | 'jour' | 'heure' | 'trimestre' | 'an'; // ex: FCFA/mois, FCFA/trimestre, FCFA/an
   
+  // Featured / Top-of-feed boost
+  isFeatured?: boolean;
+  featuredUntil?: string; // ISO string
+
   description: string; // limited character text (<= 300 chars)
   images: string[];
   videoUrl?: string;
@@ -103,6 +107,10 @@ export interface Ad {
   };
 }
 
+export type SubscriptionTier = 'STANDARD' | 'PRO' | 'ELITE' | 'BUSINESS';
+export type BoosterPackType = 'BOOST_5' | 'BOOST_10';
+export type AdPackType = 'PACK_5' | 'PACK_10';
+
 export interface UserProfile {
   id: string;
   contactPhone?: string; // Gabon format: +241 XX XX XX XX
@@ -114,6 +122,13 @@ export interface UserProfile {
   termsAcceptedAt: string;
   role: 'USER' | 'ADMIN';
   createdAt: string;
+
+  // Subscription & Boosters
+  subscriptionTier?: SubscriptionTier;
+  subscriptionExpiresAt?: string;
+  freeBoostsRemaining?: number; // max 20 per user
+  activePack?: AdPackType;
+  activeBoosterPack?: BoosterPackType;
 
   // Exemption from payment & KYC (VIP / Partenaires)
   exemptFromPaymentAndKyc?: boolean;

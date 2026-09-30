@@ -1,22 +1,32 @@
 import React from 'react';
-import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw } from 'lucide-react';
+import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw, Edit3, Sparkles } from 'lucide-react';
 import { Ad } from '../types';
 import { formatFCFA, formatRemainingTime, getWhatsAppUrl } from '../utils/formatters';
+import { isAdBoostFeatured, recordAdInteraction } from '../utils/personalization';
 
 interface AdCardProps {
   ad: Ad;
   onSelectAd: (ad: Ad) => void;
   onOpenExtendModal?: (ad: Ad) => void;
+  onEditAd?: (ad: Ad) => void;
   isOwner?: boolean;
 }
 
-export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModal, isOwner = false }) => {
+export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModal, onEditAd, isOwner = false }) => {
   const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
+  const isBoosted = isAdBoostFeatured(ad);
+
+  const handleCardClick = () => {
+    recordAdInteraction(ad);
+    onSelectAd(ad);
+  };
 
   return (
     <div
       className={`group bg-white rounded-2xl border transition-all duration-200 overflow-hidden flex flex-col hover:shadow-xl hover:-translate-y-0.5 ${
-        isExpired
+        isBoosted
+          ? 'border-amber-400 ring-2 ring-amber-400/20 shadow-md'
+          : isExpired
           ? 'border-red-200 opacity-75 bg-slate-50/70'
           : 'border-slate-200 hover:border-emerald-300'
       }`}
@@ -25,7 +35,7 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
       {/* Image container */}
       <div
         className="relative aspect-16/10 bg-slate-100 overflow-hidden cursor-pointer"
-        onClick={() => onSelectAd(ad)}
+        onClick={handleCardClick}
       >
         <img
           src={ad.images[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=800&q=80'}
@@ -37,9 +47,15 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
 
         {/* Top Badges overlay */}
         <div className="absolute top-2.5 left-2.5 right-2.5 flex items-start justify-between gap-1 pointer-events-none">
-          {/* Transaction Type: VENTE vs LOCATION (Highlighting the critical requirement) */}
+          {/* Transaction Type: VENTE vs LOCATION (strictly forbidden for EMPLOI) */}
           <div className="flex flex-col gap-1">
-            {ad.transactionType && (
+            {isBoosted && (
+              <span className="text-[10px] font-black tracking-wide uppercase px-2 py-0.5 rounded-lg shadow-sm bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 flex items-center gap-1 border border-amber-300">
+                <Sparkles className="w-3 h-3 fill-slate-950" />
+                <span>En Tête</span>
+              </span>
+            )}
+            {ad.mainCategory !== 'EMPLOI' && ad.transactionType && (
               <span
                 className={`text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs ${
                   ad.transactionType === 'VENTE'
@@ -97,7 +113,7 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
         {/* Views counter */}
         <div className="absolute bottom-2.5 right-2.5 bg-black/60 text-white/90 text-[10px] font-medium px-2 py-0.5 rounded-md flex items-center gap-1 backdrop-blur-xs">
           <Eye className="w-3 h-3" />
-          <span>{ad.viewsCount} vues</span>
+          <span>{ad.viewsCount || 0} vue{(ad.viewsCount || 0) > 1 ? 's' : ''}</span>
         </div>
       </div>
 
@@ -140,7 +156,9 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
           {/* Price Tag */}
           <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between gap-2 mb-3">
             <div>
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">Prix demandé</span>
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                {ad.mainCategory === 'EMPLOI' ? 'Salaire proposé' : 'Prix demandé'}
+              </span>
               <div className="flex items-baseline gap-1">
                 <span className="text-base sm:text-lg font-black tracking-tight text-emerald-700">
                   {formatFCFA(ad.price)}
@@ -153,20 +171,39 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
               </div>
             </div>
 
-            {/* Prolonger button - Strictly restricted to the owner of this ad */}
-            {isOwner && onOpenExtendModal && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenExtendModal(ad);
-                }}
-                className="text-[11px] font-bold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-lg flex items-center gap-1 transition-colors"
-                title="Prolonger la durée de votre annonce"
-                id={`extend-button-${ad.id}`}
-              >
-                <RefreshCw className="w-3 h-3 text-amber-600" />
-                <span>Prolonger</span>
-              </button>
+            {/* Owner action buttons */}
+            {isOwner && (
+              <div className="flex items-center gap-1.5">
+                {onEditAd && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditAd(ad);
+                    }}
+                    className="text-[11px] font-bold text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
+                    title="Modifier cette annonce"
+                    id={`edit-button-${ad.id}`}
+                  >
+                    <Edit3 className="w-3 h-3 text-emerald-700" />
+                    <span>Modifier</span>
+                  </button>
+                )}
+
+                {onOpenExtendModal && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenExtendModal(ad);
+                    }}
+                    className="text-[11px] font-bold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
+                    title="Prolonger la durée de votre annonce"
+                    id={`extend-button-${ad.id}`}
+                  >
+                    <RefreshCw className="w-3 h-3 text-amber-600" />
+                    <span>Prolonger</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
 

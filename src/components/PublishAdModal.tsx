@@ -26,6 +26,8 @@ import {
   Star,
   FileText,
   CreditCard,
+  AlertTriangle,
+  Sparkles,
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -39,6 +41,7 @@ import {
   PropertyType,
   RollingStockCategory,
   TransactionType,
+  UserProfile,
 } from '../types';
 import { GABON_PROVINCES } from '../data/gabonLocations';
 import {
@@ -57,7 +60,6 @@ import {
 } from '../data/categoriesData';
 import { calculateBill, formatFCFA } from '../utils/formatters';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
-import { UserProfile } from '../types';
 
 interface PublishAdModalProps {
   isOpen: boolean;
@@ -66,6 +68,8 @@ interface PublishAdModalProps {
   currentUser?: UserProfile | null;
   onSwitchToAdmin?: () => void;
   onSwitchToUserDashboard?: () => void;
+  userAds?: Ad[];
+  onUpdateUser?: (updated: Partial<UserProfile>) => Promise<void>;
 }
 
 // Preset photo options to easily populate realistic imagery
@@ -116,6 +120,8 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   currentUser,
   onSwitchToAdmin,
   onSwitchToUserDashboard,
+  userAds,
+  onUpdateUser,
 }) => {
   if (!isOpen) return null;
 
@@ -207,8 +213,59 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   // Step 2 Fields
   const [title, setTitle] = useState('');
   const [price, setPrice] = useState<number>(350000);
-  const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour'>('mois');
+  const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour' | 'trimestre' | 'an'>('mois');
   const [description, setDescription] = useState('');
+
+  // Active/Simultaneous ads count for the current user
+  const userSimultaneousAds = useMemo(() => {
+    if (!userAds || !currentUser) return [];
+    const now = Date.now();
+    return userAds.filter(
+      (a) =>
+        (a.userId === currentUser.id || !a.userId) &&
+        a.status !== 'REJECTED' &&
+        new Date(a.expiresAt).getTime() > now
+    );
+  }, [userAds, currentUser]);
+
+  const simultaneousAdsCount = userSimultaneousAds.length;
+
+  // Max simultaneous ads quota:
+  // Standard = 3 max. VIP / Business = 20 max. Elite = 14. Pro = 8.
+  const maxQuota = useMemo(() => {
+    if (isExempt) return 20; // VIP Partner: 20 simultaneous ads (reflects Business version)
+    if (currentUser?.subscriptionTier === 'BUSINESS') return 20;
+    if (currentUser?.subscriptionTier === 'ELITE') return 14;
+    if (currentUser?.subscriptionTier === 'PRO') return 8;
+    return 3; // Standard free users: max 3 simultaneous ads
+  }, [currentUser?.subscriptionTier, isExempt]);
+
+  // Absolute hard ceiling is 20 ads
+  const isUltimateCeilingReached = simultaneousAdsCount >= 20;
+
+  // Subscription upgrade required if simultaneous ads >= current quota and < 20
+  const isSubscriber = Boolean(currentUser?.subscriptionTier && currentUser.subscriptionTier !== 'STANDARD');
+  const requiresSubscription = useMemo(() => {
+    if (isExempt) return false;
+    return simultaneousAdsCount >= maxQuota && maxQuota < 20;
+  }, [isExempt, simultaneousAdsCount, maxQuota]);
+
+  const SUBSCRIPTION_PRICES: Record<'PRO' | 'ELITE' | 'BUSINESS', number> = {
+    PRO: 29000,
+    ELITE: 59000,
+    BUSINESS: 99000,
+  };
+
+  const [selectedTierToBuy, setSelectedTierToBuy] = useState<'PRO' | 'ELITE' | 'BUSINESS'>('PRO');
+  const subscriptionCost = requiresSubscription ? SUBSCRIPTION_PRICES[selectedTierToBuy] : 0;
+
+  // Boost "En tête de liste" (7 days)
+  const [isBoostFeatured, setIsBoostFeatured] = useState(false);
+  const BOOST_PRICE = 5000;
+  const hasFreeBoost = Boolean(
+    currentUser?.freeBoostsRemaining && currentUser.freeBoostsRemaining > 0
+  );
+  const boostCost = isBoostFeatured && !isExempt && !hasFreeBoost ? BOOST_PRICE : 0;
   
   // Media State: photos (max 5) with support for presets and local File uploads
   const [photos, setPhotos] = useState<PhotoMediaItem[]>([
@@ -253,6 +310,18 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   const bill = useMemo(() => {
     return calculateBill(durationDays, photos.length, hasVideo);
   }, [durationDays, photos.length, hasVideo]);
+
+  // Base price is waived if subscriber, VIP, or subscribing right now
+  const isBasePostingCovered = Boolean(
+    isExempt ||
+    isSubscriber ||
+    requiresSubscription
+  );
+
+  const basePriceToPay = isBasePostingCovered ? 0 : bill.basePrice;
+  const totalBillCalculated = isExempt
+    ? 0
+    : basePriceToPay + bill.extraPhotosCost + bill.videoCost + boostCost + subscriptionCost;
 
   // File selection for photos (limit: max 5 photos total, max 10 Mo/image)
   const handlePhotoFilesSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -400,6 +469,9 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
       setPriceUnit(transactionType === 'LOCATION' ? 'mois' : 'total');
     } else if (cat === 'MATERIEL_ROULANT') {
       setPriceUnit(transactionType === 'LOCATION' ? 'jour' : 'total');
+    } else if (cat === 'EMPLOI') {
+      setPriceUnit('mois');
+      setPrice(120000);
     } else {
       setPriceUnit('total');
     }
@@ -470,6 +542,8 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         domesticJobType: mainCategory === 'EMPLOI' ? domesticJobType : undefined,
         price: Number(price) || 50000,
         priceUnit,
+        isFeatured: isBoostFeatured,
+        featuredUntil: isBoostFeatured ? new Date(now.getTime() + 7 * 86400000).toISOString() : undefined,
         description: description || 'Annonce vérifiée et publiée sur BIZBOOSTER Gabon.',
         images: finalImageUrls.length > 0 ? finalImageUrls : [SAMPLE_IMAGE_PRESETS[mainCategory][0]],
         videoUrl: finalVideoUrl,
@@ -481,11 +555,23 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         expiresAt: expires.toISOString(),
         status: 'PENDING_REVIEW', // Post is sent to admin moderation before public live
         userId: currentUser?.id || auth.currentUser?.uid,
-        paidAmount: isExempt ? 0 : bill.total,
+        paidAmount: isExempt ? 0 : totalBillCalculated,
         paymentMethod: isExempt ? ('AIRTEL_MONEY' as PaymentOperator) : paymentInfo.operator,
         transactionRef: isExempt ? (paymentInfo.transactionRef || `VIP-${Date.now().toString(36).toUpperCase()}`) : paymentInfo.transactionRef,
         viewsCount: 0,
       };
+
+      if (requiresSubscription) {
+        const boostsToAdd = selectedTierToBuy === 'BUSINESS' ? 6 : selectedTierToBuy === 'ELITE' ? 3 : 1;
+        await onUpdateUser?.({
+          subscriptionTier: selectedTierToBuy,
+          subscriptionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+          freeBoostsRemaining: Math.min(20, (currentUser?.freeBoostsRemaining || 0) + boostsToAdd),
+        });
+      }
+      if (hasFreeBoost && isBoostFeatured) {
+        await onUpdateUser?.({ freeBoostsRemaining: Math.max(0, (currentUser?.freeBoostsRemaining || 1) - 1) });
+      }
 
       await onAdPublished(newAd);
       setCreatedAd(newAd);
@@ -826,6 +912,43 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
               {/* STEP 1: CATEGORIZATION & SPATIAL RUBRICS */}
               {step === 1 && (
             <div className="space-y-5">
+              {/* Quota & Ceiling Alert */}
+              {isUltimateCeilingReached ? (
+                <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-4 flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <p className="font-black text-red-900 uppercase">
+                      Plafond maximal atteint (20 / 20 annonces actives)
+                    </p>
+                    <p className="text-red-700 mt-1 leading-relaxed">
+                      Conformément aux règles de diffusion BIZBOOSTER Gabon, chaque annonceur (y compris formule Business et Partenaire VIP) est plafonné à 20 annonces simultanées en cours.
+                      Veuillez attendre l'expiration d'une annonce ou en supprimer une depuis votre espace pour déposer une nouvelle offre.
+                    </p>
+                  </div>
+                </div>
+              ) : requiresSubscription ? (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <p className="font-black text-amber-900 uppercase">
+                      Limite de {maxQuota} annonce{maxQuota > 1 ? 's' : ''} atteinte ({simultaneousAdsCount} actives)
+                    </p>
+                    <p className="text-amber-800 mt-1 leading-relaxed">
+                      Pour afficher plus de 3 annonces simultanément, vous devez souscrire au forfait Pro (jusqu'à 8), Élite (jusqu'à 14) ou Business (jusqu'à 20). Vous pourrez choisir votre formule à l'étape suivante.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-2.5 flex items-center justify-between text-xs">
+                  <span className="text-slate-600 font-semibold">
+                    Vos annonces simultanées en cours :
+                  </span>
+                  <span className="font-extrabold text-slate-900 bg-white border border-slate-200 px-2 py-0.5 rounded-lg">
+                    {simultaneousAdsCount} / {maxQuota} max {isExempt ? '(VIP - 20 max)' : currentUser?.subscriptionTier ? `(${currentUser.subscriptionTier})` : '(Standard)'}
+                  </span>
+                </div>
+              )}
+
               {/* Category Selector (4 options from document) */}
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
@@ -1190,16 +1313,17 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 />
               </div>
 
-              {/* Price & Unit */}
+              {/* Price & Unit (Customized for EMPLOI / Métiers Domestiques) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Prix (en FCFA) *
+                    {mainCategory === 'EMPLOI' ? 'Salaire proposé / souhaité (en FCFA) *' : 'Prix (en FCFA) *'}
                   </label>
                   <input
                     type="number"
                     value={price}
                     onChange={(e) => setPrice(Number(e.target.value))}
+                    placeholder={mainCategory === 'EMPLOI' ? 'Ex: 150000' : 'Ex: 250000'}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
                     id="publish-price-input"
                   />
@@ -1207,16 +1331,27 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Unité de prix
+                    {mainCategory === 'EMPLOI' ? 'Périodicité du salaire *' : 'Unité de prix'}
                   </label>
                   <select
                     value={priceUnit}
-                    onChange={(e) => setPriceUnit(e.target.value as 'total' | 'mois' | 'jour')}
+                    onChange={(e) => setPriceUnit(e.target.value as any)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
                   >
-                    <option value="total">Prix total (Achat définitif)</option>
-                    <option value="mois">Par mois (Location mensuelle)</option>
-                    <option value="jour">Par jour (Location journalière)</option>
+                    {mainCategory === 'EMPLOI' ? (
+                      <>
+                        <option value="mois">Mensuelle (par mois)</option>
+                        <option value="jour">Journalière (par jour)</option>
+                        <option value="trimestre">Trimestrielle (par trimestre)</option>
+                        <option value="an">Annuelle (par an)</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="total">Prix total (Achat définitif)</option>
+                        <option value="mois">Par mois (Location mensuelle)</option>
+                        <option value="jour">Par jour (Location journalière)</option>
+                      </>
+                    )}
                   </select>
                 </div>
               </div>
@@ -1539,6 +1674,116 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </div>
               )}
 
+              {/* Requirement 4: Subscription required for more than 3 simultaneous ads */}
+              {requiresSubscription && (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="bg-amber-500 text-slate-950 text-[10px] font-black uppercase px-2 py-0.5 rounded-sm">
+                      Quota standard ({maxQuota} annonces) atteint
+                    </span>
+                    <h4 className="font-extrabold text-xs text-slate-900">
+                      Abonnement Pro, Élite ou Business requis (Dès la 4e annonce)
+                    </h4>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Pour diffuser plus de 3 annonces simultanément, vous devez souscrire à un forfait d'abonnement. Choisissez la formule qui convient à votre volume d'activité :
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTierToBuy('PRO')}
+                      className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer ${
+                        selectedTierToBuy === 'PRO'
+                          ? 'border-blue-600 bg-white ring-2 ring-blue-500/20 shadow-md'
+                          : 'border-slate-200 bg-white/70 hover:bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-xs text-slate-900">🥉 Pro</span>
+                        <span className="text-[10px] font-black bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">Jusqu'à 8</span>
+                      </div>
+                      <div className="text-sm font-black text-blue-700 mt-1">29 000 FCFA/m</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">+1 boost offert/m</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTierToBuy('ELITE')}
+                      className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer ${
+                        selectedTierToBuy === 'ELITE'
+                          ? 'border-purple-600 bg-white ring-2 ring-purple-500/20 shadow-md'
+                          : 'border-slate-200 bg-white/70 hover:bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-xs text-slate-900">🥈 Élite</span>
+                        <span className="text-[10px] font-black bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">Jusqu'à 14</span>
+                      </div>
+                      <div className="text-sm font-black text-purple-700 mt-1">59 000 FCFA/m</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">+3 boosts offerts/m</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTierToBuy('BUSINESS')}
+                      className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer ${
+                        selectedTierToBuy === 'BUSINESS'
+                          ? 'border-emerald-600 bg-white ring-2 ring-emerald-500/20 shadow-md'
+                          : 'border-slate-200 bg-white/70 hover:bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-xs text-slate-900">🥇 Business</span>
+                        <span className="text-[10px] font-black bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">Jusqu'à 20</span>
+                      </div>
+                      <div className="text-sm font-black text-emerald-700 mt-1">99 000 FCFA/m</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">+6 boosts offerts/m</div>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Requirement 6: Option Booster en tête de liste */}
+              <div
+                onClick={() => setIsBoostFeatured(!isBoostFeatured)}
+                className={`p-4 rounded-2xl border-2 transition-all cursor-pointer ${
+                  isBoostFeatured
+                    ? 'bg-amber-50/90 border-amber-500 ring-2 ring-amber-400/30 shadow-md'
+                    : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-lg shrink-0 ${
+                      isBoostFeatured ? 'bg-amber-400 text-slate-950 shadow-sm' : 'bg-slate-200 text-slate-600'
+                    }`}>
+                      <Sparkles className="w-5 h-5 fill-slate-950 text-slate-950" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-black text-xs text-slate-900 uppercase tracking-wide">
+                          Option "Mettre en Tête de Liste" (7 jours)
+                        </h4>
+                        <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-1.5 py-0.5 rounded-sm">
+                          POPULAIRE
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-0.5 leading-snug">
+                        Épingle votre annonce tout en haut du catalogue public dès sa validation par la modération.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="font-black text-xs text-emerald-800 block">
+                      {hasFreeBoost ? 'Inclus (Abonnement)' : isExempt ? 'Offert VIP' : '+5 000 FCFA'}
+                    </span>
+                    <span className={`text-[10px] font-bold ${isBoostFeatured ? 'text-emerald-700' : 'text-slate-400'}`}>
+                      {isBoostFeatured ? 'Activé ✓' : '+ Ajouter'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               {/* Section C-b: Choix de la durée (nombre de jours) */}
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
@@ -1581,9 +1826,29 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   <div className="flex justify-between text-slate-300">
                     <span>Forfait durée ({durationDays} jours) :</span>
                     <span className="font-mono font-bold text-white">
-                      {isExempt ? '0 FCFA' : formatFCFA(bill.basePrice)}
+                      {isExempt
+                        ? '0 FCFA'
+                        : isBasePostingCovered && !requiresPackPurchase
+                        ? 'Inclus (Pack/Abonnement)'
+                        : formatFCFA(bill.basePrice)}
                     </span>
                   </div>
+
+                  {requiresSubscription && (
+                    <div className="flex justify-between text-amber-300">
+                      <span>Abonnement {selectedTierToBuy} (1 mois) :</span>
+                      <span className="font-mono font-bold">+{formatFCFA(subscriptionCost)}</span>
+                    </div>
+                  )}
+
+                  {isBoostFeatured && (
+                    <div className="flex justify-between text-amber-300">
+                      <span>Option "En Tête de Liste" (7 jours) :</span>
+                      <span className="font-mono font-bold">
+                        {hasFreeBoost ? '0 FCFA (Inclus)' : isExempt ? '0 FCFA (VIP)' : '+5 000 FCFA'}
+                      </span>
+                    </div>
+                  )}
 
                   {bill.extraPhotosCount > 0 ? (
                     <div className="flex justify-between text-slate-300">
@@ -1620,22 +1885,26 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       Total Facturé :
                     </span>
                     <span className="text-xl font-black text-amber-400 font-mono">
-                      {isExempt ? '0 FCFA' : formatFCFA(bill.total)}
+                      {isExempt ? '0 FCFA' : formatFCFA(totalBillCalculated)}
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* Payment or VIP direct validation */}
-              {isExempt ? (
+              {/* Payment or direct free validation */}
+              {isExempt || totalBillCalculated === 0 ? (
                 <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 text-center space-y-3">
                   <div className="w-12 h-12 bg-amber-400 text-slate-950 rounded-2xl flex items-center justify-center mx-auto shadow-md">
                     <Star className="w-6 h-6 fill-slate-950" />
                   </div>
                   <div>
-                    <h4 className="font-black text-base text-slate-900">Validation Directe Partenaire</h4>
+                    <h4 className="font-black text-base text-slate-900">
+                      {isExempt ? 'Validation Directe Partenaire VIP' : 'Publication Incluse dans votre Quota'}
+                    </h4>
                     <p className="text-xs text-slate-600 max-w-sm mx-auto mt-0.5">
-                      Aucun débit Mobile Money requis. Cliquez ci-dessous pour transmettre directement votre annonce à la modération.
+                      {isExempt
+                        ? "Aucun débit Mobile Money requis pour les partenaires VIP. Votre annonce est directement transmise à l'équipe de modération."
+                        : "Cette annonce est couverte par votre pack ou abonnement actif. Aucun frais supplémentaire requis."}
                     </p>
                   </div>
                   <button
@@ -1644,13 +1913,15 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       handlePaymentSuccess({
                         operator: 'AIRTEL_MONEY',
                         contactPhone: contactPhone,
-                        transactionRef: `VIP-${Date.now().toString(36).toUpperCase()}`,
+                        transactionRef: isExempt
+                          ? `VIP-${Date.now().toString(36).toUpperCase()}`
+                          : `PACK-${Date.now().toString(36).toUpperCase()}`,
                       })
                     }
                     className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm rounded-xl shadow-lg transition-all inline-flex items-center gap-2 cursor-pointer"
                   >
                     <CheckCircle className="w-5 h-5 text-emerald-200" />
-                    <span>Valider & Publier Gratuitement (Exonération VIP)</span>
+                    <span>Valider & Transmettre à la Modération (0 FCFA)</span>
                   </button>
                 </div>
               ) : (
@@ -1666,7 +1937,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
                   <div className="flex justify-center">
                     <MobilePaymentSimulator
-                      amount={bill.total}
+                      amount={totalBillCalculated}
                       itemDescription={`Publication ${title || mainCategory} (${durationDays} jours)`}
                       onSuccess={handlePaymentSuccess}
                       onCancel={() => setStep(2)}
@@ -1776,7 +2047,9 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
             <button
               type="button"
+              disabled={isUltimateCeilingReached}
               onClick={() => {
+                if (isUltimateCeilingReached) return;
                 if (step === 1) {
                   setStep(2);
                 } else if (step === 2) {

@@ -23,17 +23,20 @@ service cloud.firestore {
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN');
     }
 
-    // Fields an advertiser must never change on their own ad.
+    // Fields an advertiser must never change on their own ad arbitrarily.
+    // They may only transition status to PENDING_REVIEW (e.g. when editing an active or pending ad for re-verification).
     function touchesProtectedAdFields() {
       return request.resource.data.diff(resource.data).affectedKeys().hasAny([
         'userId',
-        'status',
         'publishedAt',
         'expiresAt',
         'moderatedAt',
         'moderationReason',
         'paymentVerified'
-      ]);
+      ]) || (
+        request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+        && request.resource.data.status != 'PENDING_REVIEW'
+      );
     }
 
     // ---------------------------------------------------------------

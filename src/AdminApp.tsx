@@ -11,9 +11,10 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { auth, db } from './services/firebase';
-import { Ad, AdReport, UserProfile } from './types';
+import { Ad, AdReport, SubscriptionTier, UserProfile } from './types';
 import { AdminPanel } from './components/AdminPanel';
 import { AdDetailModal } from './components/AdDetailModal';
+import { getFrontendUrl } from './utils/navigation';
 
 type AdminStatus = 'loading' | 'signedOut' | 'denied' | 'admin';
 
@@ -96,11 +97,15 @@ export default function AdminApp() {
     try {
       if (ad.pendingExtension) {
         const base = Math.max(new Date(ad.expiresAt).getTime(), Date.now());
-        const newExpiry = new Date(base + ad.pendingExtension.days * 86400000).toISOString();
+        const maxExpiry = Date.now() + 365 * 86400000;
+        const requestedDays = Math.min(ad.pendingExtension.days, 365);
+        const computedExpiry = base + requestedDays * 86400000;
+        const newExpiry = new Date(Math.min(computedExpiry, maxExpiry)).toISOString();
+        const effectiveAddedDays = Math.max(1, Math.round((new Date(newExpiry).getTime() - base) / 86400000));
         await updateDoc(doc(db, 'ads', adId), {
           status: 'ACTIVE',
           expiresAt: newExpiry,
-          durationDays: ad.durationDays + ad.pendingExtension.days,
+          durationDays: Math.min(365, (ad.durationDays || 0) + effectiveAddedDays),
           paymentMethod: ad.pendingExtension.operator,
           transactionRef: ad.pendingExtension.transactionRef,
           pendingExtension: deleteField(),
@@ -186,6 +191,34 @@ export default function AdminApp() {
     } catch (e) {
       console.error(e);
       alert("Erreur lors du rejet de la pièce d'identité.");
+    }
+  };
+
+  // 4b. Subscription & Boosters management
+  const handleUpdateUserSubscription = async (userId: string, tier: SubscriptionTier) => {
+    try {
+      const isPaid = tier === 'PRO' || tier === 'ELITE' || tier === 'BUSINESS';
+      await updateDoc(doc(db, 'users', userId), {
+        subscriptionTier: tier,
+        subscriptionExpiresAt: isPaid ? new Date(Date.now() + 30 * 86400000).toISOString() : null,
+      });
+      await log(userId, 'SUBSCRIPTION_UPDATED', `Forfait défini sur: ${tier}`);
+    } catch (e) {
+      console.error(e);
+      alert("Erreur lors de la mise à jour de l'abonnement.");
+    }
+  };
+
+  const handleUpdateUserBoosters = async (userId: string, count: number) => {
+    try {
+      const safeCount = Math.max(0, Math.min(20, Math.round(count)));
+      await updateDoc(doc(db, 'users', userId), {
+        freeBoostsRemaining: safeCount,
+      });
+      await log(userId, 'BOOSTERS_UPDATED', `Solde de boosters ajusté à ${safeCount}`);
+    } catch (e) {
+      console.error(e);
+      alert("Erreur lors de la modification des boosters.");
     }
   };
 
@@ -317,11 +350,13 @@ export default function AdminApp() {
         onDeleteAd={handleDeleteAd}
         onSelectAdDetail={setSelectedAd}
         onSwitchToFrontend={() => {
-          window.location.href = '/';
+          window.location.href = getFrontendUrl();
         }}
         onToggleExemption={handleToggleExemption}
         onApproveKyc={handleApproveKyc}
         onRejectKyc={handleRejectKyc}
+        onUpdateUserSubscription={handleUpdateUserSubscription}
+        onUpdateUserBoosters={handleUpdateUserBoosters}
         onResolveReport={handleResolveReport}
         onDismissReport={handleDismissReport}
         onDeleteReportedAd={handleDeleteReportedAd}
