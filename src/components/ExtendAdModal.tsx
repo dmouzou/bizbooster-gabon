@@ -25,9 +25,10 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
 
   const isVip = Boolean(
     currentUser?.exemptFromPaymentAndKyc ||
-    currentUser?.isExempt ||
-    currentUser?.role === 'ADMIN'
+    currentUser?.isExempt
   );
+  const isKycVerified = currentUser?.idVerificationStatus === 'VERIFIED';
+  const isAllowedToPay = isVip || isKycVerified;
 
   const isBusinessSubscriber = currentUser?.subscriptionTier === 'BUSINESS';
   const isEliteSubscriber = currentUser?.subscriptionTier === 'ELITE';
@@ -94,7 +95,7 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4">
       <div
-        className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95"
+        className="bg-white rounded-3xl w-full max-w-lg max-h-[92vh] overflow-y-auto my-auto shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -141,7 +142,7 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
             {/* Ad summary */}
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 flex items-center gap-3">
               <img
-                src={ad.images[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=500&q=80'}
+                src={ad.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=500&q=80'}
                 alt=""
                 className="w-16 h-16 rounded-xl object-cover border border-slate-200 shrink-0"
                 referrerPolicy="no-referrer"
@@ -150,10 +151,14 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
                 <div className="flex items-center gap-2 mb-1">
                   <span
                     className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${
-                      ad.transactionType === 'VENTE' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                      ad.mainCategory === 'EMPLOI' || ad.transactionType === 'EMPLOYER'
+                        ? 'bg-purple-100 text-purple-800'
+                        : ad.transactionType === 'VENTE'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-emerald-100 text-emerald-800'
                     }`}
                   >
-                    {ad.transactionType || 'Annonce'}
+                    {ad.mainCategory === 'EMPLOI' || ad.transactionType === 'EMPLOYER' ? 'À Employer' : (ad.transactionType === 'VENTE' ? 'À Vendre' : 'À Louer')}
                   </span>
                   <span className="text-[10px] text-slate-500 font-medium truncate">
                     {ad.location?.city || 'Gabon'}
@@ -193,7 +198,7 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
                   <strong className="block font-black text-red-900 mb-1">
                     Plafond maximal atteint (365 jours)
                   </strong>
-                  Cette annonce a déjà atteint la durée maximale autorisée de validité continue (365 jours). Conformément aux règles BIZBOOSTER Gabon pour tous les utilisateurs et partenaires VIP, aucune prolongation supplémentaire n'est possible tant que la date d'expiration ne s'est pas rapprochée.
+                  Cette annonce a déjà atteint la durée maximale autorisée de validité continue (365 jours). Conformément aux règles BIZBOOSTER Gabon, aucune prolongation supplémentaire n'est possible tant que la date d'expiration ne s'est pas rapprochée.
                 </div>
               </div>
             ) : (
@@ -281,12 +286,28 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
               </div>
             )}
 
+            {/* Security Warning: Point 3 KYC Verification Gate */}
+            {!isAllowedToPay && (
+              <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-2xl text-xs text-amber-950 space-y-1.5">
+                <div className="flex items-center gap-1.5 font-black text-amber-900">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Vérification d'identité requise (Sécurité BIZBOOSTER)</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-amber-900">
+                  Conformément aux règles strictes de sécurité, aucun annonceur ne peut effectuer de paiement ou prolonger une annonce sans avoir fait vérifier son identité au préalable (seuls les partenaires VIP en sont exemptés).
+                </p>
+                <p className="text-[10px] font-bold text-slate-700">
+                  Veuillez transmettre votre pièce d'identité dans « Mon Espace Annonceur » &gt; rubrique « Vérification d'identité (KYC) ».
+                </p>
+              </div>
+            )}
+
             {/* Action buttons */}
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-3 rounded-xl transition-colors"
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-3 rounded-xl transition-colors cursor-pointer"
               >
                 Fermer
               </button>
@@ -296,16 +317,26 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
                   <button
                     type="button"
                     onClick={handleVipFreeExtend}
-                    className="flex-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs py-3 rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-2"
+                    className="flex-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs py-3 rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Crown className="w-4 h-4 text-slate-950" />
                     <span>Valider la prolongation gratuite ({isVip ? 'VIP' : 'Business'})</span>
+                  </button>
+                ) : !isAllowedToPay ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="flex-2 bg-slate-200 text-slate-500 font-bold text-xs py-3 rounded-xl cursor-not-allowed flex items-center justify-center gap-2"
+                    title="Vérification d'identité obligatoire pour payer"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-slate-400" />
+                    <span>Paiement bloqué (Identité requise)</span>
                   </button>
                 ) : (
                   <button
                     type="button"
                     onClick={() => setShowPayment(true)}
-                    className="flex-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-3 rounded-xl shadow-lg shadow-emerald-700/20 transition-all flex items-center justify-center gap-2"
+                    className="flex-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-3 rounded-xl shadow-lg shadow-emerald-700/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <ShieldCheck className="w-4 h-4 text-amber-300" />
                     <span>Payer via Airtel ou Moov Money</span>

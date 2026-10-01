@@ -386,6 +386,18 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                 </div>
               )}
 
+              {mainCategory === 'EMPLOI' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Mention de l'annonce :
+                  </label>
+                  <div className="py-2 px-3 rounded-xl border border-purple-200 bg-purple-50 text-purple-900 text-xs font-black flex items-center justify-between">
+                    <span>À EMPLOYER</span>
+                    <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md">Personnel de maison</span>
+                  </div>
+                </div>
+              )}
+
               {mainCategory === 'IMMOBILIER' && (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">

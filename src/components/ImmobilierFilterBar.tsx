@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { MapPin, Home, Tag, RotateCcw, Check } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { MapPin, Home, Tag, RotateCcw, Check, SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
 import { GABON_PROVINCES } from '../data/gabonLocations';
 import { PROPERTY_TYPES } from '../data/categoriesData';
 import { PropertyType, TransactionType } from '../types';
@@ -69,12 +69,18 @@ export const ImmobilierFilterBar: React.FC<ImmobilierFilterBarProps> = (props) =
     );
   }, [currentProvinceObj, selectedCity]);
 
+  const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
+
   const hasActiveFilters =
     selectedProvince !== '' ||
     selectedCity !== '' ||
     selectedNeighborhood !== '' ||
     selectedTransaction !== 'ALL' ||
     selectedPropertyType !== 'ALL';
+
+  const hasActiveSpatialFilters = Boolean(
+    selectedProvince || selectedCity || selectedNeighborhood || selectedPropertyType !== 'ALL'
+  );
 
   return (
     <div className="bg-emerald-950 text-white rounded-2xl p-4 sm:p-5 mb-6 shadow-lg border border-emerald-800">
@@ -133,8 +139,28 @@ export const ImmobilierFilterBar: React.FC<ImmobilierFilterBarProps> = (props) =
         </div>
       </div>
 
+      {/* Mobile Toggle Button */}
+      <div className="lg:hidden pt-3">
+        <button
+          type="button"
+          onClick={() => setIsMobileFiltersOpen((prev) => !prev)}
+          className="w-full flex items-center justify-between bg-emerald-900/90 border border-emerald-700/80 text-white rounded-xl px-3.5 py-2.5 text-xs font-bold transition-all shadow-xs cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
+            <span>Filtres localisation & types de bien</span>
+            {hasActiveSpatialFilters && (
+              <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-1.5 py-0.5 rounded-full">
+                {selectedCity || selectedProvince || 'Filtres actifs'}
+              </span>
+            )}
+          </div>
+          {isMobileFiltersOpen ? <ChevronUp className="w-4 h-4 text-emerald-300" /> : <ChevronDown className="w-4 h-4 text-emerald-300" />}
+        </button>
+      </div>
+
       {/* Spatial Cascading Dropdowns: Province -> Ville -> Quartier + Type de bien */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mt-4">
+      <div className={`${isMobileFiltersOpen || hasActiveSpatialFilters ? 'grid' : 'hidden lg:grid'} grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mt-4`}>
         {/* 1. Province (9 options Gabon) */}
         <div>
           <label className="block text-[11px] font-bold text-emerald-300 uppercase tracking-wider mb-1.5 flex items-center gap-1">

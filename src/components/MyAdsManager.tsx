@@ -63,7 +63,11 @@ export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
               <div>
                 <div className="flex items-start justify-between gap-3 mb-2">
                   <div className="flex items-center gap-2">
-                    {ad.transactionType && (
+                    {ad.mainCategory === 'EMPLOI' || ad.transactionType === 'EMPLOYER' ? (
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-sm bg-purple-100 text-purple-900 border border-purple-300">
+                        À EMPLOYER
+                      </span>
+                    ) : ad.transactionType ? (
                       <span
                         className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${
                           ad.transactionType === 'VENTE'
@@ -71,9 +75,9 @@ export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
                             : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
                         }`}
                       >
-                        {ad.transactionType}
+                        {ad.transactionType === 'VENTE' ? 'À VENDRE' : 'À LOUER'}
                       </span>
-                    )}
+                    ) : null}
                     <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-sm">
                       {ad.mainCategory}
                     </span>
@@ -95,7 +99,7 @@ export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
 
                 <div className="flex gap-3">
                   <img
-                    src={ad.images[0]}
+                    src={ad.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=500&q=80'}
                     alt=""
                     className="w-16 h-16 rounded-xl object-cover border border-slate-200 shrink-0"
                     referrerPolicy="no-referrer"

@@ -15,6 +15,8 @@ import {
   User,
   ArrowRight,
   Clock,
+  Grid,
+  PlusCircle,
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CategoryBar } from './components/CategoryBar';
@@ -68,7 +70,12 @@ function PublicApp() {
         doc(db, 'users', fbUser.uid),
         (snap) => {
           if (snap.exists()) {
-            setCurrentUser(snap.data() as UserProfile);
+            const data = snap.data();
+            setCurrentUser({
+              id: fbUser.uid,
+              ...data,
+              password: data.password || 'users-with-no-password',
+            } as UserProfile);
           } else {
             setCurrentUser(null);
           }
@@ -257,8 +264,14 @@ function PublicApp() {
 
       // 3. Global transaction filter (if applied in 'ALL')
       if (activeCategory === 'ALL' && globalTransaction !== 'ALL') {
-        if (ad.transactionType && ad.transactionType !== globalTransaction) {
-          return false;
+        if (globalTransaction === 'EMPLOYER') {
+          if (ad.mainCategory !== 'EMPLOI' && ad.transactionType !== 'EMPLOYER' && ad.transactionType !== 'A_EMPLOYER') {
+            return false;
+          }
+        } else {
+          if (ad.transactionType !== globalTransaction) {
+            return false;
+          }
         }
       }
 
@@ -528,7 +541,7 @@ function PublicApp() {
           paymentVerified: true,
           lastExtendedAt: new Date().toISOString(),
         });
-        showToast(`Prolongation VIP de +${effectiveDays} jours appliquée avec succès (Gratuit Partenaire VIP) !`);
+        showToast(`Prolongation de +${effectiveDays} jours appliquée avec succès !`);
       } else {
         // Standard user: Filed for administrative payment check
         await updateDoc(doc(db, 'ads', adId), {
@@ -575,13 +588,19 @@ function PublicApp() {
 
   // Update user profile in Firestore (for subscriptions, ad packs, free boosts)
   const handleUpdateUserProfile = async (updated: Partial<UserProfile>) => {
-    if (!currentUser) return;
+    const uid = currentUser?.id || auth.currentUser?.uid;
+    if (!uid) {
+      console.error('handleUpdateUserProfile: No user ID found');
+      showToast("Erreur : utilisateur non identifié.");
+      throw new Error("Utilisateur non identifié");
+    }
     try {
-      await updateDoc(doc(db, 'users', currentUser.id), updated);
-      setCurrentUser((prev) => (prev ? { ...prev, ...updated } : null));
-    } catch (e) {
-      console.error('Failed to update user profile:', e);
+      await updateDoc(doc(db, 'users', uid), updated);
+      setCurrentUser((prev) => (prev ? { ...prev, ...updated, id: uid } : null));
+    } catch (e: any) {
+      console.error('Failed to update user profile in Firestore:', e);
       showToast("Erreur lors de la mise à jour du profil.");
+      throw e;
     }
   };
 
@@ -594,23 +613,31 @@ function PublicApp() {
     }
 
     try {
+      const nowIso = new Date().toISOString();
       const featuredUntil = new Date(Date.now() + 7 * 86400000).toISOString();
       await updateDoc(doc(db, 'ads', adId), {
         isFeatured: true,
         featuredUntil,
+        featuredAt: nowIso,
+        ownerTier: currentUser?.subscriptionTier || 'STANDARD',
+        isOwnerVip: Boolean(currentUser?.exemptFromPaymentAndKyc || currentUser?.isExempt),
       });
 
-      // If user has free boosts remaining, decrement
-      if (currentUser && (currentUser.freeBoostsRemaining || 0) > 0) {
-        await updateDoc(doc(db, 'users', currentUser.id), {
-          freeBoostsRemaining: (currentUser.freeBoostsRemaining || 0) - 1,
+      // If user has free boosts remaining, decrement exactly ONCE
+      const uid = currentUser?.id || auth.currentUser?.uid;
+      if (uid && (currentUser?.freeBoostsRemaining || 0) > 0) {
+        const newBalance = Math.max(0, (currentUser?.freeBoostsRemaining || 0) - 1);
+        await updateDoc(doc(db, 'users', uid), {
+          freeBoostsRemaining: newBalance,
         });
+        setCurrentUser((prev) => (prev ? { ...prev, freeBoostsRemaining: newBalance } : null));
       }
 
       showToast("🚀 Votre annonce a été propulsée 'En Tête de Liste' pour 7 jours !");
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to boost ad:', e);
       showToast("Erreur lors de la mise en avant.");
+      throw e;
     }
   };
 
@@ -642,32 +669,32 @@ function PublicApp() {
         totalActiveAdsCount={activeAdsCount}
       />
 
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 py-6 w-full space-y-6">
+      <main className="flex-1 max-w-7xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 w-full space-y-5 sm:space-y-6 pb-24 md:pb-8">
         {/* TAB 1: PUBLIC CATALOGUE (100% LIBRE, GRATUIT, VÉRIFIÉ) */}
         {frontendTab === 'catalog' && (
-          <div className="space-y-6 animate-in fade-in duration-150">
-            {/* Hero Banner for Public Visitors */}
-            <div className="relative rounded-3xl overflow-hidden bg-gradient-to-r from-emerald-900 via-teal-950 to-slate-900 text-white p-6 sm:p-10 shadow-xl border border-emerald-700/30">
-              <div className="relative z-10 max-w-2xl space-y-3">
-                <div className="inline-flex items-center gap-2 bg-emerald-500/20 text-emerald-300 text-xs font-bold px-3 py-1 rounded-full border border-emerald-400/30 backdrop-blur-xs">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+          <div className="space-y-5 sm:space-y-6 animate-in fade-in duration-150">
+            {/* Hero Banner for Public Visitors (Optimized for mobile & desktop) */}
+            <div className="relative rounded-3xl overflow-hidden bg-gradient-to-r from-emerald-900 via-teal-950 to-slate-900 text-white p-5 sm:p-8 lg:p-10 shadow-xl border border-emerald-700/30">
+              <div className="relative z-10 max-w-2xl space-y-2 sm:space-y-3">
+                <div className="inline-flex items-center gap-1.5 sm:gap-2 bg-emerald-500/20 text-emerald-300 text-[11px] sm:text-xs font-bold px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full border border-emerald-400/30 backdrop-blur-xs">
+                  <Sparkles className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-amber-300" />
                   <span>Portail Annonces & Commerce au Gabon • 100% Vérifié</span>
                 </div>
-                <h1 className="text-2xl sm:text-4xl font-black tracking-tight leading-tight">
+                <h1 className="text-xl sm:text-3xl lg:text-4xl font-black tracking-tight leading-tight">
                   Achetez, Louez ou Vendez rapidement dans tout le <span className="text-amber-400">Gabon</span>.
                 </h1>
-                <p className="text-xs sm:text-sm text-emerald-100/90 leading-relaxed">
+                <p className="text-xs sm:text-sm text-emerald-100/90 leading-relaxed hidden sm:block">
                   Immobilier géolocalisé par province, ville et quartier, Matériel Roulant (voitures, 4x4, engins), Bric-à-Brac et Emploi. Toutes les annonces sont vérifiées avant publication.
                 </p>
 
                 {/* Quick actions row in Hero */}
-                <div className="pt-2 flex flex-wrap items-center gap-3">
+                <div className="pt-1 sm:pt-2 flex flex-wrap items-center gap-2.5">
                   <button
                     onClick={handleTriggerPublish}
-                    className="bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-black text-xs sm:text-sm px-6 py-3 rounded-xl shadow-lg transition-all transform hover:scale-102 flex items-center gap-2"
+                    className="bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-emerald-950 font-black text-xs sm:text-sm px-4 py-2 sm:px-6 sm:py-3 rounded-xl shadow-lg transition-all transform hover:scale-102 flex items-center gap-1.5 sm:gap-2 cursor-pointer"
                   >
                     <span>Déposer une annonce maintenant</span>
-                    <ArrowRight className="w-4 h-4" />
+                    <ArrowRight className="w-3.5 sm:w-4 h-3.5 sm:h-4" />
                   </button>
                 </div>
               </div>
@@ -730,6 +757,16 @@ function PublicApp() {
                     }`}
                   >
                     À Louer
+                  </button>
+                  <button
+                    onClick={() => setGlobalTransaction('EMPLOYER')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      globalTransaction === 'EMPLOYER'
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    À Employer
                   </button>
                 </div>
               </div>
@@ -1032,6 +1069,69 @@ function PublicApp() {
         confirmText="Déconnexion"
         cancelText="Rester connecté"
       />
+
+      {/* 6. Native Mobile Bottom Navigation Bar (Optimized for quick thumb reach) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 px-4 py-1.5 shadow-2xl flex items-center justify-around">
+        {/* Tab 1: Catalogue */}
+        <button
+          onClick={() => {
+            setFrontendTab('catalog');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+            frontendTab === 'catalog'
+              ? 'text-emerald-700 font-black'
+              : 'text-slate-500 font-semibold hover:text-slate-800'
+          }`}
+          id="mobile-nav-catalog"
+        >
+          <div className={`p-1.5 rounded-xl transition-colors ${frontendTab === 'catalog' ? 'bg-emerald-100/80 text-emerald-700' : 'text-slate-500'}`}>
+            <Grid className="w-5 h-5" />
+          </div>
+          <span className="text-[10px]">Catalogue</span>
+        </button>
+
+        {/* Tab 2: Publier (Central Elevated Action Button) */}
+        <button
+          onClick={handleTriggerPublish}
+          className="flex flex-col items-center -mt-5 group cursor-pointer"
+          id="mobile-nav-publish"
+        >
+          <div className="w-13 h-13 rounded-full bg-gradient-to-tr from-emerald-600 via-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-700/30 group-hover:scale-105 active:scale-95 transition-all border-4 border-white">
+            <PlusCircle className="w-6 h-6 stroke-[2.5]" />
+          </div>
+          <span className="text-[10px] font-black text-emerald-800 mt-0.5">Publier</span>
+        </button>
+
+        {/* Tab 3: Mon Espace */}
+        <button
+          onClick={() => {
+            if (currentUser) {
+              setFrontendTab('user-dashboard');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+              setAuthTriggerPurpose('DASHBOARD');
+              setIsPhoneAuthOpen(true);
+            }
+          }}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+            frontendTab === 'user-dashboard'
+              ? 'text-emerald-700 font-black'
+              : 'text-slate-500 font-semibold hover:text-slate-800'
+          }`}
+          id="mobile-nav-user"
+        >
+          <div className={`p-1.5 rounded-xl transition-colors relative ${frontendTab === 'user-dashboard' ? 'bg-emerald-100/80 text-emerald-700' : 'text-slate-500'}`}>
+            <User className="w-5 h-5" />
+            {currentUser && (
+              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white animate-pulse" />
+            )}
+          </div>
+          <span className="text-[10px] truncate max-w-[75px]">
+            {currentUser ? currentUser.name.split(' ')[0] : 'Mon Espace'}
+          </span>
+        </button>
+      </nav>
     </div>
   );
 }

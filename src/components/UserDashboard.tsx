@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   User,
   Phone,
@@ -30,12 +30,35 @@ import {
   ArrowRight,
   Star,
   Flame,
+  KeyRound,
+  Lock,
+  EyeOff,
+  Layers,
+  AlertTriangle,
+  PauseCircle,
 } from 'lucide-react';
+import {
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+  ConfirmationResult,
+  updatePassword,
+} from 'firebase/auth';
+import { doc, updateDoc } from 'firebase/firestore';
+import { auth, db } from '../services/firebase';
 import { Ad, UserProfile, SubscriptionTier, BoosterPackType, AdPackType, PaymentOperator } from '../types';
 import { formatFCFA, formatRemainingTime, isAdOwner } from '../utils/formatters';
 import { isAdBoostFeatured } from '../utils/personalization';
+import { GABON_PROVINCES } from '../data/gabonLocations';
 import { KycUploadModal } from './KycUploadModal';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
+import { SubscriptionUpgradeModal } from './SubscriptionUpgradeModal';
+
+const formatGabonPhone = (raw: string) => {
+  let clean = raw.replace(/[^0-9]/g, '');
+  if (clean.startsWith('241')) clean = clean.slice(3);
+  if (clean.startsWith('0')) clean = clean.slice(1);
+  return `+241${clean}`;
+};
 
 interface UserDashboardProps {
   currentUser: UserProfile;
@@ -81,7 +104,7 @@ const SUBSCRIPTION_TIERS = [
       "3 Boosts 'En Tête de Liste' offerts par mois (valeur 15 000 F)",
       '-50% de réduction sur toutes les prolongations',
       'Badge prestige doré et visibilité renforcée',
-      'Support VIP dédié 7j/7',
+      'Support prioritaire dédié 7j/7',
       'Statistiques avancées des contacts & clics WhatsApp',
     ],
   },
@@ -133,15 +156,91 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onBoostAd,
   onUpdateUser,
 }) => {
-  const [dashboardTab, setDashboardTab] = useState<'ADS' | 'SUBSCRIPTIONS'>('ADS');
-  const [filterStatus, setFilterStatus] = useState<'ALL' | 'ACTIVE' | 'PENDING' | 'REJECTED'>('ALL');
+  const [dashboardTab, setDashboardTab] = useState<'ADS' | 'SUBSCRIPTIONS' | 'PROFILE'>('ADS');
+  const [filterStatus, setFilterStatus] = useState<'ALL' | 'ACTIVE' | 'PENDING' | 'REJECTED' | 'SUSPENDED'>('ALL');
   const [isKycModalOpen, setIsKycModalOpen] = useState(false);
   const [previewDocModal, setPreviewDocModal] = useState<string | null>(null);
 
-  // Boost modal state
+  // Boost modal state (Requirement 4: single vs pack)
   const [adToBoost, setAdToBoost] = useState<Ad | null>(null);
   const [isBoostingAd, setIsBoostingAd] = useState(false);
   const [showBoostPayment, setShowBoostPayment] = useState(false);
+  const [boostOption, setBoostOption] = useState<'SINGLE' | 'PACK'>('SINGLE');
+  const [selectedPackForBoost, setSelectedPackForBoost] = useState<(typeof BOOSTER_PACKS)[number] | null>(null);
+
+  // Profile update state (Requirement 3c)
+  const [profileName, setProfileName] = useState(currentUser.name || '');
+  const [profileProvince, setProfileProvince] = useState(currentUser.location?.province || 'Estuaire');
+  const [profileCity, setProfileCity] = useState(currentUser.location?.city || 'Libreville');
+  const [profileNeighborhood, setProfileNeighborhood] = useState(currentUser.location?.neighborhood || '');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileSuccessMsg, setProfileSuccessMsg] = useState<string | null>(null);
+
+  // Password reset flow state in Profile (Requirement 3c with OTP and 24h cooldown)
+  const [pwdStep, setPwdStep] = useState<'IDLE' | 'OTP' | 'NEW_PWD'>('IDLE');
+  const [pwdOtp, setPwdOtp] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showNewPwd, setShowNewPwd] = useState(false);
+  const [pwdError, setPwdError] = useState<string | null>(null);
+  const [pwdSuccess, setPwdSuccess] = useState<string | null>(null);
+  const [pwdLoading, setPwdLoading] = useState(false);
+  const [pwdResendTimer, setPwdResendTimer] = useState(45);
+  const pwdConfirmationRef = useRef<ConfirmationResult | null>(null);
+  const pwdRecaptchaRef = useRef<RecaptchaVerifier | null>(null);
+
+  // 24-hour password rate limiting
+  const passwordCooldown = useMemo(() => {
+    if (!currentUser.lastPasswordChangeDate) {
+      return { canChange: true, remainingHours: 0 };
+    }
+    const lastTime = new Date(currentUser.lastPasswordChangeDate).getTime();
+    if (isNaN(lastTime)) return { canChange: true, remainingHours: 0 };
+    const diffMs = Date.now() - lastTime;
+    const dayMs = 24 * 3600 * 1000;
+    if (diffMs < dayMs) {
+      const remainingHours = Math.ceil((dayMs - diffMs) / (3600 * 1000));
+      return { canChange: false, remainingHours };
+    }
+    return { canChange: true, remainingHours: 0 };
+  }, [currentUser.lastPasswordChangeDate]);
+
+  // Cities matching selected province in profile
+  const profileCities = GABON_PROVINCES.find((p) => p.name === profileProvince)?.cities || [];
+
+  // Countdown timer for password OTP resend
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (pwdStep === 'OTP' && pwdResendTimer > 0) {
+      interval = setInterval(() => {
+        setPwdResendTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [pwdStep, pwdResendTimer]);
+
+  const getOrCreatePwdRecaptcha = () => {
+    let container = document.getElementById('pwd-recaptcha-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'pwd-recaptcha-container';
+      document.body.appendChild(container);
+    }
+    if (pwdRecaptchaRef.current) {
+      try {
+        pwdRecaptchaRef.current.clear();
+      } catch (e) {
+        // ignore
+      }
+      pwdRecaptchaRef.current = null;
+    }
+    container.innerHTML = '';
+    pwdRecaptchaRef.current = new RecaptchaVerifier(auth, 'pwd-recaptcha-container', {
+      size: 'invisible',
+      callback: () => {},
+    });
+    return pwdRecaptchaRef.current;
+  };
 
   // Subscriptions & Booster Pack payment simulator state
   const [itemToPurchase, setItemToPurchase] = useState<{
@@ -153,8 +252,42 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     packType?: BoosterPackType;
   } | null>(null);
 
+  const [upgradedTierModal, setUpgradedTierModal] = useState<SubscriptionTier | null>(null);
+
   const isExempt = !!(currentUser.exemptFromPaymentAndKyc || currentUser.isExempt);
   const kycStatus = currentUser.idVerificationStatus || 'NOT_SUBMITTED';
+  const isKycVerified = kycStatus === 'VERIFIED';
+  const isAllowedToTransact = isExempt || isKycVerified;
+
+  const handleSafeOpenPublish = () => {
+    if (!isAllowedToTransact) {
+      alert(
+        kycStatus === 'PENDING'
+          ? "Votre pièce d'identité est actuellement en cours d'examen par notre équipe de modération. Vous pourrez déposer une annonce dès sa validation."
+          : "Vérification d'identité obligatoire : Conformément aux règles de sécurité, vous devez faire vérifier votre pièce d'identité avant de pouvoir déposer une annonce ou effectuer un paiement."
+      );
+      if (kycStatus !== 'PENDING') {
+        setIsKycModalOpen(true);
+      }
+      return;
+    }
+    onOpenPublishModal();
+  };
+
+  const handleOpenBoostModal = (ad: Ad) => {
+    if (!isAllowedToTransact) {
+      alert(
+        kycStatus === 'PENDING'
+          ? "Votre pièce d'identité est en cours d'examen par la modération. Vous pourrez booster vos annonces dès sa validation."
+          : "Vérification d'identité obligatoire : Vous devez faire vérifier votre pièce d'identité avant de pouvoir booster une annonce ou effectuer un paiement."
+      );
+      if (kycStatus !== 'PENDING') {
+        setIsKycModalOpen(true);
+      }
+      return;
+    }
+    setAdToBoost(ad);
+  };
 
   // Filter ads strictly belonging to this user
   const myAds = ads.filter((ad) => isAdOwner(ad, currentUser));
@@ -172,31 +305,240 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const simultaneousCount = userSimultaneousAds.length;
 
   const currentTier: SubscriptionTier = currentUser.subscriptionTier || 'STANDARD';
+
+  // Requirement 4: Subscription Expiration & Quota Downgrade Management
+  const isSubscriptionExpired = useMemo(() => {
+    if (isExempt) return false;
+    if (!currentUser.subscriptionTier || currentUser.subscriptionTier === 'STANDARD') return false;
+    if (!currentUser.subscriptionExpiresAt) return false;
+    return new Date(currentUser.subscriptionExpiresAt).getTime() < Date.now();
+  }, [currentUser.subscriptionTier, currentUser.subscriptionExpiresAt, isExempt]);
+
+  const effectiveTier: SubscriptionTier = isSubscriptionExpired
+    ? 'STANDARD'
+    : currentUser.subscriptionTier || 'STANDARD';
+
   const maxQuota = useMemo(() => {
-    if (isExempt) return 20; // Requirement 2: VIP Partner limit is 20 to reflect Business version!
-    if (currentTier === 'BUSINESS') return 20;
-    if (currentTier === 'ELITE') return 14;
-    if (currentTier === 'PRO') return 8;
+    if (isExempt) return 20; // VIP Partner limit is 20 to reflect Business version
+    if (effectiveTier === 'BUSINESS') return 20;
+    if (effectiveTier === 'ELITE') return 14;
+    if (effectiveTier === 'PRO') return 8;
     return 3; // Standard free users: max 3 simultaneous ads
-  }, [currentTier, isExempt]);
+  }, [effectiveTier, isExempt]);
+
+  // Ads currently suspended due to quota excess
+  const suspendedQuotaAds = useMemo(() => {
+    return myAds.filter(
+      (a) => a.status === 'SUSPENDED' && ((a as any).suspensionReason === 'FORFAIT_EXPIRE_QUOTA' || !(a as any).suspensionReason)
+    );
+  }, [myAds]);
+
+  // Automatic suspension of excess active ads if quota is exceeded (the newest ads are suspended)
+  const [isSuspendingExcess, setIsSuspendingExcess] = useState(false);
+  useEffect(() => {
+    if (isExempt) return;
+    const activeAds = myAds.filter((a) => a.status === 'ACTIVE');
+    if (activeAds.length > maxQuota && !isSuspendingExcess) {
+      // Sort ascending: oldest ads stay active, newest excess ads are suspended
+      const sorted = [...activeAds].sort((a, b) => {
+        const tA = new Date(a.createdAt || a.publishedAt || 0).getTime();
+        const tB = new Date(b.createdAt || b.publishedAt || 0).getTime();
+        return tA - tB;
+      });
+      const excessAds = sorted.slice(maxQuota);
+      setIsSuspendingExcess(true);
+      (async () => {
+        try {
+          for (const excessAd of excessAds) {
+            await updateDoc(doc(db, 'ads', excessAd.id), {
+              status: 'SUSPENDED',
+              suspensionReason: 'FORFAIT_EXPIRE_QUOTA',
+              suspendedAt: new Date().toISOString(),
+            });
+          }
+        } catch (err) {
+          console.error('Error suspending excess quota ads:', err);
+        } finally {
+          setIsSuspendingExcess(false);
+        }
+      })();
+    }
+  }, [myAds, maxQuota, isExempt, isSuspendingExcess]);
 
   const displayedAds = myAds.filter((ad) => {
     if (filterStatus === 'ACTIVE') return ad.status === 'ACTIVE';
     if (filterStatus === 'PENDING') return ad.status === 'PENDING_REVIEW';
     if (filterStatus === 'REJECTED') return ad.status === 'REJECTED';
+    if (filterStatus === 'SUSPENDED') return ad.status === 'SUSPENDED';
     return true;
   });
 
+  // Requirement 4: Boost purchase success (Single Boost or Booster Pack)
+  const handleBoostPurchaseSuccess = async () => {
+    if (!adToBoost || !onBoostAd) return;
+    if (!isAllowedToTransact) {
+      alert("Vérification d'identité obligatoire : Votre identité doit être vérifiée avant tout paiement ou activation de boost.");
+      setIsKycModalOpen(true);
+      return;
+    }
+    setIsBoostingAd(true);
+    try {
+      if (boostOption === 'SINGLE' || !selectedPackForBoost) {
+        await onBoostAd(adToBoost.id);
+        alert(`Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours.`);
+      } else {
+        // 1. Boost this ad immediately
+        await onBoostAd(adToBoost.id);
+        // 2. Credit the remaining (pack.boostsCount - 1) boosters to user's balance
+        const remainingToCredit = selectedPackForBoost.boostsCount - 1;
+        if (remainingToCredit > 0 && onUpdateUser) {
+          const currentBoosts = currentUser.freeBoostsRemaining || 0;
+          const newTotal = Math.min(20, currentBoosts + remainingToCredit);
+          await onUpdateUser({
+            freeBoostsRemaining: newTotal,
+            activeBoosterPack: selectedPackForBoost.type,
+          });
+        }
+        alert(
+          `Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours, et ${remainingToCredit} boosters supplémentaires ont été crédités sur votre compte (solde disponible) !`
+        );
+      }
+      setAdToBoost(null);
+      setShowBoostPayment(false);
+      setSelectedPackForBoost(null);
+    } catch (e: any) {
+      console.error('Boost purchase error:', e);
+      alert("Erreur lors de l'activation du boost : " + (e?.message || 'Réessayez.'));
+    } finally {
+      setIsBoostingAd(false);
+    }
+  };
+
+  // Requirement 3c: Save personal info (Name & Location)
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onUpdateUser) return;
+    if (!profileName.trim()) {
+      alert('Veuillez renseigner votre nom complet.');
+      return;
+    }
+    setIsSavingProfile(true);
+    setProfileSuccessMsg(null);
+    try {
+      await onUpdateUser({
+        name: profileName.trim(),
+        location: {
+          province: profileProvince,
+          city: profileCity,
+          neighborhood: profileNeighborhood.trim(),
+        },
+      });
+      setProfileSuccessMsg('Vos informations personnelles ont été mises à jour avec succès.');
+      setTimeout(() => setProfileSuccessMsg(null), 4000);
+    } catch (err: any) {
+      console.error('Error saving profile:', err);
+      alert('Erreur lors de la sauvegarde : ' + (err?.message || 'Réessayez.'));
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  // Requirement 3c: Send SMS OTP for password change
+  const handleRequestPasswordOtp = async () => {
+    setPwdError(null);
+    setPwdSuccess(null);
+    const phone = currentUser.contactPhone || currentUser.phoneNumber;
+    if (!phone) {
+      setPwdError('Aucun numéro de téléphone Gabon associé à ce compte.');
+      return;
+    }
+    const e164 = formatGabonPhone(phone);
+    setPwdLoading(true);
+    try {
+      const verifier = getOrCreatePwdRecaptcha();
+      pwdConfirmationRef.current = await signInWithPhoneNumber(auth, e164, verifier);
+      setPwdStep('OTP');
+      setPwdResendTimer(45);
+    } catch (err: any) {
+      console.error('Password OTP error:', err);
+      setPwdError("Impossible d'envoyer le code SMS OTP. Réessayez dans un instant.");
+    } finally {
+      setPwdLoading(false);
+    }
+  };
+
+  // Requirement 3c: Verify OTP code
+  const handleVerifyPasswordOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwdError(null);
+    if (!pwdConfirmationRef.current) {
+      setPwdError('La session SMS a expiré. Veuillez redemander un code.');
+      setPwdStep('IDLE');
+      return;
+    }
+    setPwdLoading(true);
+    try {
+      await pwdConfirmationRef.current.confirm(pwdOtp);
+      setPwdStep('NEW_PWD');
+    } catch {
+      setPwdError('Code SMS OTP incorrect ou expiré.');
+    } finally {
+      setPwdLoading(false);
+    }
+  };
+
+  // Requirement 3c: Save new password (records lastPasswordChangeDate to enforce 24h cooldown)
+  const handleSaveNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwdError(null);
+    if (newPassword.length < 6) {
+      setPwdError('Le mot de passe doit comporter au moins 6 caractères.');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPwdError('Les deux mots de passe ne correspondent pas.');
+      return;
+    }
+    setPwdLoading(true);
+    try {
+      const nowIso = new Date().toISOString();
+      if (onUpdateUser) {
+        await onUpdateUser({
+          password: newPassword.trim(),
+          lastPasswordChangeDate: nowIso,
+        });
+      }
+      if (auth.currentUser) {
+        try {
+          await updatePassword(auth.currentUser, newPassword.trim());
+        } catch {
+          // ignore
+        }
+      }
+      setPwdSuccess('Votre nouveau mot de passe a été enregistré avec succès !');
+      setPwdStep('IDLE');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setPwdOtp('');
+      setTimeout(() => setPwdSuccess(null), 5000);
+    } catch (err: any) {
+      console.error('Save password error:', err);
+      setPwdError('Erreur lors de la mise à jour du mot de passe.');
+    } finally {
+      setPwdLoading(false);
+    }
+  };
+
   const handleConfirmBoost = async (ad: Ad) => {
     if (!onBoostAd) return;
+    if (!isAllowedToTransact) {
+      alert("Vérification d'identité obligatoire : Votre identité doit être vérifiée avant de pouvoir booster une annonce.");
+      setIsKycModalOpen(true);
+      return;
+    }
     setIsBoostingAd(true);
     try {
       await onBoostAd(ad.id);
-      if (currentUser.freeBoostsRemaining && currentUser.freeBoostsRemaining > 0 && onUpdateUser) {
-        await onUpdateUser({
-          freeBoostsRemaining: currentUser.freeBoostsRemaining - 1,
-        });
-      }
       setAdToBoost(null);
       setShowBoostPayment(false);
     } catch (e) {
@@ -208,15 +550,34 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   };
 
   const handleSelectSubscription = async (tier: (typeof SUBSCRIPTION_TIERS)[number]) => {
+    if (!isAllowedToTransact) {
+      alert(
+        kycStatus === 'PENDING'
+          ? "Votre pièce d'identité est actuellement en cours d'examen par la modération. Vous pourrez souscrire à un abonnement dès sa validation."
+          : "Vérification d'identité obligatoire : Vous devez obligatoirement faire vérifier votre identité avant de souscrire à un forfait ou d'effectuer un paiement."
+      );
+      if (kycStatus !== 'PENDING') {
+        setIsKycModalOpen(true);
+      }
+      return;
+    }
+
     if (isExempt) {
       if (!onUpdateUser) return;
-      const boostsToAdd = tier.tier === 'BUSINESS' ? 6 : tier.tier === 'ELITE' ? 3 : 1;
-      await onUpdateUser({
-        subscriptionTier: tier.tier,
-        subscriptionExpiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
-        freeBoostsRemaining: Math.min(20, (currentUser.freeBoostsRemaining || 0) + boostsToAdd),
-      });
-      alert(`Forfait ${tier.name} activé avec succès (Gratuit Partenaire VIP) ! Vos avantages sont immédiatement actifs.`);
+      try {
+        const boostsToAdd = tier.tier === 'BUSINESS' ? 6 : tier.tier === 'ELITE' ? 3 : 1;
+        const currentBoosts = currentUser.freeBoostsRemaining || 0;
+        const newBoosts = Math.min(20, currentBoosts + boostsToAdd);
+        await onUpdateUser({
+          subscriptionTier: tier.tier,
+          subscriptionExpiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+          freeBoostsRemaining: newBoosts,
+        });
+        setUpgradedTierModal(tier.tier);
+      } catch (err: any) {
+        console.error('Error activating plan:', err);
+        alert(`Erreur lors de l'activation du forfait ${tier.name} : ${err?.message || 'Vérifiez votre connexion et réessayez.'}`);
+      }
       return;
     }
 
@@ -229,15 +590,32 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   };
 
   const handleSelectBoosterPack = async (pack: (typeof BOOSTER_PACKS)[number]) => {
+    if (!isAllowedToTransact) {
+      alert(
+        kycStatus === 'PENDING'
+          ? "Votre pièce d'identité est actuellement en cours d'examen par la modération. Vous pourrez acheter des boosters dès sa validation."
+          : "Vérification d'identité obligatoire : Vous devez obligatoirement faire vérifier votre identité avant d'acheter un pack de boosters ou d'effectuer un paiement."
+      );
+      if (kycStatus !== 'PENDING') {
+        setIsKycModalOpen(true);
+      }
+      return;
+    }
+
     if (isExempt) {
       if (!onUpdateUser) return;
-      const currentBoosts = currentUser.freeBoostsRemaining || 0;
-      const newBoosts = Math.min(20, currentBoosts + pack.boostsCount);
-      await onUpdateUser({
-        freeBoostsRemaining: newBoosts,
-        activeBoosterPack: pack.type,
-      });
-      alert(`${pack.name} activé avec succès (Gratuit Partenaire VIP) ! Votre nouveau solde est de ${newBoosts} boosters (max 20).`);
+      try {
+        const currentBoosts = currentUser.freeBoostsRemaining || 0;
+        const newBoosts = Math.min(20, currentBoosts + pack.boostsCount);
+        await onUpdateUser({
+          freeBoostsRemaining: newBoosts,
+          activeBoosterPack: pack.type,
+        });
+        alert(`${pack.name} activé avec succès ! Votre nouveau solde est de ${newBoosts} boosters disponibles (max 20).`);
+      } catch (err: any) {
+        console.error('Error adding booster pack for VIP:', err);
+        alert(`Erreur lors de l'activation des boosters : ${err?.message || 'Vérifiez votre connexion et réessayez.'}`);
+      }
       return;
     }
 
@@ -255,12 +633,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     try {
       if (itemToPurchase.type === 'SUBSCRIPTION' && itemToPurchase.tier) {
         const boostsToAdd = itemToPurchase.tier === 'BUSINESS' ? 6 : itemToPurchase.tier === 'ELITE' ? 3 : 1;
+        const currentBoosts = currentUser.freeBoostsRemaining || 0;
+        const newBoosts = Math.min(20, currentBoosts + boostsToAdd);
         await onUpdateUser({
           subscriptionTier: itemToPurchase.tier,
           subscriptionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
-          freeBoostsRemaining: Math.min(20, (currentUser.freeBoostsRemaining || 0) + boostsToAdd),
+          freeBoostsRemaining: newBoosts,
         });
-        alert(`Félicitations ! Vous êtes désormais abonné au forfait ${itemToPurchase.tier}. Vos avantages sont immédiatement actifs.`);
+        setItemToPurchase(null);
+        setUpgradedTierModal(itemToPurchase.tier);
       } else if (itemToPurchase.type === 'BOOSTER_PACK' && itemToPurchase.boostCount) {
         const currentBoosts = currentUser.freeBoostsRemaining || 0;
         const newBoosts = Math.min(20, currentBoosts + itemToPurchase.boostCount);
@@ -268,88 +649,143 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           freeBoostsRemaining: newBoosts,
           activeBoosterPack: itemToPurchase.packType,
         });
-        alert(`Pack de boosters activé avec succès ! Votre nouveau solde est de ${newBoosts} boosters (max 20).`);
+        setItemToPurchase(null);
+        alert(`Pack de boosters activé avec succès ! Votre nouveau solde est de ${newBoosts} boosters disponibles (max 20).`);
       }
-      setItemToPurchase(null);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Purchase update error:', e);
-      alert('Erreur lors de l\'activation de votre achat.');
+      alert("Erreur lors de l'activation de votre achat : " + (e?.message || 'Veuillez réessayer.'));
     }
   };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
-      {/* User Identity & Profile Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white rounded-3xl p-6 sm:p-8 border border-slate-800 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-        <div className="flex items-start sm:items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-white font-black text-2xl shadow-lg border border-emerald-400/30 shrink-0">
-            {currentUser.name.charAt(0).toUpperCase()}
-          </div>
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-xl sm:text-2xl font-black text-white">{currentUser.name}</h2>
-              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Numéro Gabon Vérifié
-              </span>
-              <span className={`text-[10px] font-black px-2 py-0.5 rounded ${
-                currentUser.operator === 'AIRTEL' ? 'bg-red-900/60 text-red-200 border border-red-500/30' : 'bg-blue-900/60 text-blue-200 border border-blue-500/30'
-              }`}>
-                {currentUser.operator === 'AIRTEL' ? 'Airtel Gabon' : 'Moov Africa Gabon'}
-              </span>
-
-              {/* Subscription badge */}
-              {currentTier !== 'STANDARD' && (
-                <span className="bg-amber-400 text-slate-950 font-black text-[10px] uppercase px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <Crown className="w-3 h-3 fill-slate-950" />
-                  Plan {currentTier}
+      {/* User Identity & Profile Banner (Harmonious & Responsive Layout - Point 5) */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white rounded-3xl p-6 sm:p-7 border border-slate-800 shadow-xl">
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+          {/* Left Column: Full room for Profile Details & Badges */}
+          <div className="flex items-start gap-4 flex-1 min-w-0">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-white font-black text-2xl shadow-lg border border-emerald-400/30 shrink-0">
+              {(currentUser.name || 'U').charAt(0).toUpperCase()}
+            </div>
+            <div className="space-y-2 min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-xl sm:text-2xl font-black text-white truncate">
+                  {currentUser.name || 'Annonceur'}
+                </h2>
+                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full flex items-center gap-1 shrink-0">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  Numéro Gabon Vérifié
                 </span>
-              )}
+                {currentUser.operator && (
+                  <span
+                    className={`text-[10px] font-black px-2.5 py-0.5 rounded shrink-0 ${
+                      currentUser.operator === 'AIRTEL'
+                        ? 'bg-red-900/60 text-red-200 border border-red-500/30'
+                        : 'bg-blue-900/60 text-blue-200 border border-blue-500/30'
+                    }`}
+                  >
+                    {currentUser.operator === 'AIRTEL' ? 'Airtel Gabon' : 'Moov Africa Gabon'}
+                  </span>
+                )}
+
+                {/* Subscription status badge */}
+                {currentTier !== 'STANDARD' && (
+                  <span
+                    className={`font-black text-[10px] uppercase px-2.5 py-0.5 rounded-full flex items-center gap-1 shrink-0 shadow-2xs ${
+                      isSubscriptionExpired
+                        ? 'bg-red-900/80 text-red-200 border border-red-500/40'
+                        : 'bg-amber-400 text-slate-950'
+                    }`}
+                  >
+                    <Crown className="w-3 h-3 fill-current" />
+                    Plan {currentTier} {isSubscriptionExpired ? '(Expiré)' : ''}
+                  </span>
+                )}
+              </div>
+
+              {/* Informative metadata row */}
+              <div className="text-xs text-slate-300 flex items-center gap-2 flex-wrap">
+                <span className="font-mono font-bold text-white tracking-wide bg-slate-800/80 px-2 py-0.5 rounded-md border border-slate-700">
+                  {currentUser.contactPhone || currentUser.phoneNumber || 'Numéro vérifié'}
+                </span>
+                <span className="text-slate-500">•</span>
+                <span className="text-slate-300">Charte CGU acceptée</span>
+                <span className="text-slate-500">•</span>
+                <span className="text-emerald-300 font-bold">
+                  Annonces actives : {myAds.filter((a) => a.status === 'ACTIVE').length} / {maxQuota}
+                </span>
+                {currentUser.subscriptionExpiresAt && currentTier !== 'STANDARD' && (
+                  <>
+                    <span className="text-slate-500">•</span>
+                    <span className={isSubscriptionExpired ? 'text-rose-300 font-semibold' : 'text-amber-300'}>
+                      {isSubscriptionExpired
+                        ? `Forfait expiré le ${new Date(currentUser.subscriptionExpiresAt).toLocaleDateString('fr-FR')}`
+                        : `Valide jusqu'au ${new Date(currentUser.subscriptionExpiresAt).toLocaleDateString('fr-FR')}`}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column: Balanced Booster Pill & Quick Action Buttons */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto shrink-0">
+            {/* Green Box: Sleek, well-proportioned Boosters Disponibles widget */}
+            <div className="bg-gradient-to-br from-emerald-600 to-teal-800 text-white rounded-2xl px-4 py-2.5 border border-emerald-400/50 shadow-md flex items-center justify-between sm:justify-start gap-3.5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-xs text-amber-300 border border-white/30 flex items-center justify-center shrink-0">
+                  <Zap className="w-4 h-4 fill-amber-300 text-amber-300" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-100 block">
+                    Boosters Disponibles
+                  </span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-xl font-black text-white leading-none">
+                      {currentUser.freeBoostsRemaining || 0}
+                    </span>
+                    <span className="text-[10px] font-bold text-emerald-200">
+                      / 20 max
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setDashboardTab('SUBSCRIPTIONS')}
+                className="text-[10px] font-black bg-white text-emerald-950 hover:bg-emerald-50 px-2.5 py-1.5 rounded-lg shadow-xs transition-all cursor-pointer flex items-center gap-1 shrink-0 ml-1.5"
+                title="Acheter ou recharger vos boosters"
+              >
+                <span>Recharger</span>
+                <ArrowRight className="w-2.5 h-2.5" />
+              </button>
             </div>
 
-            <p className="text-xs text-slate-300 flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-white tracking-wide">{currentUser.contactPhone}</span>
-              <span>•</span>
-              <span>Charte CGU acceptée</span>
-              <span>•</span>
-              <span className="text-emerald-300 font-semibold">
-                Annonces actives : {simultaneousCount} / {maxQuota}
-              </span>
-              {(currentUser.freeBoostsRemaining || 0) > 0 && (
-                <>
-                  <span>•</span>
-                  <span className="text-amber-300 font-semibold flex items-center gap-1">
-                    <Sparkles className="w-3 h-3 fill-amber-300" />
-                    {currentUser.freeBoostsRemaining} boost{(currentUser.freeBoostsRemaining || 0) > 1 ? 's' : ''} offert{(currentUser.freeBoostsRemaining || 0) > 1 ? 's' : ''}
-                  </span>
-                </>
-              )}
-            </p>
+            {/* Quick Actions */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSafeOpenPublish}
+                className="flex-1 sm:flex-initial bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs px-3.5 py-2.5 rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>Déposer une annonce</span>
+              </button>
+
+              <button
+                onClick={onLogout}
+                className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1 border border-slate-700 cursor-pointer"
+                title="Se déconnecter"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Déconnexion</span>
+              </button>
+            </div>
           </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-          <button
-            onClick={onOpenPublishModal}
-            className="flex-1 sm:flex-initial bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>Déposer une nouvelle annonce</span>
-          </button>
-
-          <button
-            onClick={onLogout}
-            className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-700 cursor-pointer"
-            title="Se déconnecter"
-          >
-            <LogOut className="w-4 h-4" />
-            <span className="hidden sm:inline">Déconnexion</span>
-          </button>
         </div>
       </div>
 
       {/* Advertiser Space Tabs (Exclusively visible inside advertiser dashboard) */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto no-scrollbar flex-nowrap py-1">
         <button
           onClick={() => setDashboardTab('ADS')}
           className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
@@ -378,6 +814,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </span>
           )}
         </button>
+
+        <button
+          onClick={() => setDashboardTab('PROFILE')}
+          className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+            dashboardTab === 'PROFILE'
+              ? 'bg-emerald-600 text-white shadow-sm'
+              : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <User className="w-4 h-4 text-emerald-500" />
+          <span>Mes Informations & Sécurité</span>
+        </button>
       </div>
 
       {/* TAB 1: ADS MANAGEMENT */}
@@ -403,7 +851,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 </div>
               </div>
               <button
-                onClick={onOpenPublishModal}
+                onClick={handleSafeOpenPublish}
                 className="bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 shrink-0"
               >
                 <PlusCircle className="w-4 h-4" />
@@ -425,7 +873,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-slate-600 mt-1">
-                    Votre document d'identité a été validé par la modération. Vos annonces publiées bénéficient du badge officiel de confiance anti-fraude.
+                    Votre document d'identité a été validé par la modération. Vous pouvez publier des annonces et effectuer vos transactions en toute sécurité.
                   </p>
                 </div>
               </div>
@@ -453,7 +901,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-slate-600 mt-1">
-                    Votre pièce d'identité ({currentUser.idDocumentType || 'CNI'}) a été transmise avec succès. Notre équipe contrôle sa conformité.
+                    Votre pièce d'identité ({currentUser.idDocumentType || 'CNI'}) a été transmise avec succès. Notre équipe contrôle sa conformité. Dès sa validation, vous pourrez publier vos annonces et effectuer des paiements.
                   </p>
                 </div>
               </div>
@@ -466,19 +914,19 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 </div>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-black text-sm text-slate-900">Vérification d'identité obligatoire</span>
+                    <span className="font-black text-sm text-slate-900">Vérification d'identité obligatoire pour publier & payer</span>
                     <span className="bg-amber-100 text-amber-800 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-amber-300">
-                      Anti-Fraude
+                      Sécurité Anti-Fraude
                     </span>
                   </div>
                   <p className="text-xs text-slate-600 mt-1">
-                    Déposez une photo nette de votre pièce officielle pour valider vos annonces.
+                    Conformément aux règles de sécurité, vous devez faire vérifier votre pièce d'identité avant de pouvoir déposer une annonce, souscrire à un abonnement ou acheter des boosters (seuls les partenaires VIP en sont exemptés).
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setIsKycModalOpen(true)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl shadow-md transition-all flex items-center gap-1.5 shrink-0"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 shrink-0 w-full sm:w-auto"
               >
                 <ShieldCheck className="w-4 h-4" />
                 <span>Vérifier mon identité</span>
@@ -487,7 +935,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           )}
 
           {/* KPI Cards for the User */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+          <div className={`grid gap-3 sm:gap-4 ${suspendedQuotaAds.length > 0 ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}>
             <div
               onClick={() => setFilterStatus('ALL')}
               className={`bg-white p-4 rounded-2xl border cursor-pointer transition-all ${
@@ -527,6 +975,24 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <span className="text-[10px] text-emerald-700">Visibles par le public</span>
             </div>
 
+            {suspendedQuotaAds.length > 0 && (
+              <div
+                onClick={() => setFilterStatus('SUSPENDED')}
+                className={`bg-white p-4 rounded-2xl border cursor-pointer transition-all ${
+                  filterStatus === 'SUSPENDED'
+                    ? 'border-amber-500 ring-2 ring-amber-500/20 shadow-xs'
+                    : 'border-amber-200 bg-amber-50/30 hover:border-amber-300'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-amber-800">En pause (Forfait)</span>
+                  <PauseCircle className="w-3.5 h-3.5 text-amber-600" />
+                </div>
+                <div className="text-2xl font-black text-amber-700">{suspendedQuotaAds.length}</div>
+                <span className="text-[10px] text-amber-600">Plafond Standard dépassé</span>
+              </div>
+            )}
+
             <div className="bg-white p-4 rounded-2xl border border-slate-200">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-bold text-blue-700">Vues Cumulées</span>
@@ -536,6 +1002,37 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <span className="text-[10px] text-slate-400">Total consultations</span>
             </div>
           </div>
+
+          {/* Requirement 4: Alert Banner for Suspended Ads due to expired plan */}
+          {suspendedQuotaAds.length > 0 && (
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-3xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-amber-100 text-amber-700 border border-amber-300 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-black text-sm text-slate-900">
+                      {suspendedQuotaAds.length} annonce{suspendedQuotaAds.length > 1 ? 's' : ''} en pause suite à l'expiration de votre forfait
+                    </span>
+                    <span className="bg-amber-200 text-amber-900 text-[10px] font-black px-2.5 py-0.5 rounded-full">
+                      Plafond Standard ({maxQuota} annonces)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1 max-w-2xl">
+                    Vos {maxQuota} annonces les plus anciennes restent en ligne. Vos {suspendedQuotaAds.length} annonces les plus récentes ont été automatiquement suspendues et restent conservées intactes. Renouvelez votre forfait pour les réactiver immédiatement.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDashboardTab('SUBSCRIPTIONS')}
+                className="bg-slate-900 hover:bg-slate-800 text-amber-400 font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-md transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+              >
+                <Crown className="w-4 h-4 fill-amber-400" />
+                <span>Renouveler mon forfait</span>
+              </button>
+            </div>
+          )}
 
           {/* Ads List */}
           {displayedAds.length > 0 ? (
@@ -577,7 +1074,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       {/* Header badges */}
                       <div className="flex items-center justify-between gap-2 mb-2">
                         <div className="flex items-center gap-1.5">
-                          {ad.mainCategory !== 'EMPLOI' && ad.transactionType && (
+                          {ad.mainCategory === 'EMPLOI' ? (
+                            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-sm bg-purple-100 text-purple-900 border border-purple-300">
+                              À EMPLOYER
+                            </span>
+                          ) : ad.transactionType ? (
                             <span
                               className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${
                                 ad.transactionType === 'VENTE'
@@ -587,7 +1088,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             >
                               {ad.transactionType === 'VENTE' ? 'À VENDRE' : 'À LOUER'}
                             </span>
-                          )}
+                          ) : null}
                           <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-sm">
                             {ad.mainCategory}
                           </span>
@@ -595,7 +1096,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
                         <span
                           className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${
-                            isPending
+                            ad.status === 'SUSPENDED'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              : isPending
                               ? 'bg-amber-100 text-amber-800 border border-amber-300'
                               : isActive
                               ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
@@ -604,7 +1107,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               : 'bg-slate-100 text-slate-700'
                           }`}
                         >
-                          {isPending ? 'En attente' : isActive ? 'En ligne' : isRejected ? 'Rejetée' : 'Expirée'}
+                          {ad.status === 'SUSPENDED'
+                            ? '⏸️ En pause (Forfait)'
+                            : isPending
+                            ? 'En attente'
+                            : isActive
+                            ? 'En ligne'
+                            : isRejected
+                            ? 'Rejetée'
+                            : 'Expirée'}
                         </span>
                       </div>
 
@@ -670,10 +1181,21 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1.5">
+                        {ad.status === 'SUSPENDED' && (
+                          <button
+                            onClick={() => setDashboardTab('SUBSCRIPTIONS')}
+                            className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                            title="Renouveler votre forfait pour réactiver cette annonce"
+                          >
+                            <Crown className="w-3 h-3 fill-slate-950" />
+                            <span>Réactiver (Forfait)</span>
+                          </button>
+                        )}
+
                         {/* Requirement 6: Boost to top button */}
                         {isActive && (
                           <button
-                            onClick={() => setAdToBoost(ad)}
+                            onClick={() => handleOpenBoostModal(ad)}
                             className={`px-2.5 py-1.5 font-bold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer ${
                               isBoosted
                                 ? 'bg-amber-100 text-amber-900 border border-amber-300'
@@ -724,7 +1246,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
 
               <button
-                onClick={onOpenPublishModal}
+                onClick={handleSafeOpenPublish}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md transition-all inline-flex items-center gap-2 cursor-pointer"
               >
                 <PlusCircle className="w-4 h-4" />
@@ -874,7 +1396,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 </h3>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Propulsez vos annonces en première position pendant 7 jours. Achetez un pack de 5 ou 10 boosters à tarif préférentiel (jusqu'à 20 boosters par utilisateur). Gratuit pour les partenaires VIP.
+                {isExempt
+                  ? "Propulsez vos annonces en première position pendant 7 jours. Activez un pack de 5 ou 10 boosters inclus avec votre statut partenaire privilégié."
+                  : "Propulsez vos annonces en première position pendant 7 jours. Achetez un pack de 5 ou 10 boosters à tarif préférentiel (jusqu'à 20 boosters par utilisateur)."}
               </p>
             </div>
 
@@ -935,10 +1459,339 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         </div>
       )}
 
-      {/* Boost Modal (Requirement 6) */}
+      {/* TAB 3: PERSONAL INFORMATION & SECURITY (Requirement 3c) */}
+      {dashboardTab === 'PROFILE' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <User className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-black text-lg text-slate-900">
+                  Mes Informations Personnelles & Sécurité
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Gérez votre nom d'annonceur, votre localisation géographique au Gabon et votre mot de passe de sécurité.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Card 1: Personal Info & Location */}
+            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+              <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+                <MapPin className="w-4 h-4 text-emerald-600" />
+                <h4 className="font-black text-sm text-slate-900 uppercase tracking-wide">
+                  Coordonnées & Localisation
+                </h4>
+              </div>
+
+              {profileSuccessMsg && (
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs p-3 rounded-xl flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{profileSuccessMsg}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSaveProfile} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Nom complet ou Nom de l'Agence
+                  </label>
+                  <input
+                    type="text"
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    placeholder="Ex: Paul OBAME ou Immobilier Gabon"
+                    className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Numéro de Téléphone Vérifié (+241)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={currentUser.contactPhone || currentUser.phoneNumber || ''}
+                      readOnly
+                      disabled
+                      className="w-full text-xs font-bold bg-slate-100 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-500 cursor-not-allowed"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                      Vérifié
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Pour modifier votre numéro, contactez l'administration.
+                  </span>
+                </div>
+
+                {/* Province & City Selection */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                      Province
+                    </label>
+                    <select
+                      value={profileProvince}
+                      onChange={(e) => {
+                        const prov = e.target.value;
+                        setProfileProvince(prov);
+                        const match = GABON_PROVINCES.find((p) => p.name === prov)?.cities || [];
+                        if (match.length > 0) {
+                          setProfileCity(match[0].name);
+                        }
+                      }}
+                      className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {GABON_PROVINCES.map((p) => (
+                        <option key={p.code} value={p.name}>
+                          {p.name} ({p.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                      Ville
+                    </label>
+                    <select
+                      value={profileCity}
+                      onChange={(e) => setProfileCity(e.target.value)}
+                      className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {profileCities.map((c) => (
+                        <option key={c.name} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Quartier de Résidence / Localité
+                  </label>
+                  <input
+                    type="text"
+                    value={profileNeighborhood}
+                    onChange={(e) => setProfileNeighborhood(e.target.value)}
+                    placeholder="Ex: Akébé, Nzeng-Ayong, Glass, Alénakiri..."
+                    className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingProfile}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {isSavingProfile ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  <span>Enregistrer mes coordonnées</span>
+                </button>
+              </form>
+            </div>
+
+            {/* Card 2: Security & Password Management (With 24h limit) */}
+            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+              <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+                <KeyRound className="w-4 h-4 text-emerald-600" />
+                <h4 className="font-black text-sm text-slate-900 uppercase tracking-wide">
+                  Mot de passe & Sécurité du Compte
+                </h4>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600 font-medium">Statut du mot de passe :</span>
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-emerald-300">
+                    Actif
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600 font-medium">Dernier changement :</span>
+                  <span className="font-bold text-slate-800">
+                    {currentUser.lastPasswordChangeDate
+                      ? new Date(currentUser.lastPasswordChangeDate).toLocaleDateString('fr-FR', {
+                          day: 'numeric',
+                          month: 'long',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
+                      : 'Non enregistré'}
+                  </span>
+                </div>
+                <div className="pt-1 text-[11px] text-slate-500 border-t border-slate-200/60 leading-relaxed">
+                  🛡️ <em>Règle de sécurité Gabon :</em> Pour prévenir les abus et protéger les envois de codes SMS, la modification du mot de passe requiert une confirmation par SMS OTP et est limitée à <strong>une seule fois par période de 24 heures</strong>.
+                </div>
+              </div>
+
+              {pwdSuccess && (
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs p-3 rounded-xl flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{pwdSuccess}</span>
+                </div>
+              )}
+
+              {pwdError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-xl flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                  <span>{pwdError}</span>
+                </div>
+              )}
+
+              {/* Password Cooldown Lock Check */}
+              {!passwordCooldown.canChange ? (
+                <div className="bg-amber-50 border border-amber-300 p-4 rounded-2xl text-xs text-amber-900 space-y-1.5">
+                  <div className="flex items-center gap-2 font-black">
+                    <Clock className="w-4 h-4 text-amber-600" />
+                    <span>Délai de sécurité actif (1 modification / 24h)</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-amber-800">
+                    Vous avez déjà modifié votre mot de passe récemment. Pour protéger votre compte contre les tentatives répétées, vous pourrez à nouveau le changer dans <strong>{passwordCooldown.remainingHours} heure(s)</strong>.
+                  </p>
+                </div>
+              ) : pwdStep === 'IDLE' ? (
+                <div className="space-y-3 pt-2">
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Cliquez ci-dessous pour lancer la procédure de changement de mot de passe. Un code de sécurité SMS sera envoyé à votre numéro <strong>{currentUser.contactPhone || currentUser.phoneNumber}</strong>.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={pwdLoading}
+                    onClick={handleRequestPasswordOtp}
+                    className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {pwdLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                    <span>Changer mon mot de passe (Vérification SMS OTP)</span>
+                  </button>
+                </div>
+              ) : pwdStep === 'OTP' ? (
+                <form onSubmit={handleVerifyPasswordOtp} className="space-y-3 pt-2">
+                  <div className="text-xs text-slate-700 font-bold">
+                    Entrez le code SMS à 6 chiffres envoyé au {currentUser.contactPhone || currentUser.phoneNumber} :
+                  </div>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={pwdOtp}
+                    onChange={(e) => setPwdOtp(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="Ex: 582104"
+                    className="w-full tracking-widest text-center text-xl font-black py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                    required
+                    autoFocus
+                  />
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <button
+                      type="button"
+                      onClick={() => setPwdStep('IDLE')}
+                      className="text-slate-600 underline"
+                    >
+                      Annuler
+                    </button>
+                    {pwdResendTimer > 0 ? (
+                      <span className="text-slate-400">Renvoyer dans {pwdResendTimer}s</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleRequestPasswordOtp}
+                        className="text-emerald-700 underline font-bold"
+                      >
+                        Renvoyer le code SMS
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={pwdLoading || pwdOtp.length < 6}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {pwdLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    <span>Vérifier le code SMS</span>
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleSaveNewPassword} className="space-y-3 pt-2">
+                  <div className="text-xs text-emerald-800 font-bold bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Numéro confirmé par SMS. Définissez votre nouveau mot de passe.</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                      Nouveau mot de passe (min. 6 caractères)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showNewPwd ? 'text' : 'password'}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Nouveau mot de passe"
+                        className="w-full pl-3 pr-10 py-2.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                        required
+                        minLength={6}
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPwd(!showNewPwd)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 p-1"
+                      >
+                        {showNewPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                      Confirmer le nouveau mot de passe
+                    </label>
+                    <input
+                      type="password"
+                      value={confirmNewPassword}
+                      onChange={(e) => setConfirmNewPassword(e.target.value)}
+                      placeholder="Répétez le nouveau mot de passe"
+                      className="w-full px-3 py-2.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                      required
+                      minLength={6}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setPwdStep('IDLE')}
+                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={pwdLoading}
+                      className="flex-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      {pwdLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      <span>Enregistrer</span>
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Boost Modal (Requirement 4: Single Boost or Booster Pack Choice) */}
       {adToBoost && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl p-6 border border-slate-200 space-y-4">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl p-5 sm:p-6 border border-slate-200 space-y-4 my-auto">
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold">
@@ -948,7 +1801,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   Mettre en Tête de Liste (7 jours)
                 </h4>
               </div>
-              <button onClick={() => setAdToBoost(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400">
+              <button
+                onClick={() => {
+                  setAdToBoost(null);
+                  setShowBoostPayment(false);
+                  setSelectedPackForBoost(null);
+                }}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -968,7 +1828,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   <span>
                     {isExempt
                       ? 'Inclus gratuitement pour votre compte partenaire VIP (0 FCFA)'
-                      : `Vous disposez de ${currentUser.freeBoostsRemaining} boost(s) offert(s) avec votre abonnement.`}
+                      : `Vous disposez de ${currentUser.freeBoostsRemaining} booster(s) disponible(s). 1 booster sera déduit.`}
                   </span>
                 </div>
 
@@ -985,27 +1845,99 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             ) : showBoostPayment ? (
               <div className="pt-2">
                 <MobilePaymentSimulator
-                  amount={5000}
-                  itemDescription={`Mise en tête de liste 7 jours - ${adToBoost.title}`}
-                  onSuccess={() => handleConfirmBoost(adToBoost)}
-                  onCancel={() => setShowBoostPayment(false)}
+                  amount={boostOption === 'SINGLE' || !selectedPackForBoost ? 5000 : selectedPackForBoost.price}
+                  itemDescription={
+                    boostOption === 'SINGLE' || !selectedPackForBoost
+                      ? `Mise en tête de liste 7 jours - ${adToBoost.title}`
+                      : `${selectedPackForBoost.name} (${selectedPackForBoost.boostsCount} Boosts) - ${adToBoost.title}`
+                  }
+                  onSuccess={handleBoostPurchaseSuccess}
+                  onCancel={() => {
+                    setShowBoostPayment(false);
+                    setSelectedPackForBoost(null);
+                  }}
+                  initialPhone={currentUser.contactPhone}
                 />
               </div>
             ) : (
-              <div className="space-y-3">
-                <div className="flex justify-between items-center bg-slate-900 text-white p-4 rounded-2xl">
-                  <span className="text-xs">Tarif de l'option (7 jours) :</span>
-                  <span className="text-lg font-black text-amber-400">5 000 FCFA</span>
+              <div className="space-y-4">
+                {/* Mode Selector: 1 Boost vs Booster Pack (Requirement 4) */}
+                <div className="flex rounded-xl bg-slate-100 p-1 border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setBoostOption('SINGLE')}
+                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all ${
+                      boostOption === 'SINGLE'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    1 Boost (Cette annonce)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBoostOption('PACK')}
+                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all ${
+                      boostOption === 'PACK'
+                        ? 'bg-amber-400 text-slate-950 font-black shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    ⚡ Packs de Boosters (Éco)
+                  </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setShowBoostPayment(true)}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <ShieldCheck className="w-4 h-4 text-amber-300" />
-                  <span>Payer 5 000 FCFA via Airtel ou Moov Money</span>
-                </button>
+                {boostOption === 'SINGLE' ? (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center bg-slate-900 text-white p-4 rounded-2xl">
+                      <span className="text-xs">Tarif à l'unité (7 jours) :</span>
+                      <span className="text-lg font-black text-amber-400">5 000 FCFA</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowBoostPayment(true)}
+                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-amber-300" />
+                      <span>Payer 5 000 FCFA via Airtel ou Moov</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-[11px] text-slate-500">
+                      1 boost sera directement appliqué à cette annonce, et les autres boosters seront conservés sur votre solde pour vos futures annonces.
+                    </p>
+                    {BOOSTER_PACKS.map((pack) => (
+                      <div
+                        key={pack.type}
+                        className="bg-slate-50 hover:bg-amber-50/50 border border-slate-200 hover:border-amber-300 p-3.5 rounded-2xl flex items-center justify-between gap-3 transition-all"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-black text-xs text-slate-900">{pack.name}</span>
+                            <span className="bg-amber-100 text-amber-900 font-extrabold text-[10px] px-2 py-0.5 rounded-full border border-amber-200">
+                              {pack.boostsCount} boosts
+                            </span>
+                          </div>
+                          <span className="text-[11px] font-bold text-emerald-700 block mt-0.5">
+                            {formatFCFA(pack.price)} (soit {formatFCFA(Math.round(pack.price / pack.boostsCount))}/boost)
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedPackForBoost(pack);
+                            setShowBoostPayment(true);
+                          }}
+                          className="bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-xs px-3.5 py-2 rounded-xl shadow-xs transition-all shrink-0 cursor-pointer"
+                        >
+                          Acheter
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1014,8 +1946,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
       {/* Subscription / Pack Purchase Modal */}
       {itemToPurchase && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl p-6 border border-slate-200 space-y-4">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl p-5 sm:p-6 border border-slate-200 space-y-4 my-auto">
             <div className="flex justify-between items-center">
               <div>
                 <h4 className="font-black text-sm text-slate-900">{itemToPurchase.title}</h4>
@@ -1066,6 +1998,16 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           </div>
         </div>
       )}
+      {/* Subscription Upgrade Celebration Modal */}
+      <SubscriptionUpgradeModal
+        isOpen={Boolean(upgradedTierModal)}
+        tier={upgradedTierModal || 'PRO'}
+        onClose={() => setUpgradedTierModal(null)}
+        onGoToPublish={() => {
+          setUpgradedTierModal(null);
+          handleSafeOpenPublish();
+        }}
+      />
     </div>
   );
 };

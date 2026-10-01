@@ -31,8 +31,8 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-      {/* Top micro-bar: Gabon context & assurances */}
-      <div className="bg-emerald-950 text-emerald-100 text-xs py-1.5 px-4">
+      {/* Top micro-bar: Gabon context & assurances (hidden on small mobile to maximize content view) */}
+      <div className="bg-emerald-950 text-emerald-100 text-xs py-1.5 px-4 hidden sm:block">
         <div className="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
           <div className="flex items-center gap-2">
             <span className="flex h-2 w-2 relative">
@@ -57,27 +57,27 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Main navigation header (Strictly Frontend App) */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col md:flex-row items-center justify-between gap-3">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-3">
         {/* Logo and Brand */}
         <div className="flex items-center justify-between w-full md:w-auto">
           <div
             onClick={() => setCurrentTab('catalog')}
-            className="cursor-pointer flex items-center gap-3 group"
+            className="cursor-pointer flex items-center gap-2.5 sm:gap-3 group"
             id="brand-logo"
           >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-900 flex items-center justify-center text-white font-black text-xl shadow-md shadow-emerald-700/20 group-hover:scale-105 transition-transform border border-emerald-500/30">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-900 flex items-center justify-center text-white font-black text-lg sm:text-xl shadow-md shadow-emerald-700/20 group-hover:scale-105 transition-transform border border-emerald-500/30">
               <span className="text-amber-400">B</span>Z
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <span className="font-extrabold text-xl tracking-tight text-slate-900">
+                <span className="font-extrabold text-lg sm:text-xl tracking-tight text-slate-900">
                   BIZ<span className="text-emerald-600">BOOSTER</span>
                 </span>
-                <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider">
+                <span className="bg-amber-100 text-amber-800 text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider">
                   Gabon
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-medium">
+              <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium hidden xs:block">
                 Vente & Location • Annonces Commerciales
               </p>
             </div>
@@ -88,15 +88,17 @@ export const Header: React.FC<HeaderProps> = ({
             {currentUser ? (
               <button
                 onClick={() => setCurrentTab('user-dashboard')}
-                className="p-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold flex items-center gap-1"
+                className="p-1.5 sm:p-2 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold flex items-center gap-1.5 shadow-2xs"
               >
-                <User className="w-4 h-4" />
-                <span className="max-w-[80px] truncate">{currentUser.name.split(' ')[0]}</span>
+                <div className="w-6 h-6 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-[11px] font-black">
+                  {(currentUser.name || 'U').charAt(0).toUpperCase()}
+                </div>
+                <span className="max-w-[75px] truncate font-bold">{currentUser.name.split(' ')[0]}</span>
               </button>
             ) : (
               <button
                 onClick={onOpenPhoneAuth}
-                className="py-1.5 px-2.5 rounded-lg bg-slate-100 text-slate-800 text-xs font-bold border border-slate-200"
+                className="py-1.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-200 shadow-2xs transition-colors"
               >
                 Connexion
               </button>
@@ -104,7 +106,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={onOpenPublishModal}
-              className="flex items-center gap-1 bg-emerald-600 active:bg-emerald-700 text-white text-xs font-semibold py-1.5 px-3 rounded-lg shadow-xs"
+              className="flex items-center gap-1 bg-emerald-600 active:bg-emerald-700 hover:bg-emerald-500 text-white text-xs font-bold py-1.5 px-3 rounded-xl shadow-xs transition-all"
             >
               <PlusCircle className="w-3.5 h-3.5" />
               <span>Publier</span>
@@ -112,8 +114,8 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Center Tabs: Strictly Frontend Only (Catalogue & Espace Annonceur) */}
-        <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 w-full md:w-auto justify-center">
+        {/* Center Tabs: Strictly Frontend Only (Catalogue & Espace Annonceur) - Shown on desktop */}
+        <div className="hidden md:flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 justify-center">
           {/* TAB 1: CATALOGUE (PUBLIC & FREE) */}
           <button
             onClick={() => setCurrentTab('catalog')}

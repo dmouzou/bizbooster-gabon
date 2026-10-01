@@ -114,19 +114,19 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
   };
 
   return (
-    <div className="bg-slate-900 text-white rounded-3xl p-5 sm:p-7 max-w-md w-full shadow-2xl border border-slate-700 animate-in fade-in zoom-in-95">
+    <div className="bg-slate-900 text-white rounded-3xl p-5 sm:p-6 max-w-md w-full max-h-[85vh] overflow-y-auto shadow-2xl border border-slate-700 animate-in fade-in zoom-in-95">
       {/* Title */}
-      <div className="text-center mb-5">
-        <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-emerald-950 border border-emerald-500/40 text-emerald-400 mb-3 shadow-inner">
-          <Smartphone className="w-6 h-6" />
+      <div className="text-center mb-4">
+        <div className="inline-flex items-center justify-center w-11 h-11 rounded-2xl bg-emerald-950 border border-emerald-500/40 text-emerald-400 mb-2 shadow-inner">
+          <Smartphone className="w-5 h-5" />
         </div>
         <h3 className="text-lg font-black tracking-tight text-white">
           Paiement Mobile au Gabon
         </h3>
-        <p className="text-xs text-slate-400 mt-1">
+        <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">
           {itemDescription}
         </p>
-        <div className="mt-3 bg-slate-800/80 border border-slate-700 py-2 px-4 rounded-xl inline-block">
+        <div className="mt-2.5 bg-slate-800/80 border border-slate-700 py-1.5 px-3.5 rounded-xl inline-block">
           <span className="text-xs text-slate-400 mr-2">Montant à régler :</span>
           <span className="text-xl font-black text-amber-400">{formatFCFA(amount)}</span>
         </div>

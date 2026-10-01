@@ -64,7 +64,11 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
           {/* Main Title & Badges */}
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-2">
-              {ad.mainCategory !== 'EMPLOI' && ad.transactionType && (
+              {ad.mainCategory === 'EMPLOI' ? (
+                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-purple-100 text-purple-900 border border-purple-300">
+                  À EMPLOYER (Emploi)
+                </span>
+              ) : ad.transactionType ? (
                 <span
                   className={`text-xs font-black uppercase px-2.5 py-1 rounded-lg ${
                     ad.transactionType === 'VENTE'
@@ -74,7 +78,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
                 >
                   {ad.transactionType === 'VENTE' ? 'À VENDRE (Achat)' : 'À LOUER (Location)'}
                 </span>
-              )}
+              ) : null}
 
               {ad.propertyType && (
                 <span className="text-xs font-bold bg-slate-100 text-slate-800 px-2.5 py-1 rounded-lg border border-slate-200">
@@ -124,16 +128,16 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
           <div>
             <div className="aspect-16/10 sm:aspect-16/9 rounded-2xl overflow-hidden bg-slate-100 border border-slate-200">
               <img
-                src={ad.images[activeImageIndex] || ad.images[0]}
-                alt={ad.title}
+                src={ad.images?.[activeImageIndex] || ad.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1000&q=80'}
+                alt={ad.title || 'Annonce'}
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />
             </div>
 
-            {ad.images.length > 1 && (
+            {(ad.images?.length || 0) > 1 && (
               <div className="flex gap-2 mt-2.5 overflow-x-auto pb-1">
-                {ad.images.map((img, idx) => (
+                {(ad.images || []).map((img, idx) => (
                   <button
                     key={idx}
                     onClick={() => setActiveImageIndex(idx)}

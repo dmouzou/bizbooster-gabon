@@ -1,6 +1,6 @@
 export type MainCategory = 'IMMOBILIER' | 'MATERIEL_ROULANT' | 'BRIC_A_BRAC' | 'EMPLOI';
 
-export type TransactionType = 'VENTE' | 'LOCATION';
+export type TransactionType = 'VENTE' | 'LOCATION' | 'EMPLOYER' | 'A_EMPLOYER';
 
 export type PropertyType = 
   | 'Villa'
@@ -56,8 +56,8 @@ export interface Ad {
   id: string;
   title: string;
   mainCategory: MainCategory;
-  // Detail explicitly required: L'annonceur doit pouvoir préciser s'il vend ou s'il loue son bien
-  transactionType?: TransactionType; // For Immobilier & Matériel Roulant (Vente or Location)
+  // Detail explicitly required: L'annonceur doit pouvoir préciser s'il vend ou s'il loue son bien ou recherche un employé
+  transactionType?: TransactionType; // For Immobilier, Matériel Roulant (Vente or Location) & Emploi
   
   // Specific Category Data
   propertyType?: PropertyType;
@@ -73,9 +73,12 @@ export interface Ad {
   // Featured / Top-of-feed boost
   isFeatured?: boolean;
   featuredUntil?: string; // ISO string
+  featuredAt?: string; // ISO string when boosted
+  ownerTier?: SubscriptionTier;
+  isOwnerVip?: boolean;
 
   description: string; // limited character text (<= 300 chars)
-  images: string[];
+  images?: string[];
   videoUrl?: string;
   
   contactPhone: string; // Gabon telephone (+241 ...)
@@ -84,11 +87,14 @@ export interface Ad {
   
   // Expiration & Duration management
   durationDays: number;
+  createdAt?: string; // ISO string
   publishedAt: string; // ISO string
   expiresAt: string; // ISO string
-  status: 'ACTIVE' | 'EXPIRED' | 'PENDING_PAYMENT' | 'PENDING_REVIEW' | 'REJECTED';
+  status: 'ACTIVE' | 'EXPIRED' | 'PENDING_PAYMENT' | 'PENDING_REVIEW' | 'REJECTED' | 'SUSPENDED';
   moderationReason?: string;
   moderatedAt?: string;
+  suspensionReason?: string; // Ex: 'FORFAIT_EXPIRE_QUOTA'
+  suspendedAt?: string;
   userId?: string; // Links ad to the authenticated phone user
   
   // Payment information
@@ -110,6 +116,7 @@ export interface Ad {
 export type SubscriptionTier = 'STANDARD' | 'PRO' | 'ELITE' | 'BUSINESS';
 export type BoosterPackType = 'BOOST_5' | 'BOOST_10';
 export type AdPackType = 'PACK_5' | 'PACK_10';
+export type UserRole = 'USER' | 'ADMIN' | 'SUPER_ADMIN';
 
 export interface UserProfile {
   id: string;
@@ -120,7 +127,7 @@ export interface UserProfile {
   isVerified: boolean;
   termsAccepted: boolean;
   termsAcceptedAt: string;
-  role: 'USER' | 'ADMIN';
+  role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' | 'SUPER ADMIN' | string;
   createdAt: string;
 
   // Subscription & Boosters
@@ -140,8 +147,35 @@ export interface UserProfile {
   idVerificationStatus?: 'NOT_SUBMITTED' | 'PENDING' | 'VERIFIED' | 'REJECTED';
   idRejectionReason?: string;
   idSubmittedAt?: string;
-  idVerifiedAt?: string;
+  // Password & Security
+  password?: string;
+  lastPasswordChangeDate?: string; // ISO string to enforce 1 change per 24h
+  location?: {
+    province?: string;
+    city?: string;
+    neighborhood?: string;
+  };
 }
+
+export const isUserSuperAdmin = (user?: { role?: string } | null): boolean => {
+  if (!user || !user.role) return false;
+  const normalized = String(user.role).trim().toUpperCase().replace(/[\s_-]+/g, '');
+  return normalized === 'SUPERADMIN';
+};
+
+export const isUserAdmin = (user?: { role?: string } | null): boolean => {
+  if (!user || !user.role) return false;
+  const normalized = String(user.role).trim().toUpperCase().replace(/[\s_-]+/g, '');
+  return normalized === 'SUPERADMIN' || normalized === 'ADMIN';
+};
+
+export const getTierPriority = (ad: { isOwnerVip?: boolean; ownerTier?: SubscriptionTier }): number => {
+  if (ad.isOwnerVip) return 5;
+  if (ad.ownerTier === 'BUSINESS') return 4;
+  if (ad.ownerTier === 'ELITE') return 3;
+  if (ad.ownerTier === 'PRO') return 2;
+  return 1;
+};
 
 export interface AdReport {
   id: string;

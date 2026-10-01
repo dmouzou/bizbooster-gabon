@@ -15,12 +15,25 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Admin = custom claim OR users/{uid}.role == 'ADMIN'.
+    // Super Admin = custom claim OR users/{uid}.role in ['SUPER_ADMIN', 'SUPER ADMIN']
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        ('role' in request.auth.token && (request.auth.token.role == 'SUPER_ADMIN' || request.auth.token.role == 'SUPER ADMIN')) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'SUPER_ADMIN' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'SUPER ADMIN'))
+      );
+    }
+
+    // Admin = custom claim OR users/{uid}.role in ['ADMIN', 'SUPER_ADMIN', 'SUPER ADMIN'].
     // Users can never write their own role (see /users rules below).
     function isAdmin() {
-      return isSignedIn() &&
-        (request.auth.token.role == 'ADMIN' ||
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN');
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        ('role' in request.auth.token && request.auth.token.role == 'ADMIN') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'ADMIN')
+      );
     }
 
     // Fields an advertiser must never change on their own ad arbitrarily.
@@ -35,7 +48,7 @@ service cloud.firestore {
         'paymentVerified'
       ]) || (
         request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
-        && request.resource.data.status != 'PENDING_REVIEW'
+        && !(request.resource.data.status in ['PENDING_REVIEW', 'SUSPENDED', 'ACTIVE'])
       );
     }
 
@@ -75,15 +88,17 @@ service cloud.firestore {
       allow create: if isOwner(userId)
                     && request.resource.data.role == 'USER';
 
-      // Admin can update any user (KYC status, role, exemptions).
+      // Super Admin has full authority (create/revoke VIP exemptions, modify any subscription, add boosters, change roles).
+      // Normal Admin can verify/reject KYC, but CANNOT touch exemptions, subscriptions, boosters, or roles.
       // Owner can update their profile and submit KYC for review (PENDING), but cannot self-approve or self-exempt.
-      allow update: if isAdmin()
+      allow update: if isSuperAdmin()
+                    || (isAdmin() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['exemptFromPaymentAndKyc', 'isExempt', 'role', 'subscriptionTier', 'subscriptionExpiresAt', 'freeBoostsRemaining']))
                     || (isOwner(userId)
-                        && request.resource.data.role == resource.data.role
+                        && request.resource.data.get('role', 'USER') == resource.data.get('role', 'USER')
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['exemptFromPaymentAndKyc', 'isExempt', 'role']))
-                        && (request.resource.data.idVerificationStatus != 'VERIFIED' || resource.data.idVerificationStatus == 'VERIFIED'));
+                        && (request.resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') != 'VERIFIED' || resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') == 'VERIFIED'));
 
-      allow delete: if isAdmin();
+      allow delete: if isSuperAdmin();
     }
 
     // ---------------------------------------------------------------

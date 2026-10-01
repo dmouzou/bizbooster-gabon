@@ -26,15 +26,18 @@ import {
   BadgeAlert,
   ChevronRight,
   Filter,
+  Crown,
+  Sparkles,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../services/firebase';
-import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile } from '../types';
+import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime } from '../utils/formatters';
 import { RealTimeAnalytics } from './RealTimeAnalytics';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
 
 interface AdminPanelProps {
+  currentUser?: UserProfile | null;
   ads: Ad[];
   users?: UserProfile[];
   reports?: AdReport[];
@@ -48,12 +51,14 @@ interface AdminPanelProps {
   onRejectKyc?: (userId: string, reason: string) => Promise<void> | void;
   onUpdateUserSubscription?: (userId: string, tier: SubscriptionTier) => Promise<void> | void;
   onUpdateUserBoosters?: (userId: string, count: number) => Promise<void> | void;
+  onUpdateUserRole?: (userId: string, role: 'USER' | 'ADMIN' | 'SUPER_ADMIN') => Promise<void> | void;
   onResolveReport?: (reportId: string, notes?: string) => Promise<void> | void;
   onDismissReport?: (reportId: string, notes?: string) => Promise<void> | void;
   onDeleteReportedAd?: (adId: string, reportId: string) => Promise<void> | void;
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
+  currentUser,
   ads,
   users = [],
   reports = [],
@@ -67,17 +72,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onRejectKyc,
   onUpdateUserSubscription,
   onUpdateUserBoosters,
+  onUpdateUserRole,
   onResolveReport,
   onDismissReport,
   onDeleteReportedAd,
 }) => {
+  const isSuper = isUserSuperAdmin(currentUser);
   // Active Admin Tab: 'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY'
   const [activeTab, setActiveTab] = useState<'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY'>('MODERATION');
 
   // Moderation filters
-  const [statusFilter, setStatusFilter] = useState<'PENDING' | 'ACTIVE' | 'REJECTED' | 'ALL'>('PENDING');
+  type ModerationStatusFilter = 'PENDING' | 'PRIORITY' | 'ACTIVE' | 'REJECTED' | 'ALL';
+  const [statusFilter, setStatusFilter] = useState<ModerationStatusFilter>('PENDING');
   const [categoryFilter, setCategoryFilter] = useState<MainCategory | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Requirement 5: Trier par dans le fichier de modération
+  type ModerationSortOption = 'DATE_DESC' | 'DATE_ASC' | 'PRIORITY_TIER' | 'PRICE_DESC' | 'PRICE_ASC' | 'REPORTS_DESC';
+  const [moderationSortBy, setModerationSortBy] = useState<ModerationSortOption>('DATE_DESC');
 
   // Advertisers Directory filters
   const [advSearchQuery, setAdvSearchQuery] = useState('');
@@ -115,18 +127,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     'Document rogné ou incomplet.',
   ];
 
+  // Helper to identify priority validation users (Pro, Elite, Business)
+  const isAdPriorityUser = (ad: Ad) => {
+    const user = users.find((u) => u.id === ad.userId || (ad.contactPhone && u.contactPhone === ad.contactPhone));
+    const tier = ad.ownerTier || user?.subscriptionTier;
+    return tier === 'PRO' || tier === 'ELITE' || tier === 'BUSINESS';
+  };
+
   // Counts & financial metrics
   const stats = useMemo(() => {
     let pending = 0;
+    let priority = 0;
     let active = 0;
     let rejected = 0;
     let totalRevenue = 0;
     let totalViews = 0;
 
     ads.forEach((ad) => {
-      if (ad.status === 'PENDING_REVIEW' || !!ad.pendingExtension) pending++;
-      else if (ad.status === 'ACTIVE') active++;
-      else if (ad.status === 'REJECTED') rejected++;
+      const isPendingAd = ad.status === 'PENDING_REVIEW' || !!ad.pendingExtension;
+      if (isPendingAd) {
+        pending++;
+        if (isAdPriorityUser(ad)) {
+          priority++;
+        }
+      } else if (ad.status === 'ACTIVE') {
+        active++;
+      } else if (ad.status === 'REJECTED') {
+        rejected++;
+      }
       totalRevenue += Number(ad.paidAmount) || 0;
       totalViews += Number(ad.viewsCount) || 0;
     });
@@ -134,12 +162,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     return {
       total: ads.length,
       pending,
+      priority,
       active,
       rejected,
       totalRevenue,
       totalViews,
     };
-  }, [ads]);
+  }, [ads, users]);
 
   // Reports counts
   const reportStats = useMemo(() => {
@@ -161,10 +190,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     };
   }, [reports]);
 
-  // Filtered ads in moderation queue
+  // Filtered ads in moderation queue with sorting
   const filteredAds = useMemo(() => {
-    return ads.filter((ad) => {
-      if (statusFilter === 'PENDING' && ad.status !== 'PENDING_REVIEW' && !ad.pendingExtension) return false;
+    const list = ads.filter((ad) => {
+      const isPending = ad.status === 'PENDING_REVIEW' || !!ad.pendingExtension;
+      if (statusFilter === 'PENDING' && !isPending) return false;
+      if (statusFilter === 'PRIORITY' && (!isPending || !isAdPriorityUser(ad))) return false;
       if (statusFilter === 'ACTIVE' && ad.status !== 'ACTIVE') return false;
       if (statusFilter === 'REJECTED' && ad.status !== 'REJECTED') return false;
 
@@ -172,16 +203,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchesTitle = ad.title.toLowerCase().includes(q);
-        const matchesPhone = ad.contactPhone.toLowerCase().includes(q);
-        const matchesName = ad.contactName.toLowerCase().includes(q);
-        const matchesCity = ad.location?.city.toLowerCase().includes(q);
+        const matchesTitle = (ad.title || '').toLowerCase().includes(q);
+        const matchesPhone = (ad.contactPhone || '').toLowerCase().includes(q);
+        const matchesName = (ad.contactName || '').toLowerCase().includes(q);
+        const matchesCity = (ad.location?.city || '').toLowerCase().includes(q);
         if (!matchesTitle && !matchesPhone && !matchesName && !matchesCity) return false;
       }
 
       return true;
     });
-  }, [ads, statusFilter, categoryFilter, searchQuery]);
+
+    // Apply Sorting (Requirement 5)
+    return list.sort((a, b) => {
+      if (moderationSortBy === 'PRIORITY_TIER') {
+        const tierWeight: Record<string, number> = { BUSINESS: 4, ELITE: 3, PRO: 2, STARTER: 1, STANDARD: 0, FREE: 0 };
+        const tierA = a.ownerTier || users.find((u) => u.id === a.userId)?.subscriptionTier || 'STANDARD';
+        const tierB = b.ownerTier || users.find((u) => u.id === b.userId)?.subscriptionTier || 'STANDARD';
+        const diff = (tierWeight[tierB] || 0) - (tierWeight[tierA] || 0);
+        if (diff !== 0) return diff;
+        return new Date(b.createdAt || b.publishedAt || 0).getTime() - new Date(a.createdAt || a.publishedAt || 0).getTime();
+      }
+      if (moderationSortBy === 'DATE_ASC') {
+        return new Date(a.createdAt || a.publishedAt || 0).getTime() - new Date(b.createdAt || b.publishedAt || 0).getTime();
+      }
+      if (moderationSortBy === 'PRICE_DESC') {
+        return (Number(b.price) || 0) - (Number(a.price) || 0);
+      }
+      if (moderationSortBy === 'PRICE_ASC') {
+        return (Number(a.price) || 0) - (Number(b.price) || 0);
+      }
+      if (moderationSortBy === 'REPORTS_DESC') {
+        return (Number(b.reportsCount) || 0) - (Number(a.reportsCount) || 0);
+      }
+      // Default: DATE_DESC
+      return new Date(b.createdAt || b.publishedAt || 0).getTime() - new Date(a.createdAt || a.publishedAt || 0).getTime();
+    });
+  }, [ads, users, statusFilter, categoryFilter, searchQuery, moderationSortBy]);
 
   // Registered Advertisers List (grounded in users collection)
   const filteredUsers = useMemo(() => {
@@ -250,20 +307,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-2">
-              <span className="bg-amber-500 text-slate-950 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full tracking-wider flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Console de Gestion Administrative
-              </span>
-              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
-                Superviseur Connecté
-              </span>
+              {isSuper ? (
+                <>
+                  <span className="bg-amber-400 text-slate-950 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full tracking-wider flex items-center gap-1 shadow-sm">
+                    <Crown className="w-3.5 h-3.5 fill-slate-950" />
+                    SUPER ADMIN Cockpit
+                  </span>
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                    Contrôle Total (Partenaires, Forfaits & Boosters)
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="bg-indigo-600 text-white text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full tracking-wider flex items-center gap-1 shadow-sm">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    Console de Modération Admin
+                  </span>
+                  <span className="bg-slate-700/60 text-slate-300 border border-slate-600 text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                    Modérateur Connecté
+                  </span>
+                </>
+              )}
             </div>
 
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
-              BIZBOOSTER Gabon · Panneau d'Administration
+              BIZBOOSTER Gabon · {isSuper ? 'Super Administration' : 'Panneau de Modération'}
             </h1>
             <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl">
-              Modération des annonces, contrôle d'identité KYC, observatoire marché en direct et traitement des signalements de fraude.
+              {isSuper
+                ? "Modération complète, gestion des partenaires VIP, forfaits abonnements, attribution des boosters et observatoire du marché."
+                : "Modération des annonces, contrôle d'identité KYC, observatoire marché en direct et traitement des signalements de fraude."}
             </p>
           </div>
 
@@ -387,7 +460,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {activeTab === 'MODERATION' && (
         <div className="space-y-4">
           {/* Quick Metrics Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div
               onClick={() => setStatusFilter('PENDING')}
               className={`p-3.5 rounded-2xl cursor-pointer transition-all border ${
@@ -397,13 +470,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               }`}
             >
               <div className="flex items-center justify-between text-xs text-amber-700 font-bold mb-1">
-                <span>En attente de validation</span>
+                <span>En attente</span>
                 <Clock className="w-4 h-4 text-amber-600" />
               </div>
               <div className="text-2xl sm:text-3xl font-black text-amber-600">
                 {stats.pending}
               </div>
-              <span className="text-[10px] text-slate-500 font-medium">À traiter par le modérateur</span>
+              <span className="text-[10px] text-slate-500 font-medium">À traiter au total</span>
+            </div>
+
+            {/* Requirement 2: Validations Prioritaires Quick Card */}
+            <div
+              onClick={() => setStatusFilter('PRIORITY')}
+              className={`p-3.5 rounded-2xl cursor-pointer transition-all border ${
+                statusFilter === 'PRIORITY'
+                  ? 'bg-amber-400/20 border-amber-500 text-slate-900 shadow-xs ring-2 ring-amber-400/30'
+                  : 'bg-amber-50/60 border-amber-300/80 hover:border-amber-400'
+              }`}
+            >
+              <div className="flex items-center justify-between text-xs text-amber-900 font-black mb-1">
+                <span className="flex items-center gap-1">⚡ Priorités (Pro+)</span>
+                <Sparkles className="w-4 h-4 text-amber-600 fill-amber-500" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-amber-700">
+                {stats.priority}
+              </div>
+              <span className="text-[10px] text-amber-800 font-bold">Pro, Élite, Business</span>
             </div>
 
             <div
@@ -415,7 +507,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               }`}
             >
               <div className="flex items-center justify-between text-xs text-emerald-700 font-bold mb-1">
-                <span>En ligne (Approuvées)</span>
+                <span>En ligne (Actives)</span>
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               </div>
               <div className="text-2xl sm:text-3xl font-black text-emerald-600">
@@ -466,8 +558,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
 
           {/* Filter Bar */}
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-bold text-slate-500 mr-1">Filtrer statut :</span>
               <button
                 onClick={() => setStatusFilter('PENDING')}
@@ -480,6 +572,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <span>En attente</span>
                 <span className="bg-slate-900 text-white text-[10px] px-1.5 py-0.2 rounded-full">
                   {stats.pending}
+                </span>
+              </button>
+
+              {/* Requirement 2: Rubrique Validations Prioritaires */}
+              <button
+                onClick={() => setStatusFilter('PRIORITY')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  statusFilter === 'PRIORITY'
+                    ? 'bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 shadow-xs font-black ring-2 ring-amber-400/40'
+                    : 'bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-600 fill-amber-500" />
+                <span>⚡ Validations prioritaires</span>
+                <span className="bg-slate-950 text-amber-300 text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                  {stats.priority}
                 </span>
               </button>
 
@@ -517,16 +625,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </button>
             </div>
 
-            {/* Search in moderation */}
-            <div className="relative w-full md:w-72">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Chercher par titre, ville, tel..."
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
-              />
+            {/* Controls: Trier par & Search in moderation */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+              {/* Requirement 5: Option Trier par */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Trier par :</span>
+                <select
+                  value={moderationSortBy}
+                  onChange={(e) => setModerationSortBy(e.target.value as ModerationSortOption)}
+                  className="text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden cursor-pointer"
+                >
+                  <option value="DATE_DESC">Date (Plus récentes)</option>
+                  <option value="DATE_ASC">Date (Plus anciennes - FIFO)</option>
+                  <option value="PRIORITY_TIER">⚡ Forfait (Business &gt; Élite &gt; Pro)</option>
+                  <option value="PRICE_DESC">Prix (Plus élevé d'abord)</option>
+                  <option value="PRICE_ASC">Prix (Plus bas d'abord)</option>
+                  <option value="REPORTS_DESC">Signalements (Fraude)</option>
+                </select>
+              </div>
+
+              {/* Search in moderation */}
+              <div className="relative w-full sm:w-60">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Chercher par titre, ville, tel..."
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                />
+              </div>
             </div>
           </div>
 
@@ -537,12 +665,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 const isPending = ad.status === 'PENDING_REVIEW' || !!ad.pendingExtension;
                 const isActive = ad.status === 'ACTIVE';
                 const isRejected = ad.status === 'REJECTED';
+                const isPriorityAd = isAdPriorityUser(ad);
 
                 return (
                   <div
                     key={ad.id}
                     className={`bg-white rounded-2xl border p-5 shadow-xs transition-all flex flex-col lg:flex-row items-start lg:items-center justify-between gap-5 ${
-                      isPending
+                      isPriorityAd && isPending
+                        ? 'border-amber-400 ring-2 ring-amber-400/30 bg-amber-50/10'
+                        : isPending
                         ? 'border-amber-300 ring-2 ring-amber-400/20'
                         : isRejected
                         ? 'border-red-200 bg-red-50/20'
@@ -553,24 +684,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <div className="flex flex-col sm:flex-row items-start gap-4 flex-1">
                       <div className="w-full sm:w-36 h-28 rounded-xl overflow-hidden bg-slate-100 shrink-0 relative">
                         <img
-                          src={ad.images[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=500&q=80'}
-                          alt={ad.title}
+                          src={ad.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=500&q=80'}
+                          alt={ad.title || 'Annonce'}
                           className="w-full h-full object-cover"
                         />
-                        {ad.images.length > 1 && (
+                        {(ad.images?.length || 0) > 1 && (
                           <span className="absolute bottom-1 right-1 bg-slate-900/80 text-white text-[9px] font-bold px-1.5 py-0.5 rounded">
-                            +{ad.images.length - 1} photos
+                            +{(ad.images?.length || 1) - 1} photos
                           </span>
                         )}
                       </div>
 
                       <div className="space-y-1.5 flex-1">
-                        {/* Status + Category + Transaction Tag */}
+                        {/* Status + Category + Transaction Tag + Priority Tag */}
                         <div className="flex flex-wrap items-center gap-1.5">
                           {isPending && (
                             <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black uppercase px-2 py-0.5 rounded-sm flex items-center gap-1">
                               <Clock className="w-3 h-3 text-amber-700" />
                               En attente de validation
+                            </span>
+                          )}
+                          {isPriorityAd && isPending && (
+                            <span className="bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black text-[10px] uppercase px-2 py-0.5 rounded-sm flex items-center gap-1 shadow-2xs border border-amber-300">
+                              <Sparkles className="w-3 h-3 fill-slate-950" />
+                              <span>⚡ Validation prioritaire ({ad.ownerTier || users.find((u) => u.id === ad.userId)?.subscriptionTier || 'PRO'})</span>
                             </span>
                           )}
                           {isActive && (
@@ -586,7 +723,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             </span>
                           )}
 
-                          {ad.transactionType && (
+                          {ad.mainCategory === 'EMPLOI' ? (
+                            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-sm bg-purple-50 text-purple-800 border border-purple-200">
+                              À EMPLOYER
+                            </span>
+                          ) : ad.transactionType ? (
                             <span
                               className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${
                                 ad.transactionType === 'VENTE'
@@ -596,7 +737,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             >
                               {ad.transactionType === 'VENTE' ? 'À VENDRE' : 'À LOUER'}
                             </span>
-                          )}
+                          ) : null}
 
                           <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-sm">
                             {ad.mainCategory}
@@ -743,7 +884,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </h3>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Gestion des comptes, vérification des pièces d'identité KYC et exonération VIP de paiement.
+                {isSuper
+                  ? "Gestion des comptes, vérification KYC, forfaits abonnements et gestion des partenaires VIP."
+                  : "Gestion des comptes annonceurs et vérification des pièces d'identité KYC."}
               </p>
             </div>
 
@@ -766,14 +909,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               >
                 Tous ({users.length})
               </button>
-              <button
-                onClick={() => setAdvKycFilter('EXEMPT')}
-                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
-                  advKycFilter === 'EXEMPT' ? 'bg-amber-500 text-slate-950 font-black' : 'bg-white text-slate-600 hover:bg-slate-200 border border-slate-200'
-                }`}
-              >
-                ⭐ Exonérés VIP ({users.filter((u) => u.exemptFromPaymentAndKyc || u.isExempt).length})
-              </button>
+              {isSuper && (
+                <button
+                  onClick={() => setAdvKycFilter('EXEMPT')}
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                    advKycFilter === 'EXEMPT' ? 'bg-amber-500 text-slate-950 font-black' : 'bg-white text-slate-600 hover:bg-slate-200 border border-slate-200'
+                  }`}
+                >
+                  ⭐ Exonérés VIP ({users.filter((u) => u.exemptFromPaymentAndKyc || u.isExempt).length})
+                </button>
+              )}
               <button
                 onClick={() => setAdvKycFilter('PENDING')}
                 className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
@@ -814,11 +959,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <th className="p-3">Numéro Gabon (+241)</th>
                     <th className="p-3">Annonces (Actives)</th>
                     <th className="p-3">Total Payé</th>
-                    <th className="p-3">Statut Exonération</th>
+                    {isSuper && <th className="p-3">Statut Exonération</th>}
                     <th className="p-3">Forfait / Abonnement</th>
                     <th className="p-3">Boosters (max 20)</th>
                     <th className="p-3">Pièce d'Identité (KYC)</th>
-                    <th className="p-3 rounded-r-xl text-right">Actions Superviseur</th>
+                    {isSuper && <th className="p-3">Rôle Système</th>}
+                    <th className="p-3 rounded-r-xl text-right">Actions {isSuper ? 'Superviseur' : 'Modérateur'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -827,9 +973,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     const kycStatus = u.idVerificationStatus || 'NOT_SUBMITTED';
 
                     // Ads for this user
-                    const userAds = ads.filter((a) => a.userId === u.id || a.contactPhone === u.contactPhone);
+                    const userAds = ads.filter((a) => a.userId === u.id || (a.contactPhone && (a.contactPhone === u.contactPhone || a.contactPhone === u.phoneNumber)));
                     const activeUserAds = userAds.filter((a) => a.status === 'ACTIVE');
-                    const totalSpent = userAds.reduce((sum, a) => sum + (Number(a.paidAmount) || 0), 0);
+                    const isStaff = u.role === 'ADMIN' || u.role === 'SUPER_ADMIN' || u.role === 'SUPER ADMIN';
+                    const totalSpent = userAds.reduce((acc, a) => acc + (Number(a.paidAmount) || 0), 0);
 
                     return (
                       <tr key={u.id} className="hover:bg-slate-50/70 transition-colors">
@@ -842,7 +989,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             <div>
                               <span className="font-extrabold text-slate-900 block">{u.name}</span>
                               <span className="text-[10px] text-slate-400">
-                                {u.role === 'ADMIN' ? '👑 Modérateur' : 'Annonceur'}
+                                {u.role === 'ADMIN' ? '👑 Modérateur' : u.role === 'SUPER_ADMIN' || u.role === 'SUPER ADMIN' ? '👑 Super Admin' : 'Annonceur'}
                                 {u.createdAt ? ` • Inscrit le ${new Date(u.createdAt).toLocaleDateString('fr-FR')}` : ''}
                               </span>
                             </div>
@@ -874,182 +1021,268 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           {formatFCFA(totalSpent)}
                         </td>
 
-                        {/* Exemption VIP Status */}
+                        {/* Exemption VIP Status (Super Admin Only) - Point 6: Not for moderators */}
+                        {isSuper && (
+                          <td className="p-3">
+                            {isStaff ? (
+                              <span className="text-slate-400 text-[10px] italic">
+                                Non applicable (Équipe)
+                              </span>
+                            ) : isExempt ? (
+                              <span className="bg-amber-100 text-amber-900 border border-amber-300 font-black text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                <Star className="w-3 h-3 text-amber-600 fill-amber-500" />
+                                Exonéré VIP (Gratuit)
+                              </span>
+                            ) : (
+                              <span className="bg-slate-100 text-slate-700 text-[10px] font-medium px-2 py-0.5 rounded-full">
+                                Standard (Payant)
+                              </span>
+                            )}
+                          </td>
+                        )}
+
+                        {/* Subscription Tier (Forfait) - Point 6: Not for moderators */}
                         <td className="p-3">
-                          {isExempt ? (
-                            <span className="bg-amber-100 text-amber-900 border border-amber-300 font-black text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1">
-                              <Star className="w-3 h-3 text-amber-600 fill-amber-500" />
-                              Exonéré VIP (Gratuit)
+                          {isStaff ? (
+                            <span className="text-slate-400 text-[10px] italic">
+                              Non applicable (Équipe)
                             </span>
                           ) : (
-                            <span className="bg-slate-100 text-slate-700 text-[10px] font-medium px-2 py-0.5 rounded-full">
-                              Standard (Payant)
-                            </span>
+                            <div className="space-y-1">
+                              <div>
+                                <span
+                                  className={`text-[10px] font-black px-2 py-0.5 rounded-full inline-flex items-center gap-1 border ${
+                                    u.subscriptionTier === 'BUSINESS'
+                                      ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                      : u.subscriptionTier === 'ELITE'
+                                      ? 'bg-purple-100 text-purple-900 border-purple-300'
+                                      : u.subscriptionTier === 'PRO'
+                                      ? 'bg-blue-100 text-blue-900 border-blue-300'
+                                      : 'bg-slate-100 text-slate-700 border-slate-200'
+                                  }`}
+                                >
+                                  {u.subscriptionTier === 'BUSINESS'
+                                    ? '🥇 Business (20 ads)'
+                                    : u.subscriptionTier === 'ELITE'
+                                    ? '🥈 Élite (14 ads)'
+                                    : u.subscriptionTier === 'PRO'
+                                    ? '🥉 Pro (8 ads)'
+                                    : 'Standard (3 ads)'}
+                                </span>
+                              </div>
+                              {isSuper && onUpdateUserSubscription && (
+                                <select
+                                  value={u.subscriptionTier || 'STANDARD'}
+                                  onChange={(e) => onUpdateUserSubscription(u.id, e.target.value as SubscriptionTier)}
+                                  className="text-[11px] font-bold bg-white border border-slate-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden cursor-pointer block"
+                                  title="Modifier ou révoquer le forfait d'abonnement (Super Admin)"
+                                >
+                                  <option value="STANDARD">Standard (Sans forfait)</option>
+                                  <option value="PRO">Pro (8 annonces)</option>
+                                  <option value="ELITE">Élite (14 annonces)</option>
+                                  <option value="BUSINESS">Business (20 annonces)</option>
+                                </select>
+                              )}
+                            </div>
                           )}
                         </td>
 
-                        {/* Subscription Tier (Forfait) */}
+                        {/* Boosters (Solde & Attribution max 20) - Point 6: Not for moderators */}
                         <td className="p-3">
-                          <div className="space-y-1">
-                            <div>
-                              <span
-                                className={`text-[10px] font-black px-2 py-0.5 rounded-full inline-flex items-center gap-1 border ${
-                                  u.subscriptionTier === 'BUSINESS'
-                                    ? 'bg-amber-100 text-amber-900 border-amber-300'
-                                    : u.subscriptionTier === 'ELITE'
-                                    ? 'bg-purple-100 text-purple-900 border-purple-300'
-                                    : u.subscriptionTier === 'PRO'
-                                    ? 'bg-blue-100 text-blue-900 border-blue-300'
-                                    : 'bg-slate-100 text-slate-700 border-slate-200'
-                                }`}
-                              >
-                                {u.subscriptionTier === 'BUSINESS'
-                                  ? '🥇 Business (20 ads)'
-                                  : u.subscriptionTier === 'ELITE'
-                                  ? '🥈 Élite (14 ads)'
-                                  : u.subscriptionTier === 'PRO'
-                                  ? '🥉 Pro (8 ads)'
-                                  : 'Standard (3 ads)'}
-                              </span>
-                            </div>
-                            {onUpdateUserSubscription && (
-                              <select
-                                value={u.subscriptionTier || 'STANDARD'}
-                                onChange={(e) => onUpdateUserSubscription(u.id, e.target.value as SubscriptionTier)}
-                                className="text-[11px] font-bold bg-white border border-slate-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden cursor-pointer"
-                                title="Modifier ou révoquer le forfait d'abonnement"
-                              >
-                                <option value="STANDARD">Standard (Sans forfait)</option>
-                                <option value="PRO">Pro (8 annonces)</option>
-                                <option value="ELITE">Élite (14 annonces)</option>
-                                <option value="BUSINESS">Business (20 annonces)</option>
-                              </select>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Boosters (Solde & Attribution max 20) */}
-                        <td className="p-3">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-1">
-                              <span className="font-extrabold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md text-[11px]">
-                                ⚡ {u.freeBoostsRemaining || 0} / 20
-                              </span>
-                            </div>
-                            {onUpdateUserBoosters && (
-                              <div className="flex items-center gap-1 pt-0.5">
-                                <button
-                                  type="button"
-                                  onClick={() => onUpdateUserBoosters(u.id, Math.max(0, (u.freeBoostsRemaining || 0) - 1))}
-                                  disabled={(u.freeBoostsRemaining || 0) <= 0}
-                                  className="w-6 h-6 rounded-md bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed font-black text-xs flex items-center justify-center cursor-pointer"
-                                  title="Diminuer de 1 booster"
-                                >
-                                  -
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => onUpdateUserBoosters(u.id, Math.min(20, (u.freeBoostsRemaining || 0) + 1))}
-                                  disabled={(u.freeBoostsRemaining || 0) >= 20}
-                                  className="w-6 h-6 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-800 disabled:opacity-30 disabled:cursor-not-allowed font-black text-xs flex items-center justify-center cursor-pointer border border-emerald-200"
-                                  title="Ajouter 1 booster"
-                                >
-                                  +1
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => onUpdateUserBoosters(u.id, Math.min(20, (u.freeBoostsRemaining || 0) + 5))}
-                                  disabled={(u.freeBoostsRemaining || 0) >= 20}
-                                  className="px-1.5 h-6 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 disabled:opacity-30 disabled:cursor-not-allowed font-black text-[10px] flex items-center justify-center cursor-pointer border border-amber-200"
-                                  title="Ajouter 5 boosters (max 20)"
-                                >
-                                  +5
-                                </button>
+                          {isStaff ? (
+                            <span className="text-slate-400 text-[10px] italic">
+                              Non applicable
+                            </span>
+                          ) : (
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1">
+                                <span className="font-extrabold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md text-[11px]">
+                                  ⚡ {u.freeBoostsRemaining || 0} / 20
+                                </span>
                               </div>
-                            )}
-                          </div>
+                              {isSuper && onUpdateUserBoosters && (
+                                <div className="flex items-center gap-1 pt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => onUpdateUserBoosters(u.id, Math.max(0, (u.freeBoostsRemaining || 0) - 1))}
+                                    disabled={(u.freeBoostsRemaining || 0) <= 0}
+                                    className="w-6 h-6 rounded-md bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed font-black text-xs flex items-center justify-center cursor-pointer"
+                                    title="Diminuer de 1 booster (Super Admin)"
+                                  >
+                                    -
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => onUpdateUserBoosters(u.id, Math.min(20, (u.freeBoostsRemaining || 0) + 1))}
+                                    disabled={(u.freeBoostsRemaining || 0) >= 20}
+                                    className="w-6 h-6 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-800 disabled:opacity-30 disabled:cursor-not-allowed font-black text-xs flex items-center justify-center cursor-pointer border border-emerald-200"
+                                    title="Ajouter 1 booster (Super Admin)"
+                                  >
+                                    +1
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => onUpdateUserBoosters(u.id, Math.min(20, (u.freeBoostsRemaining || 0) + 5))}
+                                    disabled={(u.freeBoostsRemaining || 0) >= 20}
+                                    className="px-1.5 h-6 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 disabled:opacity-30 disabled:cursor-not-allowed font-black text-[10px] flex items-center justify-center cursor-pointer border border-amber-200"
+                                    title="Ajouter 5 boosters (max 20) (Super Admin)"
+                                  >
+                                    +5
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </td>
 
-                        {/* KYC Status & Thumbnail */}
+                        {/* KYC Status & Thumbnail - Point 6: Not required for staff */}
                         <td className="p-3">
-                          <div className="space-y-1">
-                            {kycStatus === 'VERIFIED' && (
-                              <span className="bg-emerald-100 text-emerald-900 border border-emerald-300 font-extrabold text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                Validée ({u.idDocumentType || 'CNI'})
-                              </span>
-                            )}
-                            {kycStatus === 'PENDING' && (
-                              <span className="bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1 animate-pulse">
-                                <Clock className="w-3 h-3 text-amber-600" />
-                                En attente d'examen
-                              </span>
-                            )}
-                            {kycStatus === 'REJECTED' && (
-                              <span className="bg-red-100 text-red-900 border border-red-300 font-extrabold text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1">
-                                <XCircle className="w-3 h-3 text-red-600" />
-                                Rejetée
-                              </span>
-                            )}
-                            {kycStatus === 'NOT_SUBMITTED' && (
-                              <span className="text-slate-400 text-[10px] italic">
-                                Non transmise
-                              </span>
-                            )}
+                          {isStaff ? (
+                            <span className="text-slate-400 text-[10px] italic">
+                              Non requis (Équipe)
+                            </span>
+                          ) : (
+                            <div className="space-y-1">
+                              {kycStatus === 'VERIFIED' && (
+                                <span className="bg-emerald-100 text-emerald-900 border border-emerald-300 font-extrabold text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                  Validée ({u.idDocumentType || 'CNI'})
+                                </span>
+                              )}
+                              {kycStatus === 'PENDING' && (
+                                <span className="bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1 animate-pulse">
+                                  <Clock className="w-3 h-3 text-amber-600" />
+                                  En attente d'examen
+                                </span>
+                              )}
+                              {kycStatus === 'REJECTED' && (
+                                <span className="bg-red-100 text-red-900 border border-red-300 font-extrabold text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                  <XCircle className="w-3 h-3 text-red-600" />
+                                  Rejetée
+                                </span>
+                              )}
+                              {kycStatus === 'NOT_SUBMITTED' && (
+                                <span className="text-slate-400 text-[10px] italic">
+                                  Non transmise
+                                </span>
+                              )}
 
-                            {u.idDocumentUrl && (
-                              <div className="flex items-center gap-1.5 pt-0.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setPreviewKycUser(u)}
-                                  className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900 underline flex items-center gap-1 cursor-pointer"
-                                >
-                                  <FileText className="w-3 h-3" />
-                                  <span>Voir la pièce ({u.idDocumentType || 'CNI'})</span>
-                                </button>
-                              </div>
-                            )}
-                          </div>
+                              {u.idDocumentUrl && (
+                                <div className="flex items-center gap-1.5 pt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPreviewKycUser(u)}
+                                    className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900 underline flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <FileText className="w-3 h-3" />
+                                    <span>Voir la pièce ({u.idDocumentType || 'CNI'})</span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </td>
 
-                        {/* Actions */}
+                        {/* System Role (Super Admin Only - Strict Policies 2a & 2b) */}
+                        {isSuper && (
+                          <td className="p-3">
+                            <div className="space-y-1.5">
+                              {u.role === 'SUPER_ADMIN' || u.role === 'SUPER ADMIN' ? (
+                                <div className="space-y-0.5">
+                                  <span className="bg-amber-100 text-amber-950 border border-amber-300 font-black text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1 shadow-2xs">
+                                    <Crown className="w-3 h-3 text-amber-600 fill-amber-500" />
+                                    Super Admin
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block font-medium">
+                                    🔒 Non révocable via l'interface (Console Firestore uniquement)
+                                  </span>
+                                </div>
+                              ) : u.role === 'ADMIN' ? (
+                                <div className="space-y-1">
+                                  <span className="bg-purple-100 text-purple-900 border border-purple-300 font-extrabold text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                    <ShieldCheck className="w-3 h-3 text-purple-700" />
+                                    Modérateur (Admin)
+                                  </span>
+                                  {onUpdateUserRole && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (
+                                          window.confirm(
+                                            `Êtes-vous certain de vouloir promouvoir le modérateur "${u.name || u.contactPhone}" en SUPER ADMINISTRATEUR ?\n\nConformément à la règle de gouvernance, un Super Administrateur ne peut plus être rétrogradé depuis cette interface web (toute révocation future devra obligatoirement être réalisée manuellement dans la base de données Firestore).`
+                                          )
+                                        ) {
+                                          onUpdateUserRole(u.id, 'SUPER_ADMIN');
+                                        }
+                                      }}
+                                      className="text-[10px] font-black bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 px-2 py-1 rounded-lg shadow-xs flex items-center gap-1 cursor-pointer transition-all"
+                                      title="Promouvoir ce modérateur en Super Administrateur"
+                                    >
+                                      <Crown className="w-3 h-3 fill-slate-950" />
+                                      <span>Promouvoir Super Admin</span>
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="space-y-0.5">
+                                  <span className="bg-slate-100 text-slate-600 border border-slate-200 font-bold text-[10px] px-2 py-0.5 rounded-full inline-block">
+                                    Annonceur Standard
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block">
+                                    Compte annonceur
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        )}
+
+                        {/* Actions - Point 6: Exemption & KYC actions reserved for advertisers */}
                         <td className="p-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
-                            {/* Toggle Exemption Button */}
-                            {onToggleExemption && (
-                              <button
-                                onClick={() => onToggleExemption(u.id, !isExempt)}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
-                                  isExempt
-                                    ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
-                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                                }`}
-                                title={isExempt ? "Révoquer l'exonération VIP" : "Accorder l'exonération VIP (gratuit et sans KYC)"}
-                              >
-                                {isExempt ? 'Révoquer VIP' : 'Exonérer (VIP)'}
-                              </button>
-                            )}
-
-                            {/* Validate / Reject KYC Buttons */}
-                            {u.idDocumentUrl && kycStatus === 'PENDING' && (
+                            {isStaff ? (
+                              <span className="text-slate-400 text-[10px] italic">
+                                Équipe interne
+                              </span>
+                            ) : (
                               <>
-                                {onApproveKyc && (
+                                {/* Toggle Exemption Button (Super Admin Only) */}
+                                {isSuper && onToggleExemption && (
                                   <button
-                                    onClick={() => onApproveKyc(u.id)}
-                                    className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
-                                    title="Valider la pièce d'identité"
+                                    onClick={() => onToggleExemption(u.id, !isExempt)}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                                      isExempt
+                                        ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                                        : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                    }`}
+                                    title={isExempt ? "Révoquer l'exonération VIP" : "Accorder l'exonération VIP (gratuit et sans KYC)"}
                                   >
-                                    <Check className="w-3.5 h-3.5" />
+                                    {isExempt ? 'Révoquer VIP' : 'Exonérer (VIP)'}
                                   </button>
                                 )}
-                                {onRejectKyc && (
-                                  <button
-                                    onClick={() => setRejectingKycUser(u)}
-                                    className="p-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
-                                    title="Rejeter la pièce"
-                                  >
-                                    <X className="w-3.5 h-3.5" />
-                                  </button>
+
+                                {/* Validate / Reject KYC Buttons */}
+                                {u.idDocumentUrl && kycStatus === 'PENDING' && (
+                                  <>
+                                    {onApproveKyc && (
+                                      <button
+                                        onClick={() => onApproveKyc(u.id)}
+                                        className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
+                                        title="Valider la pièce d'identité"
+                                      >
+                                        <Check className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                    {onRejectKyc && (
+                                      <button
+                                        onClick={() => setRejectingKycUser(u)}
+                                        className="p-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                                        title="Rejeter la pièce"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </>
                                 )}
                               </>
                             )}

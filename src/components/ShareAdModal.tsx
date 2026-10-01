@@ -17,7 +17,7 @@ export const ShareAdModal: React.FC<ShareAdModalProps> = ({ isOpen, onClose, ad 
 
   const shareUrl = typeof window !== 'undefined' ? `${window.location.origin}/?ad=${ad.id}` : '';
   const shareTitle = `${ad.title} • ${formatFCFA(ad.price)}`;
-  const shareText = `Découvrez cette annonce sur BIZBOOSTER GABON : "${ad.title}" (${formatFCFA(ad.price)})${ad.city ? ' à ' + ad.city : ''}.`;
+  const shareText = `Découvrez cette annonce sur BIZBOOSTER GABON : "${ad.title}" (${formatFCFA(ad.price)})${ad.location?.city ? ' à ' + ad.location.city : ''}.`;
 
   const showToast = (msg: string) => {
     setToastMessage(msg);

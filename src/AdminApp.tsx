@@ -7,11 +7,14 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
+  query,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import { auth, db } from './services/firebase';
-import { Ad, AdReport, SubscriptionTier, UserProfile } from './types';
+import { Ad, AdReport, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAdmin } from './types';
 import { AdminPanel } from './components/AdminPanel';
 import { AdDetailModal } from './components/AdDetailModal';
 import { getFrontendUrl } from './utils/navigation';
@@ -20,6 +23,7 @@ type AdminStatus = 'loading' | 'signedOut' | 'denied' | 'admin';
 
 export default function AdminApp() {
   const [status, setStatus] = useState<AdminStatus>('loading');
+  const [currentAdmin, setCurrentAdmin] = useState<UserProfile | null>(null);
   const [ads, setAds] = useState<Ad[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [reports, setReports] = useState<AdReport[]>([]);
@@ -29,17 +33,58 @@ export default function AdminApp() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // 1. Watch the Firebase session and verify the ADMIN role in users/{uid}
+  // 1. Watch the Firebase session and verify the ADMIN / SUPER_ADMIN role in users/{uid}
   useEffect(() => {
     return onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
         setStatus('signedOut');
+        setCurrentAdmin(null);
         return;
       }
       try {
         const snap = await getDoc(doc(db, 'users', fbUser.uid));
-        setStatus(snap.exists() && snap.data().role === 'ADMIN' ? 'admin' : 'denied');
-      } catch {
+        if (snap.exists()) {
+          const profile = { id: snap.id, ...snap.data() } as UserProfile;
+          if (isUserAdmin(profile)) {
+            setCurrentAdmin(profile);
+            setStatus('admin');
+            return;
+          }
+        }
+
+        // Fallback 1: Lookup user in Firestore by email
+        if (fbUser.email) {
+          const qEmail = query(collection(db, 'users'), where('email', '==', fbUser.email.toLowerCase()));
+          const emailSnap = await getDocs(qEmail);
+          if (!emailSnap.empty) {
+            const profile = { id: emailSnap.docs[0].id, ...emailSnap.docs[0].data() } as UserProfile;
+            if (isUserAdmin(profile)) {
+              setCurrentAdmin(profile);
+              setStatus('admin');
+              return;
+            }
+          }
+        }
+
+        // Fallback 2: Lookup user in Firestore by phone
+        if (fbUser.phoneNumber) {
+          const qPhone = query(collection(db, 'users'), where('contactPhone', '==', fbUser.phoneNumber));
+          const phoneSnap = await getDocs(qPhone);
+          if (!phoneSnap.empty) {
+            const profile = { id: phoneSnap.docs[0].id, ...phoneSnap.docs[0].data() } as UserProfile;
+            if (isUserAdmin(profile)) {
+              setCurrentAdmin(profile);
+              setStatus('admin');
+              return;
+            }
+          }
+        }
+
+        setCurrentAdmin(null);
+        setStatus('denied');
+      } catch (err) {
+        console.error('Admin verification error:', err);
+        setCurrentAdmin(null);
         setStatus('denied');
       }
     });
@@ -154,8 +199,12 @@ export default function AdminApp() {
     }
   };
 
-  // 4. KYC & VIP Exemption handlers
+  // 4. KYC & VIP Exemption handlers (VIP exemption STRICTLY restricted to SUPER ADMIN)
   const handleToggleExemption = async (userId: string, isExempt: boolean) => {
+    if (!isUserSuperAdmin(currentAdmin)) {
+      alert("Action réservée exclusivement au SUPER ADMIN : création/révocation de partenaire VIP interdite.");
+      return;
+    }
     try {
       await updateDoc(doc(db, 'users', userId), {
         exemptFromPaymentAndKyc: isExempt,
@@ -194,15 +243,25 @@ export default function AdminApp() {
     }
   };
 
-  // 4b. Subscription & Boosters management
+  // 4b. Subscription & Boosters management (STRICTLY restricted to SUPER ADMIN)
   const handleUpdateUserSubscription = async (userId: string, tier: SubscriptionTier) => {
+    if (!isUserSuperAdmin(currentAdmin)) {
+      alert("Action réservée exclusivement au SUPER ADMIN : modification d'abonnement interdite.");
+      return;
+    }
     try {
       const isPaid = tier === 'PRO' || tier === 'ELITE' || tier === 'BUSINESS';
+      const targetUser = users.find((u) => u.id === userId);
+      const currentBoosts = targetUser?.freeBoostsRemaining || 0;
+      const boostsToAdd = tier === 'BUSINESS' ? 6 : tier === 'ELITE' ? 3 : tier === 'PRO' ? 1 : 0;
+      const newBoosts = Math.min(20, currentBoosts + boostsToAdd);
+
       await updateDoc(doc(db, 'users', userId), {
         subscriptionTier: tier,
         subscriptionExpiresAt: isPaid ? new Date(Date.now() + 30 * 86400000).toISOString() : null,
+        freeBoostsRemaining: newBoosts,
       });
-      await log(userId, 'SUBSCRIPTION_UPDATED', `Forfait défini sur: ${tier}`);
+      await log(userId, 'SUBSCRIPTION_UPDATED', `Forfait défini sur: ${tier} (+${boostsToAdd} boosters crédités)`);
     } catch (e) {
       console.error(e);
       alert("Erreur lors de la mise à jour de l'abonnement.");
@@ -210,6 +269,10 @@ export default function AdminApp() {
   };
 
   const handleUpdateUserBoosters = async (userId: string, count: number) => {
+    if (!isUserSuperAdmin(currentAdmin)) {
+      alert("Action réservée exclusivement au SUPER ADMIN : modification des boosters interdite.");
+      return;
+    }
     try {
       const safeCount = Math.max(0, Math.min(20, Math.round(count)));
       await updateDoc(doc(db, 'users', userId), {
@@ -219,6 +282,44 @@ export default function AdminApp() {
     } catch (e) {
       console.error(e);
       alert("Erreur lors de la modification des boosters.");
+    }
+  };
+
+  const handleUpdateUserRole = async (userId: string, newRole: 'USER' | 'ADMIN' | 'SUPER_ADMIN') => {
+    if (!isUserSuperAdmin(currentAdmin)) {
+      alert("Action réservée exclusivement au SUPER ADMIN : modification des rôles interdite.");
+      return;
+    }
+    const targetUser = users.find((u) => u.id === userId);
+    if (!targetUser) return;
+
+    // Règle 2b: Un Super Admin ne peut pas être révoqué par un autre Super Admin depuis l'interface
+    if ((targetUser.role as any) === 'SUPER_ADMIN' || (targetUser.role as any) === 'SUPER ADMIN') {
+      alert("Action interdite : un Super Administrateur ne peut pas être rétrogradé depuis cette interface. Toute révocation doit être effectuée manuellement dans la base de données Firestore.");
+      return;
+    }
+
+    // Règle 2a: Un utilisateur standard ne peut pas devenir un admin/modérateur depuis cette interface
+    if (targetUser.role !== 'ADMIN') {
+      alert("Action refusée : un utilisateur standard ne peut pas être nommé modérateur/admin depuis cette interface (création réservée manuellement avec identifiants distincts).");
+      return;
+    }
+
+    // Règle 2b: Un modérateur ne peut être que promu SUPER ADMIN
+    if (newRole !== 'SUPER_ADMIN') {
+      alert("Un modérateur ne peut être que promu au rang de Super Administrateur.");
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        role: 'SUPER_ADMIN',
+      });
+      await log(userId, 'ROLE_PROMOTED_SUPER_ADMIN', `Modérateur promu au rang de Super Administrateur`);
+      alert(`Le modérateur "${targetUser.name || targetUser.contactPhone}" a été promu Super Administrateur avec succès.`);
+    } catch (e) {
+      console.error(e);
+      alert("Erreur lors de la mise à jour du rôle.");
     }
   };
 
@@ -272,9 +373,16 @@ export default function AdminApp() {
     setLoginError(null);
     setBusy(true);
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
+      let targetEmail = email.trim();
+      if (!targetEmail.includes('@')) {
+        let clean = targetEmail.replace(/[^0-9]/g, '');
+        if (clean.startsWith('241')) clean = clean.slice(3);
+        if (clean.startsWith('0')) clean = clean.slice(1);
+        targetEmail = `${clean}@bizbooster.ga`;
+      }
+      await signInWithEmailAndPassword(auth, targetEmail, password);
     } catch {
-      setLoginError('Identifiants incorrects.');
+      setLoginError('Identifiants incorrects (email ou mot de passe).');
     } finally {
       setBusy(false);
     }
@@ -342,6 +450,7 @@ export default function AdminApp() {
   return (
     <>
       <AdminPanel
+        currentUser={currentAdmin}
         ads={ads}
         users={users}
         reports={reports}
@@ -357,6 +466,7 @@ export default function AdminApp() {
         onRejectKyc={handleRejectKyc}
         onUpdateUserSubscription={handleUpdateUserSubscription}
         onUpdateUserBoosters={handleUpdateUserBoosters}
+        onUpdateUserRole={handleUpdateUserRole}
         onResolveReport={handleResolveReport}
         onDismissReport={handleDismissReport}
         onDeleteReportedAd={handleDeleteReportedAd}

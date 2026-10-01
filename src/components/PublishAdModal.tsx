@@ -128,8 +128,8 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   // Wizard Step: 1 = Categorization, 2 = Content & Media, 3 = Billing & Payment, 4 = Confirmation
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Exemption and KYC state
-  const isExempt = Boolean(currentUser?.exemptFromPaymentAndKyc || currentUser?.isExempt || currentUser?.role === 'ADMIN');
+  // Exemption and KYC state: strictly VIP partners are exempt
+  const isExempt = Boolean(currentUser?.exemptFromPaymentAndKyc || currentUser?.isExempt);
   const isKycVerified = currentUser?.idVerificationStatus === 'VERIFIED';
   const isKycPending = currentUser?.idVerificationStatus === 'PENDING';
   const isKycRejected = currentUser?.idVerificationStatus === 'REJECTED';
@@ -523,6 +523,8 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         transactionType:
           mainCategory === 'IMMOBILIER' || mainCategory === 'MATERIEL_ROULANT'
             ? transactionType
+            : mainCategory === 'EMPLOI'
+            ? 'EMPLOYER'
             : undefined,
         propertyType: mainCategory === 'IMMOBILIER' ? propertyType : undefined,
         location: {
@@ -544,6 +546,9 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         priceUnit,
         isFeatured: isBoostFeatured,
         featuredUntil: isBoostFeatured ? new Date(now.getTime() + 7 * 86400000).toISOString() : undefined,
+        featuredAt: isBoostFeatured ? now.toISOString() : undefined,
+        ownerTier: requiresSubscription ? selectedTierToBuy : (currentUser?.subscriptionTier || 'STANDARD'),
+        isOwnerVip: Boolean(currentUser?.exemptFromPaymentAndKyc || currentUser?.isExempt),
         description: description || 'Annonce vérifiée et publiée sur BIZBOOSTER Gabon.',
         images: finalImageUrls.length > 0 ? finalImageUrls : [SAMPLE_IMAGE_PRESETS[mainCategory][0]],
         videoUrl: finalVideoUrl,
@@ -563,13 +568,17 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
       if (requiresSubscription) {
         const boostsToAdd = selectedTierToBuy === 'BUSINESS' ? 6 : selectedTierToBuy === 'ELITE' ? 3 : 1;
+        const currentBoosts = currentUser?.freeBoostsRemaining || 0;
+        let finalBoosts = Math.min(20, currentBoosts + boostsToAdd);
+        if (isBoostFeatured && !isExempt) {
+          finalBoosts = Math.max(0, finalBoosts - 1);
+        }
         await onUpdateUser?.({
           subscriptionTier: selectedTierToBuy,
           subscriptionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
-          freeBoostsRemaining: Math.min(20, (currentUser?.freeBoostsRemaining || 0) + boostsToAdd),
+          freeBoostsRemaining: finalBoosts,
         });
-      }
-      if (hasFreeBoost && isBoostFeatured) {
+      } else if (hasFreeBoost && isBoostFeatured) {
         await onUpdateUser?.({ freeBoostsRemaining: Math.max(0, (currentUser?.freeBoostsRemaining || 1) - 1) });
       }
 
@@ -921,7 +930,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       Plafond maximal atteint (20 / 20 annonces actives)
                     </p>
                     <p className="text-red-700 mt-1 leading-relaxed">
-                      Conformément aux règles de diffusion BIZBOOSTER Gabon, chaque annonceur (y compris formule Business et Partenaire VIP) est plafonné à 20 annonces simultanées en cours.
+                      Conformément aux règles de diffusion BIZBOOSTER Gabon, chaque annonceur est soumis au plafond maximal de 20 annonces simultanées en cours.
                       Veuillez attendre l'expiration d'une annonce ou en supprimer une depuis votre espace pour déposer une nouvelle offre.
                     </p>
                   </div>
@@ -944,7 +953,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     Vos annonces simultanées en cours :
                   </span>
                   <span className="font-extrabold text-slate-900 bg-white border border-slate-200 px-2 py-0.5 rounded-lg">
-                    {simultaneousAdsCount} / {maxQuota} max {isExempt ? '(VIP - 20 max)' : currentUser?.subscriptionTier ? `(${currentUser.subscriptionTier})` : '(Standard)'}
+                    {simultaneousAdsCount} / {maxQuota} max {currentUser?.subscriptionTier ? `(${currentUser.subscriptionTier})` : '(Standard)'}
                   </span>
                 </div>
               )}
@@ -1828,8 +1837,8 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     <span className="font-mono font-bold text-white">
                       {isExempt
                         ? '0 FCFA'
-                        : isBasePostingCovered && !requiresPackPurchase
-                        ? 'Inclus (Pack/Abonnement)'
+                        : isBasePostingCovered
+                        ? 'Inclus (Abonnement)'
                         : formatFCFA(bill.basePrice)}
                     </span>
                   </div>
@@ -1981,10 +1990,14 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     <div className="flex items-center gap-2 mb-1">
                       <span
                         className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${
-                          createdAd.transactionType === 'VENTE' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-900'
+                          createdAd.transactionType === 'EMPLOYER' || createdAd.mainCategory === 'EMPLOI'
+                            ? 'bg-purple-100 text-purple-900 border border-purple-200'
+                            : createdAd.transactionType === 'VENTE'
+                            ? 'bg-amber-100 text-amber-900'
+                            : 'bg-emerald-100 text-emerald-900'
                         }`}
                       >
-                        {createdAd.transactionType || createdAd.mainCategory}
+                        {createdAd.mainCategory === 'EMPLOI' || createdAd.transactionType === 'EMPLOYER' ? 'À EMPLOYER' : (createdAd.transactionType ? (createdAd.transactionType === 'VENTE' ? 'À VENDRE' : 'À LOUER') : createdAd.mainCategory)}
                       </span>
                       <span className="text-[10px] text-amber-800 font-extrabold bg-amber-100 px-1.5 py-0.2 rounded">
                         En attente d'approbation

@@ -38,8 +38,8 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
         onClick={handleCardClick}
       >
         <img
-          src={ad.images[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=800&q=80'}
-          alt={ad.title}
+          src={ad.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=800&q=80'}
+          alt={ad.title || 'Annonce'}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           referrerPolicy="no-referrer"
           loading="lazy"
@@ -47,7 +47,7 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
 
         {/* Top Badges overlay */}
         <div className="absolute top-2.5 left-2.5 right-2.5 flex items-start justify-between gap-1 pointer-events-none">
-          {/* Transaction Type: VENTE vs LOCATION (strictly forbidden for EMPLOI) */}
+          {/* Transaction Type: VENTE, LOCATION or À EMPLOYER */}
           <div className="flex flex-col gap-1">
             {isBoosted && (
               <span className="text-[10px] font-black tracking-wide uppercase px-2 py-0.5 rounded-lg shadow-sm bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 flex items-center gap-1 border border-amber-300">
@@ -55,7 +55,11 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
                 <span>En Tête</span>
               </span>
             )}
-            {ad.mainCategory !== 'EMPLOI' && ad.transactionType && (
+            {ad.mainCategory === 'EMPLOI' ? (
+              <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-purple-600 text-white ring-1 ring-purple-400">
+                À Employer
+              </span>
+            ) : ad.transactionType ? (
               <span
                 className={`text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs ${
                   ad.transactionType === 'VENTE'
@@ -65,7 +69,7 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
               >
                 {ad.transactionType === 'VENTE' ? 'À Vendre' : 'À Louer'}
               </span>
-            )}
+            ) : null}
             {ad.propertyType && (
               <span className="text-[10px] font-bold bg-slate-900/85 text-slate-100 px-2 py-0.5 rounded-md shadow-xs">
                 {ad.propertyType}
@@ -98,9 +102,9 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
 
         {/* Media indicators (Photo count / Video badge) */}
         <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 pointer-events-none">
-          {ad.images.length > 1 && (
+          {(ad.images?.length || 0) > 1 && (
             <span className="bg-black/70 text-white text-[10px] font-semibold px-2 py-0.5 rounded-md backdrop-blur-xs">
-              📷 {ad.images.length} photos
+              📷 {ad.images?.length} photos
             </span>
           )}
           {ad.videoUrl && (

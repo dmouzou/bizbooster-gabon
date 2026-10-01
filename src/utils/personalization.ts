@@ -1,4 +1,4 @@
-import { Ad, MainCategory } from '../types';
+import { Ad, MainCategory, getTierPriority } from '../types';
 
 const STORAGE_KEYS = {
   CATEGORIES: 'bizbooster_user_cat_affinities',
@@ -78,38 +78,50 @@ export function isAdBoostFeatured(ad: Ad): boolean {
 
 /**
  * Computes a personalization & relevance score for an ad:
- * 1. Boosted/Featured ads get the highest base score so they are always at the top.
- * 2. User category and location affinities add dynamic weighting.
- * 3. Freshness / Recency adds a decaying boost (newest ads are naturally favored).
+ * 1. Boosted/Featured ads are strictly ranked by tier level:
+ *    - VIP Partner: 15,000,000 pts
+ *    - Business:    14,000,000 pts
+ *    - Élite:       13,000,000 pts
+ *    - Pro:         12,000,000 pts
+ *    - Standard:    11,000,000 pts
+ * 2. Within the same tier, boost recency & fresh publication add up to 100,000 pts.
+ * 3. User category & location affinities add up to 65,000 pts.
+ * 4. Regular non-boosted ads score below 1,000,000 pts.
  */
 export function computeAdScore(ad: Ad, prefs: UserPreferences): number {
   let score = 0;
+  const now = Date.now();
 
-  // 1. Pinned / Top-of-feed Boost (Option "En Tête de Liste")
+  // 1. Pinned / Top-of-feed Boost (Option "En Tête de Liste") with Strict Tier Hierarchy
   if (isAdBoostFeatured(ad)) {
-    score += 1_000_000;
+    const tierPrio = getTierPriority(ad); // 5 (VIP) > 4 (Business) > 3 (Elite) > 2 (Pro) > 1 (Standard)
+    score += 10_000_000 + tierPrio * 1_000_000;
+
+    // Boost recency: the more recent the boost/publication, the higher in its tier bracket
+    const boostTime = new Date(ad.featuredAt || ad.publishedAt || 0).getTime();
+    const hoursSinceBoost = Math.max(0, (now - boostTime) / (1000 * 60 * 60));
+    const boostRecencyScore = Math.max(0, 100_000 - hoursSinceBoost * 200);
+    score += boostRecencyScore;
   }
 
-  // 2. Freshness & Recency
+  // 2. Publication Freshness & Recency
   const pubTime = new Date(ad.publishedAt || 0).getTime();
-  const now = Date.now();
   const hoursOld = Math.max(0, (now - pubTime) / (1000 * 60 * 60));
-  // Ads published in the last 24h get up to 50,000 points
-  const recencyBoost = Math.max(0, 50000 - hoursOld * 150);
+  const recencyBoost = Math.max(0, 50_000 - hoursOld * 150);
   score += recencyBoost;
 
   // 3. User Category Affinity
   const catViews = prefs.categories[ad.mainCategory] || 0;
-  score += Math.min(catViews * 8000, 40000);
+  score += Math.min(catViews * 8_000, 40_000);
 
   // 4. User Location Affinity
   if (ad.location?.province) {
     const provViews = prefs.locations[ad.location.province] || 0;
-    score += Math.min(provViews * 4000, 20000);
+    score += Math.min(provViews * 4_000, 20_000);
   }
   if (ad.location?.city) {
     const cityViews = prefs.locations[ad.location.city] || 0;
-    score += Math.min(cityViews * 5000, 25000);
+    score += Math.min(cityViews * 5_000, 25_000);
   }
 
   return score;
@@ -117,7 +129,7 @@ export function computeAdScore(ad: Ad, prefs: UserPreferences): number {
 
 /**
  * Sorts ads personalized according to the user's past actions and preferences,
- * while keeping newer and boosted ads at the front.
+ * while strictly honoring the "En Tête" tier hierarchy (VIP > Business > Elite > Pro > Standard).
  */
 export function sortAdsPersonalized(ads: Ad[]): Ad[] {
   const prefs = getUserPreferences();
@@ -133,15 +145,32 @@ export function sortAdsPersonalized(ads: Ad[]): Ad[] {
 }
 
 /**
- * Pure chronological sort: featured first, then newest publishedAt descending.
+ * Pure chronological sort: featured first strictly prioritized by tier:
+ * VIP Partners > Business > Élite > Pro > Standard,
+ * then newest publishedAt descending.
  */
 export function sortAdsRecent(ads: Ad[]): Ad[] {
   return [...ads].sort((a, b) => {
-    const featuredA = isAdBoostFeatured(a) ? 1 : 0;
-    const featuredB = isAdBoostFeatured(b) ? 1 : 0;
-    if (featuredB !== featuredA) {
-      return featuredB - featuredA;
+    const isFeatA = isAdBoostFeatured(a);
+    const isFeatB = isAdBoostFeatured(b);
+
+    if (isFeatA && isFeatB) {
+      const prioA = getTierPriority(a);
+      const prioB = getTierPriority(b);
+      if (prioB !== prioA) {
+        return prioB - prioA; // Higher tier priority first
+      }
+      // Within same tier: newest boost or publication first
+      const timeA = new Date(a.featuredAt || a.publishedAt || 0).getTime();
+      const timeB = new Date(b.featuredAt || b.publishedAt || 0).getTime();
+      return timeB - timeA;
     }
+
+    if (isFeatB !== isFeatA) {
+      return isFeatB ? 1 : -1;
+    }
+
+    // Both unfeatured: newest first
     return new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime();
   });
 }
