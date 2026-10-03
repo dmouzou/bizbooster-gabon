@@ -6,7 +6,7 @@ import {
   User,
   LogOut,
 } from 'lucide-react';
-import { MainCategory, UserProfile } from '../types';
+import { MainCategory, UserProfile, isUserAdmin } from '../types';
 
 interface HeaderProps {
   currentTab: 'catalog' | 'user-dashboard';
@@ -18,6 +18,7 @@ interface HeaderProps {
   currentUser: UserProfile | null;
   onLogout: () => void;
   totalActiveAdsCount: number;
+  onSwitchToAdmin?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -28,6 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   currentUser,
   onLogout,
   totalActiveAdsCount,
+  onSwitchToAdmin,
 }) => {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
@@ -85,6 +87,18 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Mobile Actions: Phone login & Publish */}
           <div className="flex items-center gap-1.5 sm:gap-2 md:hidden shrink-0 ml-1">
+            {currentUser && isUserAdmin(currentUser) && (
+              <button
+                onClick={onSwitchToAdmin}
+                className="p-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 border border-amber-300 text-xs font-black flex items-center gap-1 shadow-2xs shrink-0 cursor-pointer"
+                title="Accéder au Cockpit Administrateur"
+                id="mobile-header-admin-btn"
+              >
+                <ShieldCheck className="w-4 h-4 text-slate-950" />
+                <span className="text-[10px] font-black hidden min-[360px]:inline">Admin</span>
+              </button>
+            )}
+
             {currentUser ? (
               <button
                 onClick={() => setCurrentTab('user-dashboard')}
@@ -156,6 +170,18 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right CTA & Profile status */}
         <div className="hidden md:flex items-center gap-3">
+          {currentUser && isUserAdmin(currentUser) && (
+            <button
+              onClick={onSwitchToAdmin}
+              className="flex items-center gap-1.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 text-xs font-black px-3.5 py-2 rounded-xl shadow-xs border border-amber-300 transition-all cursor-pointer transform hover:scale-102"
+              title="Accéder au Cockpit Administrateur et Modération"
+              id="header-admin-cockpit-btn"
+            >
+              <ShieldCheck className="w-4 h-4 text-slate-950" />
+              <span>Cockpit Admin</span>
+            </button>
+          )}
+
           {currentUser ? (
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl">
               <div className="text-right">

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import {
   addDoc,
@@ -18,11 +18,16 @@ import { Ad, AdReport, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAd
 import { AdminPanel } from './components/AdminPanel';
 import { AdDetailModal } from './components/AdDetailModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
+import { INITIAL_ADS } from './data/initialAds';
 import { getFrontendUrl } from './utils/navigation';
 
 type AdminStatus = 'loading' | 'signedOut' | 'denied' | 'admin';
 
-export default function AdminApp() {
+interface AdminAppProps {
+  onSwitchToFrontend?: () => void;
+}
+
+export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
   const [status, setStatus] = useState<AdminStatus>('loading');
   const [currentAdmin, setCurrentAdmin] = useState<UserProfile | null>(null);
   const [ads, setAds] = useState<Ad[]>([]);
@@ -44,8 +49,14 @@ export default function AdminApp() {
 
   // 1. Watch the Firebase session and verify the ADMIN / SUPER_ADMIN role in users/{uid}
   useEffect(() => {
-    return onAuthStateChanged(auth, async (fbUser) => {
+    // Timeout fallback: if Firebase Auth takes more than 3.5s to resolve, show login screen
+    const loadingTimer = setTimeout(() => {
+      setStatus((prev) => (prev === 'loading' ? 'signedOut' : prev));
+    }, 3500);
+
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
+        clearTimeout(loadingTimer);
         setStatus('signedOut');
         setCurrentAdmin(null);
         return;
@@ -55,8 +66,12 @@ export default function AdminApp() {
         if (snap.exists()) {
           const profile = { id: snap.id, ...snap.data() } as UserProfile;
           if (isUserAdmin(profile)) {
+            clearTimeout(loadingTimer);
             setCurrentAdmin(profile);
             setStatus('admin');
+            try {
+              localStorage.setItem('bizbooster_active_panel', 'admin');
+            } catch (e) {}
             return;
           }
         }
@@ -68,8 +83,14 @@ export default function AdminApp() {
           if (!emailSnap.empty) {
             const profile = { id: emailSnap.docs[0].id, ...emailSnap.docs[0].data() } as UserProfile;
             if (isUserAdmin(profile)) {
+              clearTimeout(loadingTimer);
               setCurrentAdmin(profile);
               setStatus('admin');
+              try {
+                localStorage.setItem('bizbooster_active_panel', 'admin');
+              } catch (e) {
+                console.warn(e);
+              }
               return;
             }
           }
@@ -82,21 +103,34 @@ export default function AdminApp() {
           if (!phoneSnap.empty) {
             const profile = { id: phoneSnap.docs[0].id, ...phoneSnap.docs[0].data() } as UserProfile;
             if (isUserAdmin(profile)) {
+              clearTimeout(loadingTimer);
               setCurrentAdmin(profile);
               setStatus('admin');
+              try {
+                localStorage.setItem('bizbooster_active_panel', 'admin');
+              } catch (e) {
+                console.warn(e);
+              }
               return;
             }
           }
         }
 
+        clearTimeout(loadingTimer);
         setCurrentAdmin(null);
         setStatus('denied');
       } catch (err) {
         console.error('Admin verification error:', err);
+        clearTimeout(loadingTimer);
         setCurrentAdmin(null);
         setStatus('denied');
       }
     });
+
+    return () => {
+      clearTimeout(loadingTimer);
+      unsub();
+    };
   }, []);
 
   // 2. Only once we know the user is an admin, listen to ALL ads, users and reports in real time
@@ -395,6 +429,27 @@ export default function AdminApp() {
     });
   };
 
+  // Merge INITIAL_ADS with live Firestore ads so test & demo ads are available for moderation examination
+  const allAds = useMemo(() => {
+    const map = new Map<string, Ad>();
+    INITIAL_ADS.forEach((a) => map.set(a.id, a));
+    ads.forEach((a) => map.set(a.id, a));
+    return Array.from(map.values());
+  }, [ads]);
+
+  const handleSwitchToFrontend = () => {
+    try {
+      localStorage.setItem('bizbooster_active_panel', 'frontend');
+    } catch (e) {
+      console.warn(e);
+    }
+    if (onSwitchToFrontend) {
+      onSwitchToFrontend();
+    } else {
+      window.location.href = getFrontendUrl();
+    }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
@@ -416,29 +471,44 @@ export default function AdminApp() {
   };
 
   // ---------------- Screens ----------------
-
   if (status === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100 text-slate-500 text-sm">
-        Chargement…
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white p-4 space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center font-black text-2xl text-white shadow-xl shadow-emerald-500/20 animate-pulse">
+          BZ
+        </div>
+        <div className="flex items-center gap-2.5 text-emerald-400 text-sm font-bold">
+          <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+          <span>Chargement du Cockpit Administrateur…</span>
+        </div>
+        <p className="text-xs text-slate-400">Vérification des droits d'accès...</p>
+        <button
+          onClick={handleSwitchToFrontend}
+          className="text-xs text-slate-400 hover:text-white underline mt-2 cursor-pointer"
+        >
+          Retourner au catalogue public
+        </button>
       </div>
     );
   }
 
   if (status === 'signedOut') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
-        <form onSubmit={handleLogin} className="bg-white w-full max-w-sm rounded-2xl shadow-xl border border-slate-200 p-6 space-y-4">
-          <h1 className="text-lg font-black text-slate-900">BIZBOOSTER · Back-Office</h1>
-          <p className="text-xs text-slate-500">Accès réservé à l'équipe de modération.</p>
-          {loginError && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{loginError}</div>}
+      <div className="min-h-screen flex items-center justify-center bg-slate-900/95 p-4">
+        <form onSubmit={handleLogin} className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-lg font-black text-slate-900">BIZBOOSTER · Back-Office</h1>
+            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Admin</span>
+          </div>
+          <p className="text-xs text-slate-500">Accès réservé à l'équipe de modération et d'administration.</p>
+          {loginError && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2.5 font-semibold">{loginError}</div>}
           <input
-            type="email"
+            type="text"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="Email"
+            placeholder="Email ou Téléphone (+241)"
             required
-            className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm"
+            className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
           />
           <input
             type="password"
@@ -446,14 +516,21 @@ export default function AdminApp() {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Mot de passe"
             required
-            className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm"
+            className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
           />
           <button
             type="submit"
             disabled={busy}
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-sm"
+            className="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold py-3 rounded-xl text-sm transition-all shadow-md cursor-pointer disabled:opacity-50"
           >
-            {busy ? 'Connexion…' : 'Se connecter'}
+            {busy ? 'Connexion en cours…' : 'Se connecter au Cockpit'}
+          </button>
+          <button
+            type="button"
+            onClick={handleSwitchToFrontend}
+            className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+          >
+            ← Retour au site grand public
           </button>
         </form>
       </div>
@@ -462,13 +539,21 @@ export default function AdminApp() {
 
   if (status === 'denied') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
-        <div className="bg-white max-w-sm rounded-2xl shadow-xl border border-slate-200 p-6 text-center space-y-3">
+      <div className="min-h-screen flex items-center justify-center bg-slate-900/95 p-4">
+        <div className="bg-white max-w-sm rounded-2xl shadow-2xl border border-slate-200 p-6 text-center space-y-3">
           <h1 className="text-lg font-black text-slate-900">Accès refusé</h1>
-          <p className="text-xs text-slate-500">Ce compte n'a pas le rôle administrateur.</p>
-          <button onClick={() => signOut(auth)} className="text-xs font-bold text-emerald-700 underline">
-            Se déconnecter
-          </button>
+          <p className="text-xs text-slate-500">Ce compte ne dispose pas des privilèges administrateur nécessaires pour accéder au Back-Office.</p>
+          <div className="pt-2 space-y-2">
+            <button onClick={() => signOut(auth)} className="w-full py-2.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-bold transition-colors cursor-pointer border border-red-200">
+              Se déconnecter
+            </button>
+            <button
+              onClick={handleSwitchToFrontend}
+              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+            >
+              Retourner au catalogue public
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -478,16 +563,14 @@ export default function AdminApp() {
     <>
       <AdminPanel
         currentUser={currentAdmin}
-        ads={ads}
+        ads={allAds}
         users={users}
         reports={reports}
         onApproveAd={handleApproveAd}
         onRejectAd={handleRejectAd}
         onDeleteAd={handleDeleteAd}
         onSelectAdDetail={setSelectedAd}
-        onSwitchToFrontend={() => {
-          window.location.href = getFrontendUrl();
-        }}
+        onSwitchToFrontend={handleSwitchToFrontend}
         onToggleExemption={handleToggleExemption}
         onApproveKyc={handleApproveKyc}
         onRejectKyc={handleRejectKyc}

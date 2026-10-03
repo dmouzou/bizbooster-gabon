@@ -209,14 +209,18 @@ export interface UserProfile {
   };
 }
 
-export const isUserSuperAdmin = (user?: { role?: string } | null): boolean => {
-  if (!user || !user.role) return false;
+export const isUserSuperAdmin = (user?: { role?: string; isSuperAdmin?: boolean } | null): boolean => {
+  if (!user) return false;
+  if ((user as any).isSuperAdmin === true) return true;
+  if (!user.role) return false;
   const normalized = String(user.role).trim().toUpperCase().replace(/[\s_-]+/g, '');
   return normalized === 'SUPERADMIN';
 };
 
-export const isUserAdmin = (user?: { role?: string } | null): boolean => {
-  if (!user || !user.role) return false;
+export const isUserAdmin = (user?: { role?: string; isAdmin?: boolean; isSuperAdmin?: boolean } | null): boolean => {
+  if (!user) return false;
+  if ((user as any).isAdmin === true || (user as any).isSuperAdmin === true) return true;
+  if (!user.role) return false;
   const normalized = String(user.role).trim().toUpperCase().replace(/[\s_-]+/g, '');
   return normalized === 'SUPERADMIN' || normalized === 'ADMIN';
 };

@@ -58,7 +58,7 @@ import { auth, db } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
 import AdminApp from './AdminApp';
 
-function PublicApp() {
+function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
 
   useEffect(() => {
@@ -835,6 +835,7 @@ function PublicApp() {
         currentUser={currentUser}
         onLogout={handleLogout}
         totalActiveAdsCount={activeAdsCount}
+        onSwitchToAdmin={onSwitchToAdmin}
       />
 
       <main className="flex-1 max-w-7xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 w-full space-y-5 sm:space-y-6 pb-28 md:pb-8">
@@ -1172,6 +1173,7 @@ function PublicApp() {
               onLogout={handleLogout}
               onBoostAd={handleBoostAd}
               onUpdateUser={handleUpdateUserProfile}
+              onSwitchToAdmin={onSwitchToAdmin}
             />
           ) : (
             <div className="bg-white rounded-3xl p-8 sm:p-12 text-center border border-slate-200 shadow-sm max-w-lg mx-auto space-y-4">
@@ -1225,6 +1227,13 @@ function PublicApp() {
             <span className="text-emerald-700">✓ Vente & Location</span>
             <span className="text-red-600">✓ Airtel Money Gabon</span>
             <span className="text-blue-600">✓ Moov Money Gabon</span>
+            <button
+              type="button"
+              onClick={onSwitchToAdmin}
+              className="text-slate-500 hover:text-amber-700 underline font-medium cursor-pointer transition-colors"
+            >
+              🔒 Cockpit Back-Office Modération
+            </button>
           </div>
         </div>
       </footer>
@@ -1385,5 +1394,64 @@ function PublicApp() {
 }
 
 export default function App() {
-  return window.location.pathname.startsWith('/admin') ? <AdminApp /> : <PublicApp />;
+  const [currentView, setCurrentView] = useState<'frontend' | 'admin'>(() => {
+    if (typeof window !== 'undefined') {
+      if (window.location.pathname.startsWith('/admin')) {
+        return 'admin';
+      }
+      try {
+        const saved = localStorage.getItem('bizbooster_active_panel');
+        if (saved === 'admin') {
+          return 'admin';
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    return 'frontend';
+  });
+
+  useEffect(() => {
+    const handlePopState = () => {
+      if (window.location.pathname.startsWith('/admin')) {
+        setCurrentView('admin');
+        try {
+          localStorage.setItem('bizbooster_active_panel', 'admin');
+        } catch (e) {}
+      } else {
+        setCurrentView('frontend');
+        try {
+          localStorage.setItem('bizbooster_active_panel', 'frontend');
+        } catch (e) {}
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const switchToAdmin = () => {
+    setCurrentView('admin');
+    try {
+      localStorage.setItem('bizbooster_active_panel', 'admin');
+    } catch (e) {}
+    if (!window.location.pathname.startsWith('/admin')) {
+      window.history.pushState(null, '', '/admin');
+    }
+  };
+
+  const switchToFrontend = () => {
+    setCurrentView('frontend');
+    try {
+      localStorage.setItem('bizbooster_active_panel', 'frontend');
+    } catch (e) {}
+    if (window.location.pathname.startsWith('/admin')) {
+      window.history.pushState(null, '', '/');
+    }
+  };
+
+  return currentView === 'admin' ? (
+    <AdminApp onSwitchToFrontend={switchToFrontend} />
+  ) : (
+    <PublicApp onSwitchToAdmin={switchToAdmin} />
+  );
 }

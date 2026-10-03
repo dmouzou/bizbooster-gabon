@@ -45,7 +45,7 @@ import {
 } from 'firebase/auth';
 import { doc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
-import { Ad, UserProfile, SubscriptionTier, BoosterPackType, AdPackType, PaymentOperator } from '../types';
+import { Ad, UserProfile, SubscriptionTier, BoosterPackType, AdPackType, PaymentOperator, isUserAdmin, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime, isAdOwner } from '../utils/formatters';
 import { isAdBoostFeatured } from '../utils/personalization';
 import { GABON_PROVINCES } from '../data/gabonLocations';
@@ -71,6 +71,7 @@ interface UserDashboardProps {
   onLogout: () => void;
   onBoostAd?: (adId: string) => Promise<void>;
   onUpdateUser?: (updated: Partial<UserProfile>) => Promise<void>;
+  onSwitchToAdmin?: () => void;
 }
 
 const TIER_ORDER: Record<SubscriptionTier, number> = {
@@ -176,6 +177,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onLogout,
   onBoostAd,
   onUpdateUser,
+  onSwitchToAdmin,
 }) => {
   const [dashboardTab, setDashboardTab] = useState<'ADS' | 'SUBSCRIPTIONS' | 'PROFILE'>('ADS');
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'ACTIVE' | 'PENDING' | 'REJECTED' | 'SUSPENDED'>('ALL');
@@ -736,6 +738,35 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
+      {/* Admin Privileged Cockpit Banner */}
+      {isUserAdmin(currentUser) && (
+        <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 border-2 border-amber-400/60 rounded-3xl p-5 sm:p-6 text-white shadow-xl shadow-amber-950/20 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-amber-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-400/30 shrink-0">
+              <ShieldCheck className="w-6 h-6 text-slate-950" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-extrabold text-base sm:text-lg tracking-tight">Cockpit d'Administration & Modération</span>
+                <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                  {isUserSuperAdmin(currentUser) ? '👑 Super Admin' : '👑 Modérateur Admin'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
+                Votre profil possède les accès d'arbitrage éditorial, vérification des pièces d'identité KYC, validation des prolongations et consultation de l'Observatoire du Marché.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onSwitchToAdmin}
+            className="bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 active:from-amber-500 active:to-amber-600 text-slate-950 font-black text-xs sm:text-sm px-5 py-3 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0 transform hover:scale-102"
+          >
+            <ExternalLink className="w-4 h-4 text-slate-950" />
+            <span>Ouvrir le Panneau Admin</span>
+          </button>
+        </div>
+      )}
+
       {/* User Identity & Profile Banner (Harmonious & Responsive Layout - Point 5) */}
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white rounded-3xl p-6 sm:p-7 border border-slate-800 shadow-xl">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
