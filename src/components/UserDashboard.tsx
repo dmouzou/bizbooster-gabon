@@ -73,6 +73,27 @@ interface UserDashboardProps {
   onUpdateUser?: (updated: Partial<UserProfile>) => Promise<void>;
 }
 
+const TIER_ORDER: Record<SubscriptionTier, number> = {
+  STANDARD: 0,
+  PRO: 1,
+  ELITE: 2,
+  BUSINESS: 3,
+};
+
+const TIER_PRICES: Record<SubscriptionTier, number> = {
+  STANDARD: 0,
+  PRO: 29000,
+  ELITE: 59000,
+  BUSINESS: 99000,
+};
+
+const TIER_QUOTAS: Record<SubscriptionTier, number> = {
+  STANDARD: 3,
+  PRO: 8,
+  ELITE: 14,
+  BUSINESS: 20,
+};
+
 const SUBSCRIPTION_TIERS = [
   {
     tier: 'PRO' as const,
@@ -256,37 +277,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   const isExempt = !!(currentUser.exemptFromPaymentAndKyc || currentUser.isExempt);
   const kycStatus = currentUser.idVerificationStatus || 'NOT_SUBMITTED';
-  const isKycVerified = kycStatus === 'VERIFIED';
-  const isAllowedToTransact = isExempt || isKycVerified;
+  const isKycVerified = kycStatus === 'VERIFIED' || !!currentUser.idVerifiedAt || (!!currentUser.idDocumentUrl && kycStatus !== 'REJECTED' && kycStatus !== 'PENDING');
+  // Point 1: ID card is an optional trust badge, no longer required for transactions or publishing
+  const isAllowedToTransact = true;
 
   const handleSafeOpenPublish = () => {
-    if (!isAllowedToTransact) {
-      alert(
-        kycStatus === 'PENDING'
-          ? "Votre pièce d'identité est actuellement en cours d'examen par notre équipe de modération. Vous pourrez déposer une annonce dès sa validation."
-          : "Vérification d'identité obligatoire : Conformément aux règles de sécurité, vous devez faire vérifier votre pièce d'identité avant de pouvoir déposer une annonce ou effectuer un paiement."
-      );
-      if (kycStatus !== 'PENDING') {
-        setIsKycModalOpen(true);
-      }
-      return;
-    }
     onOpenPublishModal();
   };
 
   const handleOpenBoostModal = (ad: Ad) => {
-    if (!isAllowedToTransact) {
-      alert(
-        kycStatus === 'PENDING'
-          ? "Votre pièce d'identité est en cours d'examen par la modération. Vous pourrez booster vos annonces dès sa validation."
-          : "Vérification d'identité obligatoire : Vous devez faire vérifier votre pièce d'identité avant de pouvoir booster une annonce ou effectuer un paiement."
-      );
-      if (kycStatus !== 'PENDING') {
-        setIsKycModalOpen(true);
-      }
-      return;
-    }
     setAdToBoost(ad);
+    setSelectedPackForBoost(null);
+    setBoostOption('SINGLE');
   };
 
   // Filter ads strictly belonging to this user
@@ -325,6 +327,74 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     if (effectiveTier === 'PRO') return 8;
     return 3; // Standard free users: max 3 simultaneous ads
   }, [effectiveTier, isExempt]);
+
+  // Subscription upgrade/downgrade logic (Point 5)
+  const isSubscriptionActive = !isSubscriptionExpired && effectiveTier !== 'STANDARD';
+
+  const subscriptionStartedAtMs = useMemo(() => {
+    if (currentUser.subscriptionStartedAt) {
+      return new Date(currentUser.subscriptionStartedAt).getTime();
+    }
+    if (currentUser.subscriptionExpiresAt) {
+      const expiresMs = new Date(currentUser.subscriptionExpiresAt).getTime();
+      return Math.max(0, expiresMs - 30 * 86400000);
+    }
+    return Date.now();
+  }, [currentUser.subscriptionStartedAt, currentUser.subscriptionExpiresAt]);
+
+  const subscriptionAgeDays = useMemo(() => {
+    if (!isSubscriptionActive) return 0;
+    return Math.max(0, (Date.now() - subscriptionStartedAtMs) / (24 * 3600 * 1000));
+  }, [isSubscriptionActive, subscriptionStartedAtMs]);
+
+  const hasExceededOneWeek = subscriptionAgeDays > 7;
+
+  const [downgradeConfirmationTier, setDowngradeConfirmationTier] = useState<(typeof SUBSCRIPTION_TIERS)[number] | null>(null);
+  const [isDowngrading, setIsDowngrading] = useState<boolean>(false);
+
+  const getTierUpgradeInfo = (targetTier: SubscriptionTier) => {
+    const currentRank = TIER_ORDER[effectiveTier] || 0;
+    const targetRank = TIER_ORDER[targetTier] || 0;
+    const targetPrice = TIER_PRICES[targetTier] || 0;
+    const currentPrice = TIER_PRICES[effectiveTier] || 0;
+
+    if (targetRank === currentRank) {
+      return {
+        type: 'SAME' as const,
+        priceToPay: 0,
+      };
+    }
+
+    // Downgrade (e.g. Business -> Elite or Pro, or Elite -> Pro)
+    if (isSubscriptionActive && targetRank < currentRank) {
+      return {
+        type: 'DOWNGRADE' as const,
+        priceToPay: 0,
+      };
+    }
+
+    // Upgrade (e.g. Pro -> Elite or Business, or Elite -> Business)
+    if (isSubscriptionActive && targetRank > currentRank) {
+      if (hasExceededOneWeek) {
+        return {
+          type: 'UPGRADE_FULL' as const,
+          priceToPay: targetPrice,
+        };
+      } else {
+        const surplus = Math.max(0, targetPrice - currentPrice);
+        return {
+          type: 'UPGRADE_SURPLUS' as const,
+          priceToPay: surplus,
+        };
+      }
+    }
+
+    // New subscription (Standard free user or expired subscription)
+    return {
+      type: 'NEW' as const,
+      priceToPay: targetPrice,
+    };
+  };
 
   // Ads currently suspended due to quota excess
   const suspendedQuotaAds = useMemo(() => {
@@ -550,18 +620,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   };
 
   const handleSelectSubscription = async (tier: (typeof SUBSCRIPTION_TIERS)[number]) => {
-    if (!isAllowedToTransact) {
-      alert(
-        kycStatus === 'PENDING'
-          ? "Votre pièce d'identité est actuellement en cours d'examen par la modération. Vous pourrez souscrire à un abonnement dès sa validation."
-          : "Vérification d'identité obligatoire : Vous devez obligatoirement faire vérifier votre identité avant de souscrire à un forfait ou d'effectuer un paiement."
-      );
-      if (kycStatus !== 'PENDING') {
-        setIsKycModalOpen(true);
-      }
-      return;
-    }
-
     if (isExempt) {
       if (!onUpdateUser) return;
       try {
@@ -571,6 +629,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         await onUpdateUser({
           subscriptionTier: tier.tier,
           subscriptionExpiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+          subscriptionStartedAt: new Date().toISOString(),
           freeBoostsRemaining: newBoosts,
         });
         setUpgradedTierModal(tier.tier);
@@ -581,27 +640,43 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       return;
     }
 
+    const upgradeInfo = getTierUpgradeInfo(tier.tier);
+
+    // If downgrade: show warning confirmation modal (free of charge - Point 5)
+    if (upgradeInfo.type === 'DOWNGRADE') {
+      setDowngradeConfirmationTier(tier);
+      return;
+    }
+
+    // If upgrade or new subscription:
     setItemToPurchase({
       type: 'SUBSCRIPTION',
-      title: `Abonnement ${tier.name} (${formatFCFA(tier.price)}/mois)`,
-      price: tier.price,
+      title: upgradeInfo.type === 'UPGRADE_SURPLUS'
+        ? `Surclassement vers ${tier.name} (Surplus 1ère semaine : ${formatFCFA(upgradeInfo.priceToPay)})`
+        : `Abonnement ${tier.name} (${formatFCFA(upgradeInfo.priceToPay)}/mois)`,
+      price: upgradeInfo.priceToPay,
       tier: tier.tier,
     });
   };
 
-  const handleSelectBoosterPack = async (pack: (typeof BOOSTER_PACKS)[number]) => {
-    if (!isAllowedToTransact) {
-      alert(
-        kycStatus === 'PENDING'
-          ? "Votre pièce d'identité est actuellement en cours d'examen par la modération. Vous pourrez acheter des boosters dès sa validation."
-          : "Vérification d'identité obligatoire : Vous devez obligatoirement faire vérifier votre identité avant d'acheter un pack de boosters ou d'effectuer un paiement."
-      );
-      if (kycStatus !== 'PENDING') {
-        setIsKycModalOpen(true);
-      }
-      return;
+  const handleConfirmDowngrade = async (targetTier: (typeof SUBSCRIPTION_TIERS)[number]) => {
+    if (!onUpdateUser) return;
+    setIsDowngrading(true);
+    try {
+      await onUpdateUser({
+        subscriptionTier: targetTier.tier,
+      });
+      setDowngradeConfirmationTier(null);
+      alert(`Votre abonnement a été rétrogradé avec succès vers le forfait ${targetTier.name}. Aucun frais supplémentaire n'a été appliqué.`);
+    } catch (err: any) {
+      console.error('Error downgrading:', err);
+      alert("Erreur lors de la rétrogradation : " + (err?.message || 'Réessayez.'));
+    } finally {
+      setIsDowngrading(false);
     }
+  };
 
+  const handleSelectBoosterPack = async (pack: (typeof BOOSTER_PACKS)[number]) => {
     if (isExempt) {
       if (!onUpdateUser) return;
       try {
@@ -638,6 +713,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         await onUpdateUser({
           subscriptionTier: itemToPurchase.tier,
           subscriptionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+          subscriptionStartedAt: new Date().toISOString(),
           freeBoostsRemaining: newBoosts,
         });
         setItemToPurchase(null);
@@ -773,8 +849,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
               <button
                 onClick={onLogout}
-                className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1 border border-slate-700 cursor-pointer"
-                title="Se déconnecter"
+                className="px-3.5 py-2 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-sm border border-red-500 cursor-pointer"
+                title="Se déconnecter de votre compte"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Déconnexion</span>
@@ -858,7 +934,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 <span>Déposer sans frais</span>
               </button>
             </div>
-          ) : kycStatus === 'VERIFIED' ? (
+          ) : isKycVerified ? (
             <div className="bg-emerald-50/70 border border-emerald-300 rounded-3xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3.5">
                 <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 border border-emerald-300 flex items-center justify-center shrink-0">
@@ -873,7 +949,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-slate-600 mt-1">
-                    Votre document d'identité a été validé par la modération. Vous pouvez publier des annonces et effectuer vos transactions en toute sécurité.
+                    Votre document d'identité a été validé par la modération. Vous disposez du badge officiel de confiance « Vérifié » sur votre profil et vos annonces.
                   </p>
                 </div>
               </div>
@@ -900,36 +976,36 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       Modération en cours
                     </span>
                   </div>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Votre pièce d'identité ({currentUser.idDocumentType || 'CNI'}) a été transmise avec succès. Notre équipe contrôle sa conformité. Dès sa validation, vous pourrez publier vos annonces et effectuer des paiements.
+                  <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                    Votre pièce d'identité ({currentUser.idDocumentType || 'CNI'}) a été transmise avec succès. Notre équipe contrôle sa conformité. La vérification étant facultative, vous pouvez d'ores et déjà publier vos annonces et effectuer vos transactions. Dès validation par notre équipe, le badge de confiance « Vérifié » sera automatiquement attribué à votre profil et à toutes vos annonces.
                   </p>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="bg-gradient-to-r from-amber-50 via-amber-50/50 to-orange-50/30 border border-amber-300/80 rounded-3xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="bg-gradient-to-r from-emerald-50/80 via-slate-50 to-blue-50/50 border border-emerald-300/80 rounded-3xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3.5">
-                <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 border border-amber-300 flex items-center justify-center shrink-0">
-                  <ShieldAlert className="w-6 h-6" />
+                <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 border border-emerald-300 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-6 h-6" />
                 </div>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-black text-sm text-slate-900">Vérification d'identité obligatoire pour publier & payer</span>
-                    <span className="bg-amber-100 text-amber-800 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-amber-300">
-                      Sécurité Anti-Fraude
+                    <span className="font-black text-sm text-slate-900">Badge « Vérifié » (Facultatif - Signal de Confiance)</span>
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-emerald-300">
+                      Confiance Acheteurs
                     </span>
                   </div>
                   <p className="text-xs text-slate-600 mt-1">
-                    Conformément aux règles de sécurité, vous devez faire vérifier votre pièce d'identité avant de pouvoir déposer une annonce, souscrire à un abonnement ou acheter des boosters (seuls les partenaires VIP en sont exemptés).
+                    Conformément aux réalités locales, la vérification d'identité est facultative : elle ne bloque pas vos publications ni vos transactions. Transmettez votre document pour obtenir le badge Vérifié et rassurer vos acquéreurs.
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setIsKycModalOpen(true)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 shrink-0 w-full sm:w-auto"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 shrink-0 w-full sm:w-auto cursor-pointer"
               >
                 <ShieldCheck className="w-4 h-4" />
-                <span>Vérifier mon identité</span>
+                <span>Demander le Badge Vérifié</span>
               </button>
             </div>
           )}
@@ -1274,7 +1350,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </h3>
               <p className="text-xs text-slate-300 mt-1 max-w-xl">
                 {currentTier === 'STANDARD'
-                  ? 'Vous bénéficiez de 3 annonces simultanées incluses. Dès la 4e annonce, un pack fixe (5 ou 10 annonces) est facturé.'
+                  ? 'Vous bénéficiez de 3 annonces simultanées incluses gratuitement. Au-delà de 3 annonces actives, vous pouvez souscrire à un forfait Pro, Élite ou Business pour augmenter votre quota simultané.'
                   : `Votre abonnement ${currentTier} est actif jusqu'au ${currentUser.subscriptionExpiresAt ? new Date(currentUser.subscriptionExpiresAt).toLocaleDateString('fr-FR') : 'prochain renouvellement'}.`}
               </p>
             </div>
@@ -1307,7 +1383,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               {SUBSCRIPTION_TIERS.map((tier) => {
-                const isCurrent = currentTier === tier.tier;
+                const isCurrent = effectiveTier === tier.tier;
+                const upgradeInfo = getTierUpgradeInfo(tier.tier);
 
                 return (
                   <div
@@ -1998,6 +2075,55 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           </div>
         </div>
       )}
+      {/* Downgrade Warning Confirmation Modal (Point 5) */}
+      {downgradeConfirmationTier && (
+        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-slate-900">
+                Mise en garde : Rétrograder vers le forfait {downgradeConfirmationTier.name}
+              </h3>
+              <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                Vous bénéficiez actuellement du forfait supérieur <strong>{effectiveTier}</strong> ({TIER_QUOTAS[effectiveTier]} annonces max).
+              </p>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-950 space-y-2">
+              <p className="font-bold flex items-center gap-1.5 text-amber-900">
+                <span>⚠️ Conséquences de la rétrogradation :</span>
+              </p>
+              <ul className="list-disc pl-4 space-y-1 text-[11px] text-amber-900">
+                <li>Votre quota simultané passera de <strong>{TIER_QUOTAS[effectiveTier]}</strong> à <strong>{TIER_QUOTAS[downgradeConfirmationTier.tier]} annonces</strong>.</li>
+                <li>Les éventuelles annonces actives dépassant {TIER_QUOTAS[downgradeConfirmationTier.tier]} seront automatiquement suspendues.</li>
+                <li><strong>Aucun frais supplémentaire</strong> ne vous sera facturé pour ce changement.</li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={isDowngrading}
+                onClick={() => setDowngradeConfirmationTier(null)}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={isDowngrading}
+                onClick={() => handleConfirmDowngrade(downgradeConfirmationTier)}
+                className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                {isDowngrading ? 'Mise à jour...' : 'Confirmer la rétrogradation (Gratuit)'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Subscription Upgrade Celebration Modal */}
       <SubscriptionUpgradeModal
         isOpen={Boolean(upgradedTierModal)}

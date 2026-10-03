@@ -1,5 +1,5 @@
 import React from 'react';
-import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw, Edit3, Sparkles } from 'lucide-react';
+import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw, Edit3, Sparkles, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { Ad } from '../types';
 import { formatFCFA, formatRemainingTime, getWhatsAppUrl } from '../utils/formatters';
 import { isAdBoostFeatured, recordAdInteraction } from '../utils/personalization';
@@ -15,6 +15,7 @@ interface AdCardProps {
 export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModal, onEditAd, isOwner = false }) => {
   const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
   const isBoosted = isAdBoostFeatured(ad);
+  const isVerified = Boolean(ad.isOwnerVerified || ad.isOwnerVip);
 
   const handleCardClick = () => {
     recordAdInteraction(ad);
@@ -56,8 +57,32 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
               </span>
             )}
             {ad.mainCategory === 'EMPLOI' ? (
-              <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-purple-600 text-white ring-1 ring-purple-400">
-                À Employer
+              <span
+                className={`text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs ${
+                  ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
+                    ? 'bg-teal-600 text-white ring-1 ring-teal-400'
+                    : 'bg-purple-600 text-white ring-1 ring-purple-400'
+                }`}
+              >
+                {ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
+                  ? "Demande d'Emploi"
+                  : "Offre d'Emploi"}
+              </span>
+            ) : ad.mainCategory === 'BRIC_A_BRAC' ? (
+              <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-amber-500 text-slate-950 ring-1 ring-amber-400">
+                À Vendre
+              </span>
+            ) : ad.mainCategory === 'COURS_A_DOMICILE' ? (
+              <span className={`text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs ${
+                ad.tutoringData?.kind === 'DEMANDE'
+                  ? 'bg-purple-600 text-white ring-1 ring-purple-400'
+                  : 'bg-indigo-600 text-white ring-1 ring-indigo-400'
+              }`}>
+                {ad.tutoringData?.kind === 'DEMANDE' ? 'Demande de Cours' : 'Offre de Cours'}
+              </span>
+            ) : ad.mainCategory === 'NECROLOGIE' ? (
+              <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-slate-950 text-white ring-1 ring-slate-700">
+                Avis d'Obsèques
               </span>
             ) : ad.transactionType ? (
               <span
@@ -70,6 +95,7 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
                 {ad.transactionType === 'VENTE' ? 'À Vendre' : 'À Louer'}
               </span>
             ) : null}
+
             {ad.propertyType && (
               <span className="text-[10px] font-bold bg-slate-900/85 text-slate-100 px-2 py-0.5 rounded-md shadow-xs">
                 {ad.propertyType}
@@ -85,18 +111,30 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
                 {ad.domesticJobType}
               </span>
             )}
+            {ad.tutoringData?.subject && (
+              <span className="text-[10px] font-bold bg-indigo-900/90 text-indigo-100 px-2 py-0.5 rounded-md shadow-xs">
+                {ad.tutoringData.subject}
+              </span>
+            )}
+            {ad.necrologieData?.ministry && (
+              <span className="text-[10px] font-bold bg-slate-900/90 text-amber-300 px-2 py-0.5 rounded-md shadow-xs">
+                {ad.necrologieData.ministry}
+              </span>
+            )}
           </div>
 
-          {/* Expiration Countdown badge */}
-          <div
-            className={`text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1 shadow-sm backdrop-blur-xs ${
-              isExpired
-                ? 'bg-red-600 text-white'
-                : 'bg-slate-950/80 text-white border border-white/20'
-            }`}
-          >
-            <Clock className="w-3 h-3 text-amber-300" />
-            <span>{remainingTimeLabel}</span>
+          {/* Right badges: Expiration Countdown */}
+          <div className="flex flex-col items-end gap-1">
+            <div
+              className={`text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1 shadow-sm backdrop-blur-xs ${
+                isExpired
+                  ? 'bg-red-600 text-white'
+                  : 'bg-slate-950/80 text-white border border-white/20'
+              }`}
+            >
+              <Clock className="w-3 h-3 text-amber-300" />
+              <span>{remainingTimeLabel}</span>
+            </div>
           </div>
         </div>
 
@@ -124,15 +162,23 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
       {/* Card Body */}
       <div className="p-4 flex-1 flex flex-col justify-between">
         <div>
-          {/* Spatial breadcrumb: Province > Ville > Quartier */}
-          {ad.location && (
-            <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-800 bg-emerald-50 px-2 py-1 rounded-md mb-2 w-fit">
-              <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
-              <span className="truncate">
-                {ad.location.province} • {ad.location.city} • <strong className="text-slate-900">{ad.location.neighborhood}</strong>
+          {/* Spatial breadcrumb + Vendeur Vérifié in card content */}
+          <div className="flex items-center justify-between gap-1 mb-2 flex-wrap">
+            {ad.location && (
+              <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-800 bg-emerald-50 px-2 py-1 rounded-md w-fit">
+                <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
+                <span className="truncate">
+                  {ad.location.province} • {ad.location.city} • <strong className="text-slate-900">{ad.location.neighborhood}</strong>
+                </span>
+              </div>
+            )}
+            {isVerified && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-2 py-0.5 rounded-md shrink-0">
+                <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                <span>Vendeur Vérifié</span>
               </span>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Vehicle specific: Marque & Modèle */}
           {ad.vehicleData?.brand && (

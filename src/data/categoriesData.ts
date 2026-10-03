@@ -1,9 +1,20 @@
-import { BricABracCategory, DomesticJobType, PropertyType, RollingStockCategory } from '../types';
+import { 
+  BricABracCategory, 
+  DomesticJobType, 
+  NecrologieMinistry, 
+  PropertyType, 
+  RollingStockCategory, 
+  TutoringLevel, 
+  TutoringSubject 
+} from '../types';
 
 export const PROPERTY_TYPES: PropertyType[] = [
   'Villa',
   'Maison',
   'Appartement',
+  'Studio (1 chambre + 1 salon)',
+  'Chambre américaine (chambre + coin cuisine)',
+  'Chambre simple',
   'Studio / Chambre',
   'Terrain / Parcelle',
   'Bureau / Local commercial',
@@ -30,6 +41,34 @@ export const DOMESTIC_JOB_TYPES: DomesticJobType[] = [
   'Chauffeurs particuliers'
 ];
 
+export const NECROLOGIE_MINISTRIES: NecrologieMinistry[] = [
+  'Éducation nationale',
+  'Police nationale',
+  'Armée',
+  'Santé',
+  'Autre'
+];
+
+export const TUTORING_SUBJECTS: TutoringSubject[] = [
+  'Mathématiques',
+  'Physique-Chimie',
+  'SVT (Sciences de la Vie et de la Terre)',
+  'Français',
+  'Anglais',
+  'Philosophie',
+  'Histoire-Géographie',
+  'Informatique',
+  'Autre matière'
+];
+
+export const TUTORING_LEVELS: TutoringLevel[] = [
+  'Tous niveaux',
+  'Primaire',
+  'Collège',
+  'Lycée',
+  'Supérieur / Université'
+];
+
 export const PRICING_CONFIG = {
   durations: [
     { days: 3, label: '3 Jours (Express)', price: 1500 },
@@ -42,5 +81,5 @@ export const PRICING_CONFIG = {
   pricePerExtraImage: 500, // 500 FCFA par photo à partir de la 6e
   maxImages: 10, // Plafond maximal de photos par annonce
   videoPrice: 2000, // FCFA pour courte vidéo descriptive (30s max)
-  maxCharLength: 300 // Limite de caractères du descriptif
+  maxCharLength: 500 // Limite de caractères du descriptif (Point 7)
 };

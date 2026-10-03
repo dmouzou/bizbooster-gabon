@@ -28,6 +28,7 @@ import {
   Filter,
   Crown,
   Sparkles,
+  FlaskConical,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../services/firebase';
@@ -57,6 +58,33 @@ interface AdminPanelProps {
   onDeleteReportedAd?: (adId: string, reportId: string) => Promise<void> | void;
 }
 
+// Helper function to detect seed, simulator, and test ads (Point 3)
+export function isTestAd(ad: Ad): boolean {
+  if (ad.isTest) return true;
+  const id = (ad.id || '').toLowerCase();
+  const title = (ad.title || '').toLowerCase();
+  const desc = (ad.description || '').toLowerCase();
+  const phone = (ad.contactPhone || '').replace(/\s+/g, '');
+  const ref = (ad.transactionRef || '').toLowerCase();
+
+  if (title.includes('test') || desc.includes('test')) return true;
+  if (id.startsWith('test') || id.startsWith('ad-test')) return true;
+  if (
+    id.startsWith('ad-immo-') ||
+    id.startsWith('ad-auto-') ||
+    id.startsWith('ad-bric-') ||
+    id.startsWith('ad-emp-') ||
+    id.startsWith('ad-tut-') ||
+    id.startsWith('ad-necro-')
+  ) {
+    return true;
+  }
+  if (ref.startsWith('test-') || ref.startsWith('sim-') || ref.includes('demo')) return true;
+  if (phone.includes('000000') || phone.includes('123456')) return true;
+
+  return false;
+}
+
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   currentUser,
   ads,
@@ -78,6 +106,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onDeleteReportedAd,
 }) => {
   const isSuper = isUserSuperAdmin(currentUser);
+
+  // Point 3: SUPER ADMIN one-click option to show or hide all test ads
+  const [showTestAds, setShowTestAds] = useState<boolean>(true);
+  const testAdsCount = useMemo(() => ads.filter(isTestAd).length, [ads]);
   // Active Admin Tab: 'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY'
   const [activeTab, setActiveTab] = useState<'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY'>('MODERATION');
 
@@ -199,6 +231,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       if (statusFilter === 'ACTIVE' && ad.status !== 'ACTIVE') return false;
       if (statusFilter === 'REJECTED' && ad.status !== 'REJECTED') return false;
 
+      // Point 3: Super Admin filter to hide test ads
+      if (isSuper && !showTestAds && isTestAd(ad)) return false;
+
       if (categoryFilter !== 'ALL' && ad.mainCategory !== categoryFilter) return false;
 
       if (searchQuery.trim()) {
@@ -238,7 +273,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       // Default: DATE_DESC
       return new Date(b.createdAt || b.publishedAt || 0).getTime() - new Date(a.createdAt || a.publishedAt || 0).getTime();
     });
-  }, [ads, users, statusFilter, categoryFilter, searchQuery, moderationSortBy]);
+  }, [ads, users, statusFilter, categoryFilter, searchQuery, moderationSortBy, isSuper, showTestAds]);
 
   // Registered Advertisers List (grounded in users collection)
   const filteredUsers = useMemo(() => {
@@ -277,6 +312,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       return true;
     });
   }, [reports, reportStatusFilter, reportSearchQuery]);
+
+  const pendingKycCount = useMemo(
+    () => users.filter((u) => u.idVerificationStatus === 'PENDING').length,
+    [users]
+  );
 
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
 
@@ -341,20 +381,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* Attention signal for pending identity submissions (Point 6) */}
+            {pendingKycCount > 0 && (
+              <button
+                onClick={() => {
+                  setActiveTab('ADVERTISERS');
+                  setAdvKycFilter('PENDING');
+                }}
+                className="px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 rounded-xl text-xs font-black transition-all flex items-center gap-2 animate-pulse cursor-pointer shadow-sm"
+                title="Cliquer pour examiner les pièces d'identité en attente"
+              >
+                <Clock className="w-4 h-4 text-amber-400" />
+                <span>{pendingKycCount} KYC en attente</span>
+              </button>
+            )}
+
             <button
               onClick={onSwitchToFrontend}
-              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold transition-all shadow-md flex items-center gap-2"
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold transition-all shadow-md flex items-center gap-2 cursor-pointer"
             >
               <ExternalLink className="w-4 h-4 text-emerald-200" />
               <span>Ouvrir l'App Frontend Client</span>
             </button>
 
+            {/* Red Logout Button (Point 9) */}
             <button
               onClick={handleAdminLogout}
-              className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-colors"
-              title="Se déconnecter"
+              className="px-3.5 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded-xl text-xs font-black transition-all shadow-sm border border-red-500 flex items-center gap-1.5 cursor-pointer"
+              title="Se déconnecter de l'administration"
             >
               <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Déconnexion</span>
             </button>
           </div>
         </div>
@@ -364,7 +421,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {/* TAB 1: MODERATION QUEUE */}
           <button
             onClick={() => setActiveTab('MODERATION')}
-            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border ${
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border cursor-pointer ${
               activeTab === 'MODERATION'
                 ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-md'
                 : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800'
@@ -386,7 +443,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {/* TAB 2: OBSERVATOIRE MARCHÉ */}
           <button
             onClick={() => setActiveTab('OBSERVATOIRE')}
-            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border ${
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border cursor-pointer ${
               activeTab === 'OBSERVATOIRE'
                 ? 'bg-emerald-500 text-white border-emerald-400 shadow-md'
                 : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800'
@@ -399,10 +456,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </span>
           </button>
 
-          {/* TAB 3: ADVERTISERS DIRECTORY */}
+          {/* TAB 3: ADVERTISERS DIRECTORY with KYC signal (Point 6) */}
           <button
             onClick={() => setActiveTab('ADVERTISERS')}
-            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border ${
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border cursor-pointer ${
               activeTab === 'ADVERTISERS'
                 ? 'bg-indigo-500 text-white border-indigo-400 shadow-md'
                 : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800'
@@ -410,6 +467,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           >
             <Users className="w-4 h-4" />
             <span>Répertoire Annonceurs ({users.length})</span>
+            {pendingKycCount > 0 && (
+              <span
+                className={`text-[10px] font-black px-2 py-0.5 rounded-full animate-pulse flex items-center gap-1 ${
+                  activeTab === 'ADVERTISERS' ? 'bg-slate-950 text-amber-300' : 'bg-amber-400 text-slate-950'
+                }`}
+                title={`${pendingKycCount} pièce(s) d'identité en attente d'examen`}
+              >
+                <Clock className="w-2.5 h-2.5" />
+                <span>{pendingKycCount} KYC</span>
+              </span>
+            )}
           </button>
 
           {/* TAB 4: FRAUD REPORTS */}
@@ -623,6 +691,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               >
                 Toutes ({stats.total})
               </button>
+
+              {/* Point 3: SUPER ADMIN One-Click Test Ads Toggle */}
+              {isSuper && (
+                <button
+                  type="button"
+                  onClick={() => setShowTestAds((prev) => !prev)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-xs border ${
+                    showTestAds
+                      ? 'bg-purple-100 text-purple-900 border-purple-300 hover:bg-purple-200'
+                      : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+                  }`}
+                  title={
+                    showTestAds
+                      ? '1 clic pour masquer toutes les annonces tests'
+                      : '1 clic pour afficher toutes les annonces tests'
+                  }
+                >
+                  <FlaskConical className={`w-3.5 h-3.5 ${showTestAds ? 'text-purple-700' : 'text-slate-400'}`} />
+                  <span>
+                    {showTestAds
+                      ? `🧪 Annonces Tests : Affichées (${testAdsCount})`
+                      : `🧪 Annonces Tests : Masquées (${testAdsCount})`}
+                  </span>
+                  <span
+                    className={`text-[9px] px-1.5 py-0.2 rounded-full font-black uppercase ${
+                      showTestAds ? 'bg-purple-700 text-white' : 'bg-slate-600 text-white'
+                    }`}
+                  >
+                    {showTestAds ? 'ON' : 'OFF'}
+                  </span>
+                </button>
+              )}
             </div>
 
             {/* Controls: Trier par & Search in moderation */}
@@ -720,6 +820,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             <span className="bg-red-100 text-red-900 border border-red-300 text-[10px] font-black uppercase px-2 py-0.5 rounded-sm flex items-center gap-1">
                               <XCircle className="w-3 h-3 text-red-700" />
                               Rejetée
+                            </span>
+                          )}
+
+                          {isTestAd(ad) && (
+                            <span className="bg-purple-100 text-purple-900 border border-purple-300 text-[10px] font-black uppercase px-2 py-0.5 rounded-sm flex items-center gap-1">
+                              <FlaskConical className="w-3 h-3 text-purple-700" />
+                              Test
                             </span>
                           )}
 

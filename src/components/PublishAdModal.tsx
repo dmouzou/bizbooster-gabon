@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   X,
   Building2,
@@ -28,6 +28,10 @@ import {
   CreditCard,
   AlertTriangle,
   Sparkles,
+  GraduationCap,
+  Heart,
+  RotateCcw,
+  Tag,
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -36,11 +40,16 @@ import {
   Ad,
   BricABracCategory,
   DomesticJobType,
+  JobAdKind,
   MainCategory,
+  NecrologieMinistry,
   PaymentOperator,
   PropertyType,
   RollingStockCategory,
   TransactionType,
+  TutoringAdKind,
+  TutoringLevel,
+  TutoringSubject,
   UserProfile,
 } from '../types';
 import { GABON_PROVINCES } from '../data/gabonLocations';
@@ -56,10 +65,14 @@ import {
   PROPERTY_TYPES,
   BRIC_A_BRAC_CATEGORIES,
   DOMESTIC_JOB_TYPES,
+  NECROLOGIE_MINISTRIES,
   PRICING_CONFIG,
+  TUTORING_LEVELS,
+  TUTORING_SUBJECTS,
 } from '../data/categoriesData';
 import { calculateBill, formatFCFA } from '../utils/formatters';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
+import { CguModal } from './CguModal';
 
 interface PublishAdModalProps {
   isOpen: boolean;
@@ -98,12 +111,23 @@ const SAMPLE_IMAGE_PRESETS: Record<MainCategory, string[]> = {
     'https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=1000&q=80',
     'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=1000&q=80',
   ],
+  COURS_A_DOMICILE: [
+    'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1000&q=80',
+    'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&w=1000&q=80',
+    'https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=1000&q=80',
+  ],
+  NECROLOGIE: [
+    'https://images.unsplash.com/photo-1518895949257-7621c3c786d7?auto=format&fit=crop&w=1000&q=80',
+    'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=1000&q=80',
+  ],
 };
 
 interface PhotoMediaItem {
   id: string;
   url: string;
   file?: File;
+  name?: string;
+  size?: number;
 }
 
 async function uploadAdImage(file: File): Promise<string> {
@@ -128,64 +152,11 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   // Wizard Step: 1 = Categorization, 2 = Content & Media, 3 = Billing & Payment, 4 = Confirmation
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Exemption and KYC state: strictly VIP partners are exempt
+  // Point 1: Identity is NOT required for transactions or ad deposits
+  // Verification is treated as an optional trust badge
   const isExempt = Boolean(currentUser?.exemptFromPaymentAndKyc || currentUser?.isExempt);
-  const isKycVerified = currentUser?.idVerificationStatus === 'VERIFIED';
-  const isKycPending = currentUser?.idVerificationStatus === 'PENDING';
-  const isKycRejected = currentUser?.idVerificationStatus === 'REJECTED';
-
-  // Standard users MUST be validated by the team before they can start putting an ad
-  const isAllowedToPublish = isExempt || isKycVerified;
-
-  const [kycDocType, setKycDocType] = useState<'CNI' | 'CARTE_SEJOUR' | 'PASSPORT'>(
-    currentUser?.idDocumentType || 'CNI'
-  );
-  const [kycFile, setKycFile] = useState<File | null>(null);
-  const [kycPreviewUrl, setKycPreviewUrl] = useState<string | null>(
-    currentUser?.idDocumentUrl || null
-  );
-  const [isUploadingKyc, setIsUploadingKyc] = useState(false);
-  const [kycError, setKycError] = useState<string | null>(null);
-
-  const handleGateKycSubmit = async () => {
-    if (!kycFile && !currentUser?.idDocumentUrl) {
-      setKycError('Veuillez sélectionner une photo lisible de votre pièce d’identité.');
-      return;
-    }
-    const uid = currentUser?.id || auth.currentUser?.uid;
-    if (!uid) {
-      setKycError('Session expirée ou utilisateur non connecté.');
-      return;
-    }
-
-    setIsUploadingKyc(true);
-    setKycError(null);
-
-    try {
-      let finalUrl = currentUser?.idDocumentUrl || '';
-      if (kycFile) {
-        setUploadProgressText("Téléversement sécurisé de votre pièce d'identité...");
-        const storagePath = `kyc/${uid}/${Date.now()}_id_${kycFile.name}`;
-        const storageRef = ref(storage, storagePath);
-        await uploadBytes(storageRef, kycFile);
-        finalUrl = await getDownloadURL(storageRef);
-      }
-
-      await updateDoc(doc(db, 'users', uid), {
-        idDocumentUrl: finalUrl,
-        idDocumentType: kycDocType,
-        idVerificationStatus: 'PENDING',
-        idSubmittedAt: new Date().toISOString(),
-        idRejectionReason: null,
-      });
-    } catch (err: any) {
-      console.error(err);
-      setKycError(err?.message || "Erreur lors de l'enregistrement de votre pièce d'identité.");
-    } finally {
-      setIsUploadingKyc(false);
-      setUploadProgressText('');
-    }
-  };
+  const isOwnerVerified = currentUser?.idVerificationStatus === 'VERIFIED' || !!currentUser?.idVerifiedAt || (!!currentUser?.idDocumentUrl && currentUser?.idVerificationStatus !== 'REJECTED' && currentUser?.idVerificationStatus !== 'PENDING');
+  const isAllowedToPublish = true;
 
   // Form State
   const [mainCategory, setMainCategory] = useState<MainCategory>('IMMOBILIER');
@@ -193,11 +164,18 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   // Specific detail requested: Vente vs Location
   const [transactionType, setTransactionType] = useState<TransactionType>('LOCATION');
   
+  // User profile defaults for location and contact (Point 4)
+  const profileNeighborhood = currentUser?.location?.neighborhood?.trim() || '';
+  const profileProvince = currentUser?.location?.province?.trim() || '';
+  const profileCity = currentUser?.location?.city?.trim() || '';
+  const accountRegisteredPhone = (currentUser?.contactPhone || currentUser?.phoneNumber || '').trim();
+
   // Immobilier specifics
   const [propertyType, setPropertyType] = useState<PropertyType>('Villa');
-  const [province, setProvince] = useState<string>('Estuaire');
-  const [city, setCity] = useState<string>('Libreville');
-  const [neighborhood, setNeighborhood] = useState<string>('La Sablière');
+  const [province, setProvince] = useState<string>(profileProvince || 'Estuaire');
+  const [city, setCity] = useState<string>(profileCity || 'Libreville');
+  const [neighborhood, setNeighborhood] = useState<string>(profileNeighborhood || 'La Sablière');
+  const [saveNeighborhoodToProfile, setSaveNeighborhoodToProfile] = useState<boolean>(false);
 
   // Matériel Roulant specifics
   const [vehicleCategory, setVehicleCategory] = useState<RollingStockCategory>('Voitures');
@@ -207,14 +185,308 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   // Bric-à-Brac specifics
   const [bricCategory, setBricCategory] = useState<BricABracCategory>('Électronique & Smartphones');
 
-  // Emploi specifics
+  // Emploi specifics (Point 8: Distinction Offre d'emploi vs Demande d'emploi)
   const [domesticJobType, setDomesticJobType] = useState<DomesticJobType>('Nounous (garde-bébé)');
+  const [jobKind, setJobKind] = useState<JobAdKind>('OFFRE_EMPLOI');
+
+  // Cours à Domicile specifics (Point 9)
+  const [tutoringKind, setTutoringKind] = useState<TutoringAdKind>('OFFRE');
+  const [tutoringSubject, setTutoringSubject] = useState<TutoringSubject>('Mathématiques');
+  const [tutoringLevel, setTutoringLevel] = useState<TutoringLevel>('Tous niveaux');
+
+  // Nécrologie specifics (Point 8)
+  const [necroMinistry, setNecroMinistry] = useState<NecrologieMinistry>('Éducation nationale');
+  const [necroDeceasedName, setNecroDeceasedName] = useState<string>('');
+  const [necroCeremonyDate, setNecroCeremonyDate] = useState<string>('');
+  const [necroCeremonyLocation, setNecroCeremonyLocation] = useState<string>('');
+  const [necroFuneralProgram, setNecroFuneralProgram] = useState<string>('');
+  const [necroFamilyContact, setNecroFamilyContact] = useState<string>('');
+
+  // Point 4: Format category and subcategory at the top of Step 2
+  const getCategoryHeaderSummary = () => {
+    switch (mainCategory) {
+      case 'COURS_A_DOMICILE': {
+        const kindLabel = tutoringKind === 'DEMANDE' ? 'Demande de cours' : 'Offre de cours';
+        return tutoringSubject
+          ? `Cours à Domicile - ${kindLabel} (${tutoringSubject})`
+          : `Cours à Domicile - ${kindLabel}`;
+      }
+      case 'EMPLOI': {
+        const kindLabel = jobKind === 'DEMANDE_EMPLOI' ? "Demande d'emploi" : "Offre d'emploi";
+        return domesticJobType
+          ? `Emploi - ${kindLabel} (${domesticJobType})`
+          : `Emploi - ${kindLabel}`;
+      }
+      case 'BRIC_A_BRAC': {
+        return bricCategory ? `Bric-à-Brac - ${bricCategory}` : 'Bric-à-Brac';
+      }
+      case 'MATERIEL_ROULANT': {
+        const typeLabel = transactionType === 'VENTE' ? 'Vente' : 'Location';
+        return vehicleCategory
+          ? `Matériel Roulant - ${vehicleCategory} (${typeLabel})`
+          : `Matériel Roulant (${typeLabel})`;
+      }
+      case 'IMMOBILIER': {
+        const typeLabel = transactionType === 'VENTE' ? 'Vente' : 'Location';
+        return propertyType
+          ? `Immobilier - ${propertyType} (${typeLabel})`
+          : `Immobilier (${typeLabel})`;
+      }
+      case 'NECROLOGIE': {
+        return necroMinistry
+          ? `Nécrologie - Avis d'Obsèques (${necroMinistry})`
+          : "Nécrologie - Avis d'Obsèques";
+      }
+      default:
+        return 'Détails de votre annonce';
+    }
+  };
 
   // Step 2 Fields
   const [title, setTitle] = useState('');
   const [price, setPrice] = useState<number>(350000);
-  const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour' | 'trimestre' | 'an'>('mois');
+  const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour' | 'trimestre' | 'an' | 'heure'>('mois');
   const [description, setDescription] = useState('');
+
+  // Boost "En tête de liste" (7 days)
+  const [isBoostFeatured, setIsBoostFeatured] = useState(false);
+  const BOOST_PRICE = 5000;
+  const hasFreeBoost = Boolean(
+    currentUser?.freeBoostsRemaining && currentUser.freeBoostsRemaining > 0
+  );
+  const boostCost = isBoostFeatured && !isExempt && !hasFreeBoost ? BOOST_PRICE : 0;
+  
+  // Media State: photos (max 5) with support for presets and local File uploads
+  const [photos, setPhotos] = useState<PhotoMediaItem[]>([
+    { id: 'preset-init', url: SAMPLE_IMAGE_PRESETS['IMMOBILIER'][0] },
+  ]);
+  const [customImageUrl, setCustomImageUrl] = useState('');
+
+  // Video State: max 1 video, ≤ 30s, ≤ 50 Mo
+  const [hasVideo, setHasVideo] = useState(false);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+
+  // Errors & Upload submission state
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgressText, setUploadProgressText] = useState('');
+
+  const [contactName, setContactName] = useState(currentUser?.name || '');
+  const [contactPhone, setContactPhone] = useState(accountRegisteredPhone || '');
+  const [phoneChoice, setPhoneChoice] = useState<'ACCOUNT' | 'CUSTOM'>(accountRegisteredPhone ? 'ACCOUNT' : 'CUSTOM');
+  const [durationDays, setDurationDays] = useState<number>(15);
+
+  // Modal body scroll reference for Step navigation (Point 3)
+  const modalBodyRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (modalBodyRef.current) {
+      modalBodyRef.current.scrollTop = 0;
+    }
+  }, [step]);
+
+  // Newly created ad for verification view
+  const [createdAd, setCreatedAd] = useState<Ad | null>(null);
+
+  // Point 3: Draft ("Brouillon") management
+  const DRAFT_STORAGE_KEY = `bizbooster_publish_draft_${currentUser?.id || 'guest'}`;
+  const [showDraftPrompt, setShowDraftPrompt] = useState(false);
+  const [existingDraft, setExistingDraft] = useState<any | null>(null);
+  const [showCguModal, setShowCguModal] = useState(false);
+
+  // Check for existing draft when opening
+  React.useEffect(() => {
+    if (!isOpen) return;
+    try {
+      const saved = localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.savedAt) {
+          setExistingDraft(parsed);
+          setShowDraftPrompt(true);
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading draft from localStorage:', e);
+    }
+  }, [isOpen, DRAFT_STORAGE_KEY]);
+
+  const handleRestoreDraft = () => handleResumeDraft();
+  const handleResumeDraft = () => {
+    if (!existingDraft) return;
+    if (existingDraft.step && existingDraft.step <= 3) setStep(existingDraft.step);
+    if (existingDraft.mainCategory) setMainCategory(existingDraft.mainCategory);
+    if (existingDraft.transactionType) setTransactionType(existingDraft.transactionType);
+    if (existingDraft.propertyType) setPropertyType(existingDraft.propertyType);
+    if (existingDraft.province) setProvince(existingDraft.province);
+    if (existingDraft.city) setCity(existingDraft.city);
+    if (existingDraft.neighborhood) setNeighborhood(existingDraft.neighborhood);
+    if (existingDraft.vehicleCategory) setVehicleCategory(existingDraft.vehicleCategory);
+    if (existingDraft.vehicleBrand) setVehicleBrand(existingDraft.vehicleBrand);
+    if (existingDraft.vehicleModel) setVehicleModel(existingDraft.vehicleModel);
+    if (existingDraft.bricCategory) setBricCategory(existingDraft.bricCategory);
+    if (existingDraft.domesticJobType) setDomesticJobType(existingDraft.domesticJobType);
+    if (existingDraft.jobKind) setJobKind(existingDraft.jobKind);
+    if (existingDraft.tutoringKind) setTutoringKind(existingDraft.tutoringKind);
+    if (existingDraft.tutoringSubject) setTutoringSubject(existingDraft.tutoringSubject);
+    if (existingDraft.tutoringLevel) setTutoringLevel(existingDraft.tutoringLevel);
+    if (existingDraft.necroMinistry) setNecroMinistry(existingDraft.necroMinistry);
+    if (existingDraft.necroDeceasedName) setNecroDeceasedName(existingDraft.necroDeceasedName);
+    if (existingDraft.necroCeremonyDate) setNecroCeremonyDate(existingDraft.necroCeremonyDate);
+    if (existingDraft.necroCeremonyLocation) setNecroCeremonyLocation(existingDraft.necroCeremonyLocation);
+    if (existingDraft.necroFuneralProgram) setNecroFuneralProgram(existingDraft.necroFuneralProgram);
+    if (existingDraft.necroFamilyContact) setNecroFamilyContact(existingDraft.necroFamilyContact);
+    if (existingDraft.title !== undefined) setTitle(existingDraft.title);
+    if (existingDraft.price !== undefined) setPrice(existingDraft.price);
+    if (existingDraft.priceUnit) setPriceUnit(existingDraft.priceUnit);
+    if (existingDraft.description !== undefined) setDescription(existingDraft.description);
+    if (existingDraft.photos && existingDraft.photos.length > 0) {
+      setPhotos(existingDraft.photos);
+    }
+    if (existingDraft.hasVideo !== undefined) setHasVideo(existingDraft.hasVideo);
+    if (existingDraft.videoPreviewUrl) setVideoPreviewUrl(existingDraft.videoPreviewUrl);
+    if (existingDraft.videoDuration !== undefined) setVideoDuration(existingDraft.videoDuration);
+    if (existingDraft.contactName) setContactName(existingDraft.contactName);
+    if (existingDraft.contactPhone) setContactPhone(existingDraft.contactPhone);
+    if (existingDraft.durationDays) setDurationDays(existingDraft.durationDays);
+    if (existingDraft.isBoostFeatured !== undefined) setIsBoostFeatured(existingDraft.isBoostFeatured);
+    setShowDraftPrompt(false);
+  };
+
+  const handleDiscardDraft = () => {
+    try {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    } catch (e) {
+      console.warn('Error clearing draft:', e);
+    }
+    setExistingDraft(null);
+    setShowDraftPrompt(false);
+    setStep(1);
+    setMainCategory('IMMOBILIER');
+    setTransactionType('LOCATION');
+    setPropertyType('Villa');
+    setProvince('Estuaire');
+    setCity('Libreville');
+    setNeighborhood('La Sablière');
+    setVehicleCategory('Voitures');
+    setVehicleBrand('TOYOTA');
+    setVehicleModel('Hilux');
+    setBricCategory('Électronique & Smartphones');
+    setDomesticJobType('Nounous (garde-bébé)');
+    setJobKind('OFFRE_EMPLOI');
+    setTutoringKind('OFFRE');
+    setTutoringSubject('Mathématiques');
+    setTutoringLevel('Tous niveaux');
+    setNecroMinistry('Éducation nationale');
+    setNecroDeceasedName('');
+    setNecroCeremonyDate('');
+    setNecroCeremonyLocation('');
+    setNecroFuneralProgram('');
+    setNecroFamilyContact('');
+    setTitle('');
+    setPrice(350000);
+    setPriceUnit('mois');
+    setDescription('');
+    setPhotos([{ id: 'preset-init', url: SAMPLE_IMAGE_PRESETS['IMMOBILIER'][0] }]);
+    setHasVideo(false);
+    setVideoFile(null);
+    setVideoPreviewUrl(null);
+    setVideoDuration(null);
+    setContactName(currentUser?.name || '');
+    setContactPhone(currentUser?.contactPhone || '');
+    setDurationDays(15);
+    setIsBoostFeatured(false);
+    setMediaError(null);
+  };
+
+  // Auto-save draft whenever form fields change (Debounced)
+  React.useEffect(() => {
+    if (!isOpen || showDraftPrompt || step === 4) return;
+    const timer = setTimeout(() => {
+      try {
+        const draftObj = {
+          savedAt: new Date().toISOString(),
+          step,
+          mainCategory,
+          transactionType,
+          propertyType,
+          province,
+          city,
+          neighborhood,
+          vehicleCategory,
+          vehicleBrand,
+          vehicleModel,
+          bricCategory,
+          domesticJobType,
+          jobKind,
+          tutoringKind,
+          tutoringSubject,
+          tutoringLevel,
+          necroMinistry,
+          necroDeceasedName,
+          necroCeremonyDate,
+          necroCeremonyLocation,
+          necroFuneralProgram,
+          necroFamilyContact,
+          title,
+          price,
+          priceUnit,
+          description,
+          photos: photos.map((p) => ({ id: p.id, url: p.url, name: p.name, size: p.size })),
+          hasVideo,
+          videoPreviewUrl: videoPreviewUrl && !videoPreviewUrl.startsWith('blob:') ? videoPreviewUrl : null,
+          videoDuration,
+          contactName,
+          contactPhone,
+          durationDays,
+          isBoostFeatured,
+        };
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftObj));
+      } catch (err) {
+        console.warn('Auto-save draft error:', err);
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [
+    isOpen,
+    showDraftPrompt,
+    step,
+    mainCategory,
+    transactionType,
+    propertyType,
+    province,
+    city,
+    neighborhood,
+    vehicleCategory,
+    vehicleBrand,
+    vehicleModel,
+    bricCategory,
+    domesticJobType,
+    tutoringKind,
+    tutoringSubject,
+    tutoringLevel,
+    necroMinistry,
+    necroDeceasedName,
+    necroCeremonyDate,
+    necroCeremonyLocation,
+    necroFuneralProgram,
+    necroFamilyContact,
+    title,
+    price,
+    priceUnit,
+    description,
+    photos,
+    hasVideo,
+    videoPreviewUrl,
+    videoDuration,
+    contactName,
+    contactPhone,
+    durationDays,
+    isBoostFeatured,
+    DRAFT_STORAGE_KEY,
+  ]);
 
   // Active/Simultaneous ads count for the current user
   const userSimultaneousAds = useMemo(() => {
@@ -257,39 +529,29 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   };
 
   const [selectedTierToBuy, setSelectedTierToBuy] = useState<'PRO' | 'ELITE' | 'BUSINESS'>('PRO');
-  const subscriptionCost = requiresSubscription ? SUBSCRIPTION_PRICES[selectedTierToBuy] : 0;
 
-  // Boost "En tête de liste" (7 days)
-  const [isBoostFeatured, setIsBoostFeatured] = useState(false);
-  const BOOST_PRICE = 5000;
-  const hasFreeBoost = Boolean(
-    currentUser?.freeBoostsRemaining && currentUser.freeBoostsRemaining > 0
-  );
-  const boostCost = isBoostFeatured && !isExempt && !hasFreeBoost ? BOOST_PRICE : 0;
-  
-  // Media State: photos (max 5) with support for presets and local File uploads
-  const [photos, setPhotos] = useState<PhotoMediaItem[]>([
-    { id: 'preset-init', url: SAMPLE_IMAGE_PRESETS['IMMOBILIER'][0] },
-  ]);
-  const [customImageUrl, setCustomImageUrl] = useState('');
+  // Subscription upgrade rule (Point 5): surplus only within 1 week, else full price
+  const subscriptionAgeDays = useMemo(() => {
+    if (!isSubscriber || !currentUser?.subscriptionExpiresAt) return 0;
+    const startedMs = currentUser.subscriptionStartedAt 
+      ? new Date(currentUser.subscriptionStartedAt).getTime()
+      : new Date(currentUser.subscriptionExpiresAt).getTime() - 30 * 86400000;
+    return Math.max(0, (Date.now() - startedMs) / (24 * 3600 * 1000));
+  }, [isSubscriber, currentUser?.subscriptionStartedAt, currentUser?.subscriptionExpiresAt]);
 
-  // Video State: max 1 video, ≤ 30s, ≤ 50 Mo
-  const [hasVideo, setHasVideo] = useState(false);
-  const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
-  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const hasExceededOneWeek = subscriptionAgeDays > 7;
 
-  // Errors & Upload submission state
-  const [mediaError, setMediaError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [uploadProgressText, setUploadProgressText] = useState('');
-
-  const [contactName, setContactName] = useState(currentUser?.name || '');
-  const [contactPhone, setContactPhone] = useState(currentUser?.contactPhone || '');
-  const [durationDays, setDurationDays] = useState<number>(15);
-
-  // Newly created ad for verification view
-  const [createdAd, setCreatedAd] = useState<Ad | null>(null);
+  const subscriptionCost = useMemo(() => {
+    if (!requiresSubscription) return 0;
+    const targetPrice = SUBSCRIPTION_PRICES[selectedTierToBuy];
+    if (isSubscriber && currentUser?.subscriptionTier && currentUser.subscriptionTier !== 'STANDARD') {
+      const currentPrice = SUBSCRIPTION_PRICES[currentUser.subscriptionTier as 'PRO' | 'ELITE' | 'BUSINESS'] || 0;
+      if (!hasExceededOneWeek && targetPrice > currentPrice) {
+        return Math.max(0, targetPrice - currentPrice);
+      }
+    }
+    return targetPrice;
+  }, [requiresSubscription, selectedTierToBuy, isSubscriber, currentUser?.subscriptionTier, hasExceededOneWeek]);
 
   // Dynamic Gabon city and neighborhood lists
   const currentProvinceData = useMemo(() => {
@@ -355,13 +617,38 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
       setMediaError(null);
     }
 
-    const newItems: PhotoMediaItem[] = filesToAdd.map((file, idx) => ({
-      id: `file-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
-      url: URL.createObjectURL(file),
-      file,
-    }));
-
-    setPhotos((prev) => [...prev, ...newItems]);
+    filesToAdd.forEach((file, idx) => {
+      const reader = new FileReader();
+      reader.onload = (loadEvt) => {
+        const dataUrl = (loadEvt.target?.result as string) || '';
+        if (dataUrl) {
+          setPhotos((prev) => [
+            ...prev,
+            {
+              id: `file-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+              url: dataUrl,
+              file,
+              name: file.name,
+              size: file.size,
+            },
+          ]);
+        }
+      };
+      reader.onerror = () => {
+        const objUrl = URL.createObjectURL(file);
+        setPhotos((prev) => [
+          ...prev,
+          {
+            id: `file-${Date.now()}-${idx}`,
+            url: objUrl,
+            file,
+            name: file.name,
+            size: file.size,
+          },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    });
   };
 
   // Add sample preset photo (kept as requested by user)
@@ -393,7 +680,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   const handleRemovePhoto = (index: number) => {
     if (photos.length > 1) {
       const removed = photos[index];
-      if (removed.file && removed.url.startsWith('blob:')) {
+      if (removed.url && removed.url.startsWith('blob:')) {
         URL.revokeObjectURL(removed.url);
       }
       setPhotos((prev) => prev.filter((_, idx) => idx !== index));
@@ -417,33 +704,26 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
       return;
     }
 
-    // Duration limit: 30 seconds max
+    setMediaError(null);
+    setVideoFile(file);
+    const blobUrl = URL.createObjectURL(file);
+    // Point 10 fix: Immediately set preview URL so video displays inside container
+    setVideoPreviewUrl(blobUrl);
+    setHasVideo(true);
+
+    // Duration limit check (async with fallback)
     const tempVideo = document.createElement('video');
     tempVideo.preload = 'metadata';
-    const blobUrl = URL.createObjectURL(file);
-
     tempVideo.onloadedmetadata = () => {
       const duration = Math.round(tempVideo.duration);
       if (duration > 30) {
-        URL.revokeObjectURL(blobUrl);
-        setMediaError(`La durée de la vidéo (${duration}s) dépasse la limite maximale autorisée de 30 secondes.`);
-      } else {
-        if (videoPreviewUrl && videoPreviewUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(videoPreviewUrl);
-        }
-        setVideoFile(file);
-        setVideoPreviewUrl(blobUrl);
-        setVideoDuration(duration);
-        setHasVideo(true);
-        setMediaError(null);
+        setMediaError(`Attention : La durée de la vidéo (${duration}s) dépasse les 30s recommandées.`);
       }
+      setVideoDuration(duration);
     };
-
     tempVideo.onerror = () => {
-      URL.revokeObjectURL(blobUrl);
-      setMediaError('Impossible de lire le format de cette vidéo. Veuillez sélectionner un fichier vidéo standard (MP4 ou WebM).');
+      setVideoDuration(null);
     };
-
     tempVideo.src = blobUrl;
   };
 
@@ -461,7 +741,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   // Switch image presets on category change
   const handleMainCategoryChange = (cat: MainCategory) => {
     setMainCategory(cat);
-    const hasUserFiles = photos.some((p) => p.file);
+    const hasUserFiles = photos.some((p) => p.file || p.url.startsWith('data:'));
     if (!hasUserFiles) {
       setPhotos([{ id: `preset-${Date.now()}`, url: SAMPLE_IMAGE_PRESETS[cat][0] }]);
     }
@@ -472,6 +752,18 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
     } else if (cat === 'EMPLOI') {
       setPriceUnit('mois');
       setPrice(120000);
+      setTransactionType('EMPLOYER');
+    } else if (cat === 'BRIC_A_BRAC') {
+      setPriceUnit('total');
+      setTransactionType('VENTE');
+    } else if (cat === 'COURS_A_DOMICILE') {
+      setPriceUnit('mois');
+      setPrice(45000);
+      setTransactionType('VENTE');
+    } else if (cat === 'NECROLOGIE') {
+      setPriceUnit('total');
+      setPrice(0);
+      setTransactionType('VENTE');
     } else {
       setPriceUnit('total');
     }
@@ -492,7 +784,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
       for (let i = 0; i < photos.length; i++) {
         const item = photos[i];
         if (item.file) {
-          setUploadProgressText(`Téléversement de la photo ${i + 1}/${photos.length} sur Firebase Storage...`);
+          setUploadProgressText(`Téléversement de la photo ${i + 1}/${photos.length} en cours...`);
           const uploadedUrl = await uploadAdImage(item.file);
           finalImageUrls.push(uploadedUrl);
         } else {
@@ -504,7 +796,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
       let finalVideoUrl: string | undefined = undefined;
       if (hasVideo) {
         if (videoFile) {
-          setUploadProgressText('Téléversement de la vidéo descriptive (≤ 30s) sur Firebase Storage...');
+          setUploadProgressText('Téléversement de la vidéo descriptive (≤ 30s) en cours...');
           finalVideoUrl = await uploadAdImage(videoFile);
         } else {
           finalVideoUrl = 'https://assets.mixkit.co/videos/preview/mixkit-modern-house-architecture-4247-large.mp4';
@@ -524,8 +816,9 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
           mainCategory === 'IMMOBILIER' || mainCategory === 'MATERIEL_ROULANT'
             ? transactionType
             : mainCategory === 'EMPLOI'
-            ? 'EMPLOYER'
-            : undefined,
+            ? (jobKind === 'DEMANDE_EMPLOI' ? 'CHERCHE_EMPLOI' : 'EMPLOYER')
+            : 'VENTE',
+        jobKind: mainCategory === 'EMPLOI' ? jobKind : undefined,
         propertyType: mainCategory === 'IMMOBILIER' ? propertyType : undefined,
         location: {
           province,
@@ -542,13 +835,33 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
             : undefined,
         bricCategory: mainCategory === 'BRIC_A_BRAC' ? bricCategory : undefined,
         domesticJobType: mainCategory === 'EMPLOI' ? domesticJobType : undefined,
-        price: Number(price) || 50000,
+        tutoringData:
+          mainCategory === 'COURS_A_DOMICILE'
+            ? {
+                kind: tutoringKind,
+                subject: tutoringSubject,
+                level: tutoringLevel,
+              }
+            : undefined,
+        necrologieData:
+          mainCategory === 'NECROLOGIE'
+            ? {
+                ministry: necroMinistry,
+                deceasedName: necroDeceasedName,
+                ceremonyDate: necroCeremonyDate,
+                ceremonyLocation: necroCeremonyLocation,
+                funeralProgram: necroFuneralProgram,
+                familyContact: necroFamilyContact,
+              }
+            : undefined,
+        price: Number(price) || 0,
         priceUnit,
         isFeatured: isBoostFeatured,
         featuredUntil: isBoostFeatured ? new Date(now.getTime() + 7 * 86400000).toISOString() : undefined,
         featuredAt: isBoostFeatured ? now.toISOString() : undefined,
         ownerTier: requiresSubscription ? selectedTierToBuy : (currentUser?.subscriptionTier || 'STANDARD'),
         isOwnerVip: Boolean(currentUser?.exemptFromPaymentAndKyc || currentUser?.isExempt),
+        isOwnerVerified: Boolean(currentUser?.idVerificationStatus === 'VERIFIED' || !!currentUser?.idVerifiedAt || (!!currentUser?.idDocumentUrl && currentUser?.idVerificationStatus !== 'REJECTED' && currentUser?.idVerificationStatus !== 'PENDING')),
         description: description || 'Annonce vérifiée et publiée sur BIZBOOSTER Gabon.',
         images: finalImageUrls.length > 0 ? finalImageUrls : [SAMPLE_IMAGE_PRESETS[mainCategory][0]],
         videoUrl: finalVideoUrl,
@@ -582,9 +895,27 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         await onUpdateUser?.({ freeBoostsRemaining: Math.max(0, (currentUser?.freeBoostsRemaining || 1) - 1) });
       }
 
+      // Point 4: If advertiser chose to remember their neighborhood in profile
+      if (saveNeighborhoodToProfile && neighborhood.trim() && currentUser?.id) {
+        await onUpdateUser?.({
+          location: {
+            province,
+            city,
+            neighborhood: neighborhood.trim(),
+          },
+        });
+      }
+
       await onAdPublished(newAd);
       setCreatedAd(newAd);
       setStep(4);
+
+      // Clean up draft from localStorage on successful publish
+      try {
+        localStorage.removeItem(DRAFT_STORAGE_KEY);
+      } catch (err) {
+        console.warn('Could not remove draft:', err);
+      }
     } catch (e: any) {
       console.error(e);
       alert("L'annonce n'a pas pu être enregistrée : " + (e?.message || 'Vérifiez votre connexion et réessayez.'));
@@ -595,45 +926,33 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
+    <div className="app-modal-overlay">
       <div
-        className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl border border-slate-200 max-h-[94vh] flex flex-col animate-in fade-in zoom-in-95 relative"
+        className="app-modal-dialog bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl border border-slate-300/80 flex flex-col animate-in fade-in zoom-in-95 relative"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-emerald-950 text-white px-6 py-4 flex items-center justify-between border-b border-emerald-900">
+        <div className="bg-emerald-950 text-white px-4 py-3 sm:px-6 sm:py-4 flex items-center justify-between border-b border-emerald-900">
           <div>
             <div className="flex items-center gap-2">
               <span className="bg-amber-400 text-slate-950 text-[10px] font-black uppercase px-2 py-0.5 rounded-sm">
                 Publication BIZBOOSTER
               </span>
               <span className="text-xs text-emerald-300 font-semibold">
-                {!isAllowedToPublish
-                  ? (isKycPending ? 'Examen en cours' : isKycRejected ? 'Nouvelle pièce requise' : 'Étape préalable obligatoire')
-                  : `Étape ${step} sur 3`}
+                {step < 4 ? `Étape ${step} sur 3` : 'Confirmation'}
               </span>
             </div>
             <h2 className="text-base sm:text-lg font-black tracking-tight text-white mt-0.5">
-              {!isAllowedToPublish ? (
-                isKycPending
-                  ? 'Compte annonceur en cours de validation par l’équipe'
-                  : isKycRejected
-                  ? 'Nouvelle pièce d’identité requise (Refusée)'
-                  : 'Validation préalable de vos identifiants par l’équipe'
-              ) : (
-                <>
-                  {step === 1 && '1. Catégorie & Localisation spatiale'}
-                  {step === 2 && '2. Détails, Photos & Description (min 50 car.)'}
-                  {step === 3 && (isExempt ? '3. Validation Partenaire VIP (Publication Gratuite)' : '3. Facturation & Paiement Mobile (Airtel / Moov)')}
-                  {step === 4 && '4. Annonce En Ligne !'}
-                </>
-              )}
+              {step === 1 && '1. Catégorie & Localisation spatiale'}
+              {step === 2 && '2. Détails, Photos & Description (min 50 car.)'}
+              {step === 3 && (isExempt ? '3. Validation Partenaire VIP (Publication Gratuite)' : '3. Facturation & Paiement Mobile (Airtel / Moov)')}
+              {step === 4 && '4. Annonce Transmise à la Modération'}
             </h2>
           </div>
 
           <button
             onClick={onClose}
-            disabled={isSubmitting || isUploadingKyc}
+            disabled={isSubmitting}
             className="text-emerald-400 hover:text-white p-1 rounded-lg hover:bg-emerald-900 disabled:opacity-30 cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -645,280 +964,59 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
           <div
             className="bg-amber-400 h-full transition-all duration-300"
             style={{
-              width: !isAllowedToPublish
-                ? '100%'
-                : `${step === 1 ? 33 : step === 2 ? 66 : 100}%`
+              width: `${step === 1 ? 33 : step === 2 ? 66 : 100}%`
             }}
           />
         </div>
 
-        {/* Modal Body */}
-        <div className="p-5 sm:p-7 overflow-y-auto space-y-6 flex-1">
-          {/* PREREQUISITE GATE: STANDARD USERS MUST HAVE CREDENTIALS VALIDATED BEFORE PUTTING AN AD */}
-          {!isAllowedToPublish ? (
-            <div className="space-y-6">
-              {isKycPending ? (
-                /* Gate Pending View */
-                <div className="text-center py-6 sm:py-8 space-y-5 animate-in fade-in">
-                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-amber-100 text-amber-600 rounded-3xl flex items-center justify-center mx-auto border-2 border-amber-400 shadow-md">
-                    <Clock className="w-9 h-9 sm:w-11 sm:h-11" />
-                  </div>
-
-                  <div className="max-w-md mx-auto space-y-2">
-                    <span className="bg-amber-100 text-amber-900 border border-amber-300 text-xs font-black uppercase px-3 py-1 rounded-full inline-block">
-                      Dossier en cours d’examen
+        {/* Modal Body with ref for automatic scroll to top on Step 3 (Point 3) */}
+        <div ref={modalBodyRef} className="p-3.5 sm:p-6 overflow-y-auto space-y-5 sm:space-y-6 flex-1">
+          {/* DRAFT RECOVERY PROMPT (Point 3) */}
+          {showDraftPrompt && existingDraft && (
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-2xl p-4 sm:p-5 shadow-sm animate-in fade-in space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center shrink-0 shadow-xs">
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="bg-amber-200 text-amber-900 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
+                      Brouillon sauvegardé
                     </span>
-                    <h3 className="text-xl sm:text-2xl font-black text-slate-900">
-                      Votre compte est en cours de validation
-                    </h3>
-                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                      Pour garantir la sécurité des transactions et éliminer les faux démarcheurs et arnaques au Gabon,{' '}
-                      <strong>votre compte doit être validé par notre équipe avant de pouvoir commencer le dépôt d’une annonce</strong>.
-                    </p>
+                    <span className="text-[11px] text-slate-500">
+                      Modifié le {new Date(existingDraft.savedAt).toLocaleDateString('fr-FR')} à {new Date(existingDraft.savedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
                   </div>
-
-                  {/* Status Summary Card */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 sm:p-5 max-w-md mx-auto text-left space-y-2.5">
-                    <div className="flex items-center justify-between text-xs border-b border-slate-200 pb-2">
-                      <span className="text-slate-500 font-bold">Document transmis :</span>
-                      <span className="font-extrabold text-slate-900">
-                        {currentUser?.idDocumentType === 'CNI'
-                          ? 'Carte Nationale d’Identité (CNI)'
-                          : currentUser?.idDocumentType === 'PASSPORT'
-                          ? 'Passeport'
-                          : 'Carte de Séjour'}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs border-b border-slate-200 pb-2">
-                      <span className="text-slate-500 font-bold">Contact associé :</span>
-                      <span className="font-mono font-bold text-slate-900">{currentUser?.contactPhone}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500 font-bold">Délai d’examen :</span>
-                      <span className="font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                        Sous 24 heures maximum
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs p-3.5 rounded-2xl max-w-md mx-auto flex items-start gap-2.5 text-left">
-                    <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-                    <p className="leading-relaxed">
-                      Dès que notre équipe aura approuvé votre document, vous pourrez immédiatement déposer vos annonces sur BIZBOOSTER Gabon.
-                    </p>
-                  </div>
-
-                  <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
-                    {onSwitchToUserDashboard && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onSwitchToUserDashboard();
-                          onClose();
-                        }}
-                        className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors cursor-pointer"
-                      >
-                        Consulter mon Espace Annonceur
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={onClose}
-                      className="px-5 py-3 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl transition-colors cursor-pointer"
-                    >
-                      Fermer
-                    </button>
-                  </div>
+                  <h4 className="text-sm font-black text-slate-900 mt-1">
+                    Souhaitez-vous reprendre l'annonce en cours ?
+                  </h4>
+                  <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
+                    Une annonce non publiée (« {existingDraft.title || existingDraft.mainCategory || 'Sans titre'} ») a été sauvegardée. Vous pouvez reprendre là où vous vous étiez arrêté, ou repartir de zéro (ce qui effacera définitivement ce brouillon et ses médias).
+                  </p>
                 </div>
-              ) : (
-                /* Gate Upload View */
-                <div className="space-y-5 animate-in fade-in">
-                  {isKycRejected ? (
-                    <div className="bg-red-50 border-2 border-red-300 p-4 rounded-2xl flex items-start gap-3">
-                      <AlertCircle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
-                      <div>
-                        <h4 className="font-extrabold text-sm text-red-950">
-                          Pièce d’identité refusée par l’équipe
-                        </h4>
-                        <p className="text-xs text-red-800 mt-1 leading-relaxed">
-                          Motif du refus : <strong>{currentUser?.idRejectionReason || 'Document illisible ou non conforme'}</strong>.
-                        </p>
-                        <p className="text-xs text-red-700 mt-1">
-                          Veuillez transmettre une photo nette et lisible d’un document officiel en cours de validité ci-dessous pour que l’équipe puisse valider votre compte.
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-amber-500/10 border-2 border-amber-400 p-4 rounded-2xl flex items-start gap-3">
-                      <ShieldCheck className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
-                      <div>
-                        <h3 className="font-extrabold text-sm text-slate-900">
-                          Validation préalable obligatoire de vos identifiants (Lutte anti-fraude Gabon)
-                        </h3>
-                        <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                          Vous ne pouvez pas commencer le dépôt d’une annonce avant que votre pièce d’identité n’ait été validée par notre équipe. 
-                          Cette mesure protège les acheteurs et élimine les fraudes au Gabon. L’examen est réalisé <strong>sous 24 heures</strong>.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {kycError && (
-                    <div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-xl flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-                      <span>{kycError}</span>
-                    </div>
-                  )}
-
-                  {/* Document Type Selector */}
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                      1. Choisissez le type de pièce d’identité
-                    </label>
-                    <div className="grid grid-cols-3 gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() => setKycDocType('CNI')}
-                        className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
-                          kycDocType === 'CNI'
-                            ? 'border-emerald-600 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
-                            : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <CreditCard className="w-4 h-4 mx-auto mb-1 text-emerald-600" />
-                        <span className="block font-black">CNI Gabonaise</span>
-                        <span className="text-[10px] text-slate-500 font-normal">Carte d’Identité</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setKycDocType('CARTE_SEJOUR')}
-                        className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
-                          kycDocType === 'CARTE_SEJOUR'
-                            ? 'border-emerald-600 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
-                            : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <FileText className="w-4 h-4 mx-auto mb-1 text-blue-600" />
-                        <span className="block font-black">Carte de Séjour</span>
-                        <span className="text-[10px] text-slate-500 font-normal">Résident Gabon</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setKycDocType('PASSPORT')}
-                        className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
-                          kycDocType === 'PASSPORT'
-                            ? 'border-emerald-600 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20'
-                            : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <ShieldCheck className="w-4 h-4 mx-auto mb-1 text-indigo-600" />
-                        <span className="block font-black">Passeport</span>
-                        <span className="text-[10px] text-slate-500 font-normal">En cours de validité</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Document Photo Picker */}
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                      2. Photo nette de votre pièce (≤ 10 Mo)
-                    </label>
-
-                    {kycPreviewUrl ? (
-                      <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 p-2.5">
-                        <img
-                          src={kycPreviewUrl}
-                          alt="Pièce d'identité"
-                          className="w-full max-h-56 object-contain rounded-xl"
-                        />
-                        <label className="mt-2 block cursor-pointer text-center text-xs font-bold text-emerald-700 hover:underline">
-                          Changer la photo
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => {
-                              const f = e.target.files?.[0];
-                              if (f) {
-                                if (f.size > 10 * 1024 * 1024) {
-                                  setKycError('La photo dépasse la taille maximale autorisée de 10 Mo.');
-                                  return;
-                                }
-                                setKycError(null);
-                                setKycFile(f);
-                                setKycPreviewUrl(URL.createObjectURL(f));
-                              }
-                            }}
-                            className="hidden"
-                          />
-                        </label>
-                      </div>
-                    ) : (
-                      <label className="cursor-pointer border-2 border-dashed border-emerald-300 bg-emerald-50/50 hover:bg-emerald-50 rounded-2xl p-6 flex flex-col items-center justify-center text-center transition-all">
-                        <Upload className="w-8 h-8 text-emerald-600 mb-2" />
-                        <span className="text-xs font-extrabold text-slate-900 block">
-                          Cliquez pour sélectionner la photo de votre pièce d’identité
-                        </span>
-                        <span className="text-[11px] text-slate-500 mt-0.5">
-                          Format photo (JPG, PNG) • Document net, lisible et non rogné
-                        </span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) {
-                              if (f.size > 10 * 1024 * 1024) {
-                                setKycError('La photo dépasse la taille maximale autorisée de 10 Mo.');
-                                return;
-                              }
-                              setKycError(null);
-                              setKycFile(f);
-                              setKycPreviewUrl(URL.createObjectURL(f));
-                            }
-                          }}
-                          className="hidden"
-                        />
-                      </label>
-                    )}
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={onClose}
-                      className="text-xs font-bold text-slate-600 hover:text-slate-900 px-4 py-2.5 rounded-xl transition-colors cursor-pointer"
-                    >
-                      Annuler & Fermer
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isUploadingKyc || (!kycFile && !currentUser?.idDocumentUrl)}
-                      onClick={handleGateKycSubmit}
-                      className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black px-5 py-2.5 rounded-xl shadow-md transition-all cursor-pointer"
-                    >
-                      {isUploadingKyc ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Téléversement…</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>Transmettre ma pièce pour validation</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={handleDiscardDraft}
+                  className="px-3.5 py-2 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Recommencer à zéro (Supprimer le brouillon)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRestoreDraft}
+                  className="px-4 py-2 text-xs font-black text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reprendre là où je m'étais arrêté</span>
+                </button>
+              </div>
             </div>
-          ) : (
-            <>
-              {/* STEP 1: CATEGORIZATION & SPATIAL RUBRICS */}
+          )}
+
+          {/* STEP 1: CATEGORIZATION & SPATIAL RUBRICS */}
               {step === 1 && (
             <div className="space-y-5">
               {/* Quota & Ceiling Alert */}
@@ -958,23 +1056,23 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </div>
               )}
 
-              {/* Category Selector (4 options from document) */}
+              {/* Category Selector (6 categories: Immob, Roulant, Bric, Emploi, Cours, Nécrologie) */}
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
                   Choisissez la catégorie principale (Section B)
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                   <button
                     type="button"
                     onClick={() => handleMainCategoryChange('IMMOBILIER')}
                     className={`p-3 rounded-2xl border text-center transition-all ${
                       mainCategory === 'IMMOBILIER'
-                        ? 'bg-emerald-50 border-emerald-600 ring-2 ring-emerald-400 text-emerald-950'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                        ? 'bg-emerald-50 border-emerald-600 ring-2 ring-emerald-400 text-emerald-950 font-black'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-bold'
                     }`}
                   >
                     <Building2 className="w-5 h-5 mx-auto mb-1 text-emerald-600" />
-                    <span className="font-bold text-xs block">IMMOBILIER</span>
+                    <span className="text-xs block">IMMOBILIER</span>
                   </button>
 
                   <button
@@ -982,12 +1080,12 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     onClick={() => handleMainCategoryChange('MATERIEL_ROULANT')}
                     className={`p-3 rounded-2xl border text-center transition-all ${
                       mainCategory === 'MATERIEL_ROULANT'
-                        ? 'bg-blue-50 border-blue-600 ring-2 ring-blue-400 text-blue-950'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                        ? 'bg-blue-50 border-blue-600 ring-2 ring-blue-400 text-blue-950 font-black'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-bold'
                     }`}
                   >
                     <Car className="w-5 h-5 mx-auto mb-1 text-blue-600" />
-                    <span className="font-bold text-xs block">MATÉRIEL ROULANT</span>
+                    <span className="text-xs block">MATÉRIEL ROULANT</span>
                   </button>
 
                   <button
@@ -995,12 +1093,12 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     onClick={() => handleMainCategoryChange('BRIC_A_BRAC')}
                     className={`p-3 rounded-2xl border text-center transition-all ${
                       mainCategory === 'BRIC_A_BRAC'
-                        ? 'bg-amber-50 border-amber-600 ring-2 ring-amber-400 text-amber-950'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                        ? 'bg-amber-50 border-amber-600 ring-2 ring-amber-400 text-amber-950 font-black'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-bold'
                     }`}
                   >
                     <Package className="w-5 h-5 mx-auto mb-1 text-amber-600" />
-                    <span className="font-bold text-xs block">BRIC-À-BRAC</span>
+                    <span className="text-xs block">BRIC-À-BRAC</span>
                   </button>
 
                   <button
@@ -1008,12 +1106,38 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     onClick={() => handleMainCategoryChange('EMPLOI')}
                     className={`p-3 rounded-2xl border text-center transition-all ${
                       mainCategory === 'EMPLOI'
-                        ? 'bg-purple-50 border-purple-600 ring-2 ring-purple-400 text-purple-950'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                        ? 'bg-purple-50 border-purple-600 ring-2 ring-purple-400 text-purple-950 font-black'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-bold'
                     }`}
                   >
                     <Briefcase className="w-5 h-5 mx-auto mb-1 text-purple-600" />
-                    <span className="font-bold text-xs block">EMPLOI MAISONS</span>
+                    <span className="text-xs block">EMPLOI MAISONS</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMainCategoryChange('COURS_A_DOMICILE')}
+                    className={`p-3 rounded-2xl border text-center transition-all ${
+                      mainCategory === 'COURS_A_DOMICILE'
+                        ? 'bg-indigo-50 border-indigo-600 ring-2 ring-indigo-400 text-indigo-950 font-black'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-bold'
+                    }`}
+                  >
+                    <GraduationCap className="w-5 h-5 mx-auto mb-1 text-indigo-600" />
+                    <span className="text-xs block">COURS À DOMICILE</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMainCategoryChange('NECROLOGIE')}
+                    className={`p-3 rounded-2xl border text-center transition-all ${
+                      mainCategory === 'NECROLOGIE'
+                        ? 'bg-slate-800 border-slate-900 ring-2 ring-slate-700 text-white font-black'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-bold'
+                    }`}
+                  >
+                    <Heart className="w-5 h-5 mx-auto mb-1 text-rose-500" />
+                    <span className="text-xs block">NÉCROLOGIE</span>
                   </button>
                 </div>
               </div>
@@ -1068,101 +1192,31 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </div>
               )}
 
-              {/* SPECIFIC FIELDS: IMMOBILIER (9 Provinces > Villes > Quartiers as per Section B-1) */}
+              {/* SPECIFIC FIELDS: IMMOBILIER (Point 2: Localisation étendue à toutes les catégories) */}
               {mainCategory === 'IMMOBILIER' && (
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-4">
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
                   <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-emerald-600" />
+                    <Building2 className="w-4 h-4 text-emerald-600" />
                     <span className="font-black text-xs text-slate-800 uppercase tracking-wide">
-                      Rubriques spatiales (9 Provinces du Gabon)
+                      Type de Bien Immobilier
                     </span>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">
-                        1. Province du Gabon
-                      </label>
-                      <select
-                        value={province}
-                        onChange={(e) => {
-                          setProvince(e.target.value);
-                          const pObj = GABON_PROVINCES.find((p) => p.name === e.target.value);
-                          if (pObj && pObj.cities.length > 0) {
-                            setCity(pObj.cities[0].name);
-                            setNeighborhood(pObj.cities[0].neighborhoods[0] || '');
-                          }
-                        }}
-                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
-                        id="publish-province-select"
-                      >
-                        {GABON_PROVINCES.map((p) => (
-                          <option key={p.code} value={p.name}>
-                            {p.name} ({p.capital})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">
-                        2. Ville / Localité
-                      </label>
-                      <select
-                        value={city}
-                        onChange={(e) => {
-                          setCity(e.target.value);
-                          const cObj = currentProvinceData.cities.find((c) => c.name === e.target.value);
-                          if (cObj && cObj.neighborhoods.length > 0) {
-                            setNeighborhood(cObj.neighborhoods[0]);
-                          }
-                        }}
-                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
-                        id="publish-city-select"
-                      >
-                        {currentProvinceData.cities.map((c) => (
-                          <option key={c.name} value={c.name}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">
-                        3. Quartier
-                      </label>
-                      <select
-                        value={neighborhood}
-                        onChange={(e) => setNeighborhood(e.target.value)}
-                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
-                        id="publish-neighborhood-select"
-                      >
-                        {currentCityData.neighborhoods.map((q) => (
-                          <option key={q} value={q}>
-                            {q}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">
-                        Type de Bien Immobilier
-                      </label>
-                      <select
-                        value={propertyType}
-                        onChange={(e) => setPropertyType(e.target.value as PropertyType)}
-                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
-                        id="publish-property-type-select"
-                      >
-                        {PROPERTY_TYPES.map((t) => (
-                          <option key={t} value={t}>
-                            {t}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">
+                      Catégorie de bien immobilier *
+                    </label>
+                    <select
+                      value={propertyType}
+                      onChange={(e) => setPropertyType(e.target.value as PropertyType)}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+                      id="publish-property-type-select"
+                    >
+                      {PROPERTY_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}
@@ -1281,31 +1335,456 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </div>
               )}
 
-              {/* SPECIFIC FIELDS: EMPLOI / EMPLOYÉS DE MAISONS (Section B-3) */}
+              {/* SPECIFIC FIELDS: EMPLOI (Point 8: Distinction Offre vs Demande d'emploi) */}
               {mainCategory === 'EMPLOI' && (
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
-                  <label className="block text-xs font-bold text-slate-600 mb-1">
-                    Spécialité Employé de Maison (Section B-3)
-                  </label>
-                  <select
-                    value={domesticJobType}
-                    onChange={(e) => setDomesticJobType(e.target.value as DomesticJobType)}
-                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-purple-500"
-                  >
-                    {DOMESTIC_JOB_TYPES.map((j) => (
-                      <option key={j} value={j}>
-                        {j}
-                      </option>
-                    ))}
-                  </select>
+                <div className="bg-purple-50/80 border-2 border-purple-200 rounded-2xl p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Briefcase className="w-5 h-5 text-purple-700" />
+                    <span className="font-black text-xs text-purple-950 uppercase tracking-wide">
+                      Annonce Emploi & Métiers Domestiques
+                    </span>
+                  </div>
+
+                  {/* Offre d'emploi (Recruteur) vs Demande d'emploi (Candidat) */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">
+                      Nature de l'annonce Emploi : Recrutez-vous ou cherchez-vous du travail ? *
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setJobKind('OFFRE_EMPLOI');
+                          setTransactionType('LOCATION');
+                        }}
+                        className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                          jobKind === 'OFFRE_EMPLOI'
+                            ? 'bg-purple-600 border-purple-700 text-white shadow-md ring-2 ring-purple-400/40'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-purple-50'
+                        }`}
+                      >
+                        <div className="font-black text-xs flex items-center gap-1.5">
+                          💼 OFFRE D'EMPLOI
+                        </div>
+                        <p className={`text-[11px] mt-1 leading-snug ${jobKind === 'OFFRE_EMPLOI' ? 'text-purple-100' : 'text-slate-500'}`}>
+                          Je recrute ou cherche un employé / travailleur
+                        </p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setJobKind('DEMANDE_EMPLOI');
+                          setTransactionType('CHERCHE_EMPLOI');
+                        }}
+                        className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                          jobKind === 'DEMANDE_EMPLOI'
+                            ? 'bg-teal-600 border-teal-700 text-white shadow-md ring-2 ring-teal-400/40'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-teal-50'
+                        }`}
+                      >
+                        <div className="font-black text-xs flex items-center gap-1.5">
+                          🙋 DEMANDE D'EMPLOI
+                        </div>
+                        <p className={`text-[11px] mt-1 leading-snug ${jobKind === 'DEMANDE_EMPLOI' ? 'text-teal-100' : 'text-slate-500'}`}>
+                          Je cherche du travail et je propose mes compétences
+                        </p>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Métier Domestique ciblé *
+                    </label>
+                    <select
+                      value={domesticJobType}
+                      onChange={(e) => setDomesticJobType(e.target.value as DomesticJobType)}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-purple-500"
+                    >
+                      {DOMESTIC_JOB_TYPES.map((j) => (
+                        <option key={j} value={j}>
+                          {j}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               )}
+
+              {/* SPECIFIC FIELDS: COURS A DOMICILE (Point 9) */}
+              {mainCategory === 'COURS_A_DOMICILE' && (
+                <div className="bg-indigo-50/70 border border-indigo-200 rounded-2xl p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <GraduationCap className="w-5 h-5 text-indigo-600" />
+                    <span className="font-black text-xs text-indigo-950 uppercase tracking-wide">
+                      Paramètres des Cours à Domicile (Offres & Demandes)
+                    </span>
+                  </div>
+
+                  {/* Offre ou Demande */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Nature de la publication : Proposez-vous ou recherchez-vous des cours ?
+                    </label>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setTutoringKind('OFFRE')}
+                        className={`p-3 rounded-xl border-2 text-center text-xs font-black transition-all cursor-pointer ${
+                          tutoringKind === 'OFFRE'
+                            ? 'bg-indigo-600 border-indigo-700 text-white shadow-sm'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-indigo-50/40'
+                        }`}
+                      >
+                        🎓 OFFRE DE COURS
+                        <span className="block text-[10px] font-normal opacity-90 mt-0.5">
+                          (Je suis enseignant / répétiteur)
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setTutoringKind('DEMANDE')}
+                        className={`p-3 rounded-xl border-2 text-center text-xs font-black transition-all cursor-pointer ${
+                          tutoringKind === 'DEMANDE'
+                            ? 'bg-purple-600 border-purple-700 text-white shadow-sm'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-purple-50/40'
+                        }`}
+                      >
+                        📖 DEMANDE DE COURS
+                        <span className="block text-[10px] font-normal opacity-90 mt-0.5">
+                          (Je suis parent / élève en recherche)
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Matière principale enseignée *
+                      </label>
+                      <select
+                        value={tutoringSubject}
+                        onChange={(e) => setTutoringSubject(e.target.value as TutoringSubject)}
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-indigo-500"
+                      >
+                        {TUTORING_SUBJECTS.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Niveau scolaire ciblé *
+                      </label>
+                      <select
+                        value={tutoringLevel}
+                        onChange={(e) => setTutoringLevel(e.target.value as TutoringLevel)}
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-indigo-500"
+                      >
+                        {TUTORING_LEVELS.map((lvl) => (
+                          <option key={lvl} value={lvl}>
+                            {lvl}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+
+                </div>
+              )}
+
+              {/* SPECIFIC FIELDS: NECROLOGIE (Point 8) */}
+              {mainCategory === 'NECROLOGIE' && (
+                <div className="bg-slate-50 border border-slate-300 rounded-2xl p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Heart className="w-5 h-5 text-rose-600" />
+                    <span className="font-black text-xs text-slate-900 uppercase tracking-wide">
+                      Avis de Décès & Nécrologie (Ministères & Familles)
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Sous-menu Ministères les plus populeux (Point 8) *
+                    </label>
+                    <select
+                      value={necroMinistry}
+                      onChange={(e) => setNecroMinistry(e.target.value as NecrologieMinistry)}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-slate-700"
+                    >
+                      {NECROLOGIE_MINISTRIES.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Catégorisation par ministères les plus populeux (Éducation nationale, Police nationale, Armée, Santé, Autre) pour informer rapidement collègues et proches.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Nom complet du défunt / de la défunte *
+                      </label>
+                      <input
+                        type="text"
+                        value={necroDeceasedName}
+                        onChange={(e) => setNecroDeceasedName(e.target.value)}
+                        placeholder="Ex: Feu M. MBOUMBA Jean-Pierre"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-slate-700"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Date de la veillée / inhumation
+                      </label>
+                      <input
+                        type="text"
+                        value={necroCeremonyDate}
+                        onChange={(e) => setNecroCeremonyDate(e.target.value)}
+                        placeholder="Ex: Samedi 18 Octobre 2026"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Lieu de la veillée / Inhumation
+                      </label>
+                      <input
+                        type="text"
+                        value={necroCeremonyLocation}
+                        onChange={(e) => setNecroCeremonyLocation(e.target.value)}
+                        placeholder="Ex: Domicile familial à Nzeng-Ayong, Libreville"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-slate-700"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Contact de la famille / Organisation
+                      </label>
+                      <input
+                        type="text"
+                        value={necroFamilyContact}
+                        onChange={(e) => setNecroFamilyContact(e.target.value)}
+                        placeholder="Ex: 077 12 34 56 / 065 98 76 54"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Programme sommaire des obsèques (facultatif)
+                    </label>
+                    <textarea
+                      value={necroFuneralProgram}
+                      onChange={(e) => setNecroFuneralProgram(e.target.value)}
+                      rows={2}
+                      placeholder="Ex: Sortie de corps à Casep-Ga, veillée au domicile, messe à Ste-Marie, inhumation au cimetière de Plaine Roberti."
+                      className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-slate-700"
+                    />
+                  </div>
+                </div>
+              )}
+              {/* LOCALISATION GÉOGRAPHIQUE AU GABON (Accessible à toutes les catégories - Point 2) */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="font-black text-xs text-slate-800 uppercase tracking-wide">
+                      Localisation spatiale au Gabon (9 Provinces)
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-emerald-800 font-extrabold bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-300">
+                    Quartier détaillé
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">
+                      1. Province du Gabon *
+                    </label>
+                    <select
+                      value={province}
+                      onChange={(e) => {
+                        setProvince(e.target.value);
+                        const pObj = GABON_PROVINCES.find((p) => p.name === e.target.value);
+                        if (pObj && pObj.cities.length > 0) {
+                          setCity(pObj.cities[0].name);
+                          setNeighborhood(pObj.cities[0].neighborhoods[0] || '');
+                        }
+                      }}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+                      id="publish-province-select"
+                    >
+                      {GABON_PROVINCES.map((p) => (
+                        <option key={p.code} value={p.name}>
+                          {p.name} ({p.capital})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">
+                      2. Ville / Commune *
+                    </label>
+                    <select
+                      value={city}
+                      onChange={(e) => {
+                        setCity(e.target.value);
+                        const cObj = currentProvinceData.cities.find((c) => c.name === e.target.value);
+                        if (cObj && cObj.neighborhoods.length > 0) {
+                          setNeighborhood(cObj.neighborhoods[0]);
+                        }
+                      }}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+                      id="publish-city-select"
+                    >
+                      {currentProvinceData.cities.map((c) => (
+                        <option key={c.name} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Quartier Détaillé avec option de profil par défaut - Point 2 & Point 4 */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      3. Quartier / Précision du secteur *
+                    </label>
+                    <span className="text-[10px] text-slate-400">
+                      Tapez librement pour détailler votre quartier
+                    </span>
+                  </div>
+
+                  {/* Option de quartier de profil enregistré (Point 4) */}
+                  {profileNeighborhood ? (
+                    <div className="mb-2 p-2 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span className="text-[11px] text-emerald-950 truncate">
+                          Quartier habituel de votre profil : <strong>{profileNeighborhood}</strong>
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNeighborhood(profileNeighborhood);
+                          if (profileProvince) setProvince(profileProvince);
+                          if (profileCity) setCity(profileCity);
+                        }}
+                        className={`text-[10px] font-bold px-2.5 py-1 rounded-lg transition-colors cursor-pointer shrink-0 ${
+                          neighborhood.trim().toLowerCase() === profileNeighborhood.toLowerCase()
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-100'
+                        }`}
+                      >
+                        {neighborhood.trim().toLowerCase() === profileNeighborhood.toLowerCase() ? '✓ Quartier actif' : 'Utiliser ce quartier'}
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer mb-2">
+                      <input
+                        type="checkbox"
+                        checked={saveNeighborhoodToProfile}
+                        onChange={(e) => setSaveNeighborhoodToProfile(e.target.checked)}
+                        className="w-3.5 h-3.5 rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Enregistrer ce quartier comme quartier par défaut dans mon profil</span>
+                    </label>
+                  )}
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      list="publish-neighborhood-suggestions"
+                      value={neighborhood}
+                      onChange={(e) => setNeighborhood(e.target.value)}
+                      placeholder="Ex: Louis, Angondjé (Carrefour GP), Nzeng-Ayong, Oloumi..."
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500 placeholder:text-slate-400"
+                      id="publish-neighborhood-input"
+                      required
+                    />
+                    <datalist id="publish-neighborhood-suggestions">
+                      {currentCityData.neighborhoods.map((q) => (
+                        <option key={q} value={q} />
+                      ))}
+                    </datalist>
+                  </div>
+
+                  {/* Suggestion pills from selected city */}
+                  {currentCityData.neighborhoods.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5 items-center">
+                      <span className="text-[10px] text-slate-400 font-semibold mr-1">Suggestions rapides :</span>
+                      {currentCityData.neighborhoods.slice(0, 6).map((q) => (
+                        <button
+                          key={q}
+                          type="button"
+                          onClick={() => setNeighborhood(q)}
+                          className={`text-[10px] px-2.5 py-0.5 rounded-full border transition-all cursor-pointer ${
+                            neighborhood === q
+                              ? 'bg-emerald-600 text-white border-emerald-700 font-bold'
+                              : 'bg-white hover:bg-emerald-50 text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
           {/* STEP 2: CONTENT, MEDIA & STRICT CHAR LIMIT */}
           {step === 2 && (
             <div className="space-y-4">
+              {/* Point 4: Prominent Category & Subcategory Header */}
+              <div className="bg-gradient-to-r from-emerald-50 via-teal-50/50 to-slate-50 border border-emerald-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-2xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <Tag className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] uppercase font-black tracking-wider text-emerald-800 block">
+                      Rubrique sélectionnée
+                    </span>
+                    <h3 className="font-extrabold text-xs sm:text-sm text-slate-900 truncate">
+                      {getCategoryHeaderSummary()}
+                    </h3>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-white hover:bg-emerald-100/70 border border-emerald-200 px-3 py-1.5 rounded-xl transition-colors shrink-0 flex items-center gap-1 cursor-pointer shadow-2xs"
+                  title="Changer de catégorie ou sous-catégorie"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Modifier</span>
+                </button>
+              </div>
+
               {/* Title */}
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
@@ -1459,15 +1938,15 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 <div>
                   <label
                     className={`cursor-pointer border-2 border-dashed rounded-xl p-3 flex items-center justify-center gap-2 transition-all text-xs font-bold ${
-                      photos.length >= 5
+                      photos.length >= (PRICING_CONFIG.maxImages || 10)
                         ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'
                         : 'border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100 text-emerald-900'
                     }`}
                   >
                     <Upload className="w-4 h-4 text-emerald-600" />
                     <span>
-                      {photos.length >= 5
-                        ? 'Limite de 5 photos atteinte'
+                      {photos.length >= (PRICING_CONFIG.maxImages || 10)
+                        ? `Limite de ${PRICING_CONFIG.maxImages || 10} photos atteinte`
                         : 'Sélectionner des photos locales (≤ 10 Mo/photo)'}
                     </span>
                     <input
@@ -1475,7 +1954,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       accept="image/*"
                       multiple
                       onChange={handlePhotoFilesSelect}
-                      disabled={photos.length >= 5}
+                      disabled={photos.length >= (PRICING_CONFIG.maxImages || 10)}
                       className="hidden"
                     />
                   </label>
@@ -1494,7 +1973,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                           key={idx}
                           type="button"
                           onClick={() => handleAddSampleImage(sample)}
-                          disabled={isAlreadySelected || photos.length >= 5}
+                          disabled={isAlreadySelected || photos.length >= (PRICING_CONFIG.maxImages || 10)}
                           className={`w-14 h-12 rounded-lg overflow-hidden border shrink-0 transition-all ${
                             isAlreadySelected
                               ? 'opacity-30 border-emerald-500 cursor-not-allowed'
@@ -1605,38 +2084,118 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </div>
               </div>
 
-              {/* Section C-c: Contact Téléphonique */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Votre Nom ou Agence *
-                  </label>
-                  <input
-                    type="text"
-                    value={contactName}
-                    onChange={(e) => setContactName(e.target.value)}
-                    placeholder="Ex: Jean-Marc ONDO ou Agence Prestige"
-                    required
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                    id="publish-name-input"
-                  />
+              {/* Section C-c: Contact Téléphonique avec choix entre compte enregistré ou autre numéro (Point 4) */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Phone className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="font-black text-xs text-slate-800 uppercase tracking-wide">
+                      Coordonnées de contact pour cette annonce
+                    </span>
+                  </div>
+                  {accountRegisteredPhone && (
+                    <span className="text-[10px] text-slate-500 font-semibold hidden sm:inline">
+                      Compte : {accountRegisteredPhone}
+                    </span>
+                  )}
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Contact Téléphonique Gabon (+241) *
-                  </label>
-                  <div className="relative">
-                    <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Votre Nom ou Agence *
+                    </label>
                     <input
                       type="text"
-                      value={contactPhone}
-                      onChange={(e) => setContactPhone(e.target.value)}
-                      placeholder="+241 77 45 20 18"
+                      value={contactName}
+                      onChange={(e) => setContactName(e.target.value)}
+                      placeholder="Ex: Jean-Marc ONDO ou Agence Prestige"
                       required
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                      id="publish-phone-input"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                      id="publish-name-input"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Numéro de téléphone Gabon (+241) *
+                    </label>
+
+                    {accountRegisteredPhone ? (
+                      <div className="space-y-2">
+                        {/* Option de choisir entre numéro du compte ou un autre numéro (Point 4) */}
+                        <div className="flex items-center gap-1.5 bg-slate-200/80 p-1 rounded-xl text-xs font-bold">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPhoneChoice('ACCOUNT');
+                              setContactPhone(accountRegisteredPhone);
+                            }}
+                            className={`flex-1 py-1 px-2 rounded-lg text-[11px] font-bold text-center transition-all cursor-pointer ${
+                              phoneChoice === 'ACCOUNT'
+                                ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-500'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            📱 Compte ({accountRegisteredPhone})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPhoneChoice('CUSTOM');
+                              if (contactPhone === accountRegisteredPhone) {
+                                setContactPhone('');
+                              }
+                            }}
+                            className={`flex-1 py-1 px-2 rounded-lg text-[11px] font-bold text-center transition-all cursor-pointer ${
+                              phoneChoice === 'CUSTOM'
+                                ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-500'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            ✏️ Autre numéro
+                          </button>
+                        </div>
+
+                        <div className="relative">
+                          <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            value={contactPhone}
+                            onChange={(e) => {
+                              setContactPhone(e.target.value);
+                              if (phoneChoice === 'ACCOUNT') setPhoneChoice('CUSTOM');
+                            }}
+                            placeholder="+241 77 45 20 18"
+                            required
+                            className={`w-full border rounded-xl pl-9 pr-3.5 py-2 text-xs font-mono font-bold focus:ring-2 focus:ring-emerald-500 ${
+                              phoneChoice === 'ACCOUNT'
+                                ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950 font-bold'
+                                : 'bg-white border-slate-300 text-slate-900'
+                            }`}
+                            id="publish-phone-input"
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-500">
+                          {phoneChoice === 'ACCOUNT'
+                            ? 'Ce numéro est celui enregistré sur votre compte.'
+                            : 'Entrez le numéro spécifique qui recevra les appels et WhatsApp.'}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={contactPhone}
+                          onChange={(e) => setContactPhone(e.target.value)}
+                          placeholder="+241 77 45 20 18"
+                          required
+                          className="w-full bg-white border border-slate-300 rounded-xl pl-9 pr-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                          id="publish-phone-input"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1646,6 +2205,117 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
           {/* STEP 3: DURATION, BILLING & PAYMENT (Section C-b, C-d, C-e) */}
           {step === 3 && (
             <div className="space-y-6">
+              {/* APERÇU ET VÉRIFICATION DE L'ANNONCE AVANT PAIEMENT (Point 4) */}
+              <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white rounded-3xl p-4 sm:p-5 shadow-xl border border-slate-700/80 space-y-4 animate-in fade-in">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-700/70">
+                  <div className="flex items-center gap-2">
+                    <span className="bg-amber-400 text-slate-950 text-[10px] font-black uppercase px-2 py-0.5 rounded-sm">
+                      Aperçu avant paiement
+                    </span>
+                    <h3 className="text-sm font-black text-white">
+                      Vérifiez les informations de votre annonce
+                    </h3>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setStep(1)}
+                      className="text-[11px] font-bold text-amber-300 hover:text-amber-200 bg-white/10 hover:bg-white/15 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Modifier la catégorie ou la localisation"
+                    >
+                      <ArrowLeft className="w-3 h-3" />
+                      <span>Éditer Étape 1</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStep(2)}
+                      className="text-[11px] font-bold text-emerald-300 hover:text-emerald-200 bg-white/10 hover:bg-white/15 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Modifier les photos, le titre ou le prix"
+                    >
+                      <ArrowLeft className="w-3 h-3" />
+                      <span>Éditer Étape 2</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Preview Mini Card */}
+                <div className="flex flex-col sm:flex-row gap-4 bg-slate-800/80 rounded-2xl p-3.5 border border-slate-700">
+                  {/* Photo thumbnail */}
+                  <div className="w-full sm:w-28 sm:h-28 h-36 rounded-xl overflow-hidden bg-slate-950 shrink-0 relative border border-slate-600">
+                    <img
+                      src={photos[0]?.url || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=400&q=80'}
+                      alt="Aperçu"
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute bottom-1 right-1 bg-black/75 text-[10px] text-white px-1.5 py-0.2 rounded font-mono">
+                      📷 {photos.length} photo{photos.length > 1 ? 's' : ''}
+                      {hasVideo ? ' + 🎥' : ''}
+                    </span>
+                  </div>
+
+                  {/* Summary details */}
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-400 text-slate-950">
+                        {mainCategory === 'IMMOBILIER' ? 'Immobilier' :
+                         mainCategory === 'MATERIEL_ROULANT' ? 'Matériel Roulant' :
+                         mainCategory === 'BRIC_A_BRAC' ? 'Bric-à-Brac' :
+                         mainCategory === 'EMPLOI' ? (jobKind === 'DEMANDE_EMPLOI' ? "Demande d'Emploi" : "Offre d'Emploi") :
+                         mainCategory === 'COURS_A_DOMICILE' ? (tutoringKind === 'OFFRE' ? 'Offre Cours' : 'Demande Cours') :
+                         'Nécrologie'}
+                      </span>
+                      {mainCategory === 'IMMOBILIER' && (
+                        <span className="text-[10px] font-bold bg-slate-700 text-slate-200 px-2 py-0.5 rounded-md">
+                          {transactionType === 'VENTE' ? 'Vente' : 'Location'} • {propertyType}
+                        </span>
+                      )}
+                      {mainCategory === 'MATERIEL_ROULANT' && (
+                        <span className="text-[10px] font-bold bg-slate-700 text-slate-200 px-2 py-0.5 rounded-md">
+                          {vehicleBrand} {vehicleModel}
+                        </span>
+                      )}
+                      {mainCategory === 'EMPLOI' && (
+                        <span className="text-[10px] font-bold bg-slate-700 text-slate-200 px-2 py-0.5 rounded-md">
+                          {domesticJobType}
+                        </span>
+                      )}
+                      {(isOwnerVerified || isExempt) && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-black bg-emerald-600/90 text-white px-2 py-0.5 rounded-md border border-emerald-400/50 shadow-xs">
+                          <ShieldCheck className="w-3 h-3 text-emerald-200" />
+                          <span>Vendeur Vérifié</span>
+                        </span>
+                      )}
+                    </div>
+
+                    <h4 className="text-sm font-extrabold text-white line-clamp-1">
+                      {title || 'Titre de votre annonce'}
+                    </h4>
+
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300">
+                      <div className="flex items-center gap-1 text-emerald-400 font-black">
+                        <span>{formatFCFA(Number(price) || 0)}</span>
+                        {priceUnit !== 'total' && (
+                          <span className="text-[11px] font-normal text-emerald-200">/ {priceUnit}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 text-slate-300 text-[11px]">
+                        <MapPin className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                        <span className="truncate">{province} • {city} • <strong className="text-amber-300 font-bold">{neighborhood || 'Non précisé'}</strong></span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
+                      {description || 'Aucune description rédigée'}
+                    </p>
+
+                    <div className="text-[10px] text-slate-400 pt-0.5 flex flex-wrap items-center gap-2">
+                      <span>Contact : <strong className="text-white">{contactName || 'Annonceur'}</strong> ({contactPhone})</span>
+                      <span>•</span>
+                      <span>Durée choisie : <strong className="text-amber-400">{durationDays} jours</strong></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
               {/* If user is exempt (VIP / Partenaire) */}
               {isExempt && (
                 <div className="bg-amber-50 border-2 border-amber-400 p-4 rounded-2xl flex items-center justify-between shadow-xs">
@@ -1668,20 +2338,6 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </div>
               )}
 
-              {/* If standard user with KYC */}
-              {!isExempt && isKycVerified && (
-                <div className="bg-emerald-50 border border-emerald-300 p-3 rounded-xl flex items-center gap-2 text-xs text-emerald-900 font-bold">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Identité Vérifiée ({currentUser?.idDocumentType || 'CNI'}) • Compte autorisé à diffuser</span>
-                </div>
-              )}
-
-              {!isExempt && isKycPending && (
-                <div className="bg-amber-50 border border-amber-300 p-3 rounded-xl flex items-center gap-2 text-xs text-amber-900 font-bold">
-                  <Clock className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>Pièce d'identité soumise en cours d'examen par la modération. Vous pouvez finaliser la publication.</span>
-                </div>
-              )}
 
               {/* Requirement 4: Subscription required for more than 3 simultaneous ads */}
               {requiresSubscription && (
@@ -1691,7 +2347,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       Quota standard ({maxQuota} annonces) atteint
                     </span>
                     <h4 className="font-extrabold text-xs text-slate-900">
-                      Abonnement Pro, Élite ou Business requis (Dès la 4e annonce)
+                      Abonnement Pro, Élite ou Business requis (Au-delà de 3 annonces simultanées)
                     </h4>
                   </div>
                   <p className="text-xs text-slate-600 leading-relaxed">
@@ -1944,6 +2600,20 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     </h4>
                   </div>
 
+                  {/* CGU Acceptance & Disclaimer Notice (Point 2) */}
+                  <div className="mb-3 bg-slate-50 border border-slate-200 rounded-xl p-3 text-[11px] text-slate-600 flex items-center justify-between gap-3">
+                    <span>
+                      En procédant au règlement, vous reconnaissez avoir pris connaissance des <strong>Conditions Générales d'Utilisation</strong> et de la <strong>Clause de non-responsabilité</strong> de BIZBOOSTER Gabon.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowCguModal(true)}
+                      className="shrink-0 text-emerald-700 hover:text-emerald-800 font-extrabold underline text-xs cursor-pointer"
+                    >
+                      Consulter les CGU
+                    </button>
+                  </div>
+
                   <div className="flex justify-center">
                     <MobilePaymentSimulator
                       amount={totalBillCalculated}
@@ -2008,7 +2678,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       {formatFCFA(createdAd.price)}
                     </p>
                     <p className="text-[11px] text-slate-500">
-                      Réf paiement : {createdAd.transactionRef} ({createdAd.durationDays}j)
+                      Durée de publication : {createdAd.durationDays} jours
                     </p>
                   </div>
                 </div>
@@ -2037,14 +2707,12 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </button>
               </div>
             </div>
-              )}
-            </>
           )}
         </div>
 
-        {/* Modal Footer Controls (Step 1 & Step 2 for authorized users only) */}
-        {isAllowedToPublish && step < 3 && (
-          <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+        {/* Modal Footer Controls (Step 1 & Step 2) */}
+        {step < 3 && (
+          <div className="px-4 py-3 sm:px-6 sm:py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
             {step > 1 ? (
               <button
                 type="button"
@@ -2064,6 +2732,13 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
               onClick={() => {
                 if (isUltimateCeilingReached) return;
                 if (step === 1) {
+                  if (!neighborhood.trim()) {
+                    setMediaError('Veuillez préciser ou détailler le quartier de votre bien / service.');
+                    const el = document.getElementById('publish-neighborhood-input');
+                    if (el) el.focus();
+                    return;
+                  }
+                  setMediaError(null);
                   setStep(2);
                 } else if (step === 2) {
                   const trimmedDesc = description.trim();
@@ -2092,18 +2767,25 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   }
 
                   if (!title.trim()) {
-                    setTitle(
-                      `${transactionType === 'VENTE' ? 'Vente' : 'Location'} - ${
-                        mainCategory === 'IMMOBILIER'
-                          ? `${propertyType} à ${neighborhood}, ${city}`
-                          : mainCategory === 'MATERIEL_ROULANT'
-                          ? `${vehicleBrand} ${vehicleModel}`
-                          : mainCategory
-                      }`
-                    );
+                    let genTitle = '';
+                    if (mainCategory === 'IMMOBILIER') {
+                      genTitle = `${transactionType === 'VENTE' ? 'Vente' : 'Location'} - ${propertyType} à ${neighborhood}, ${city}`;
+                    } else if (mainCategory === 'MATERIEL_ROULANT') {
+                      genTitle = `${transactionType === 'VENTE' ? 'Vente' : 'Location'} - ${vehicleBrand} ${vehicleModel}`;
+                    } else if (mainCategory === 'BRIC_A_BRAC') {
+                      genTitle = `À Vendre - ${bricCategory}`;
+                    } else if (mainCategory === 'EMPLOI') {
+                      genTitle = `${jobKind === 'DEMANDE_EMPLOI' ? "Demande d'emploi" : "Offre d'emploi"} - ${domesticJobType}`;
+                    } else if (mainCategory === 'COURS_A_DOMICILE') {
+                      genTitle = `${tutoringKind === 'OFFRE' ? 'Cours à domicile' : 'Recherche cours'} - ${tutoringSubject} (${tutoringLevel})`;
+                    } else if (mainCategory === 'NECROLOGIE') {
+                      genTitle = `Nécrologie - ${necroDeceasedName || 'Avis de décès'} (${necroMinistry})`;
+                    }
+                    setTitle(genTitle || mainCategory);
                   }
                   setMediaError(null);
                   setStep(3);
+                  modalBodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
                 }
               }}
               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black px-5 py-2.5 rounded-xl shadow-md transition-all cursor-pointer"
@@ -2115,11 +2797,14 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
           </div>
         )}
 
-        {/* Loading / Uploading Overlay during media transfer to Firebase Storage */}
+        {/* CGU & Disclaimer Modal (Point 2) */}
+        <CguModal isOpen={showCguModal} onClose={() => setShowCguModal(false)} />
+
+        {/* Loading / Uploading Overlay during secure media transfer */}
         {isSubmitting && (
           <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-xs flex flex-col items-center justify-center z-50 p-6 text-center text-white rounded-3xl animate-in fade-in">
             <Loader2 className="w-12 h-12 animate-spin text-amber-400 mb-3" />
-            <h3 className="text-base font-extrabold tracking-tight">Téléversement sur Firebase Storage...</h3>
+            <h3 className="text-base font-extrabold tracking-tight">Enregistrement sécurisé de vos médias...</h3>
             <p className="text-xs text-emerald-300 font-mono mt-2 bg-emerald-950/60 border border-emerald-800 px-3 py-1.5 rounded-lg max-w-sm">
               {uploadProgressText || 'Enregistrement en cours...'}
             </p>

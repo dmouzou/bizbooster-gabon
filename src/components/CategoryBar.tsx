@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Building2, Car, Package, Briefcase, Layers, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Building2, Car, Package, Briefcase, Layers, ChevronLeft, ChevronRight, GraduationCap, Heart } from 'lucide-react';
 import { MainCategory } from '../types';
 
 interface CategoryBarProps {
@@ -164,6 +164,18 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
       label: '4. EMPLOI & MAISONS',
       subtitle: 'Nounous, Cuisiniers, Gardiens',
       icon: <Briefcase className="w-5 h-5" />,
+    },
+    {
+      id: 'COURS_A_DOMICILE',
+      label: '5. COURS À DOMICILE',
+      subtitle: 'Maths, PC, SVT, Français...',
+      icon: <GraduationCap className="w-5 h-5" />,
+    },
+    {
+      id: 'NECROLOGIE',
+      label: '6. NÉCROLOGIE',
+      subtitle: 'Éducation, Police, Armée, Santé...',
+      icon: <Heart className="w-5 h-5" />,
     },
   ];
 

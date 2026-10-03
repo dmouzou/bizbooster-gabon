@@ -17,6 +17,7 @@ import { auth, db } from './services/firebase';
 import { Ad, AdReport, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAdmin } from './types';
 import { AdminPanel } from './components/AdminPanel';
 import { AdDetailModal } from './components/AdDetailModal';
+import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { getFrontendUrl } from './utils/navigation';
 
 type AdminStatus = 'loading' | 'signedOut' | 'denied' | 'admin';
@@ -28,6 +29,14 @@ export default function AdminApp() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [reports, setReports] = useState<AdReport[]>([]);
   const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
+  const [deleteModalState, setDeleteModalState] = useState<{
+    isOpen: boolean;
+    adId: string;
+    reportId?: string;
+    title: string;
+    adTitle?: string;
+    message: string;
+  } | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -188,11 +197,33 @@ export default function AdminApp() {
     }
   };
 
-  const handleDeleteAd = async (adId: string) => {
-    if (!window.confirm('Supprimer définitivement cette annonce ?')) return;
+  const handleDeleteAd = (adId: string) => {
+    const targetAd = ads.find((a) => a.id === adId);
+    setDeleteModalState({
+      isOpen: true,
+      adId,
+      title: 'Supprimer définitivement cette annonce ?',
+      adTitle: targetAd?.title,
+      message: 'Cette action retirera définitivement cette annonce de la base de données.',
+    });
+  };
+
+  const handleConfirmDeleteModal = async () => {
+    if (!deleteModalState) return;
+    const { adId, reportId } = deleteModalState;
+    setDeleteModalState(null);
     try {
       await deleteDoc(doc(db, 'ads', adId));
-      await log(adId, 'DELETED');
+      if (reportId) {
+        await updateDoc(doc(db, 'reports', reportId), {
+          status: 'RESOLVED',
+          resolvedAt: new Date().toISOString(),
+          resolutionNotes: 'Annonce frauduleuse supprimée définitivement par la modération.',
+        });
+        await log(adId, 'AD_DELETED_FOR_FRAUD');
+      } else {
+        await log(adId, 'DELETED');
+      }
     } catch (e) {
       console.error(e);
       alert('Échec de la suppression.');
@@ -352,20 +383,16 @@ export default function AdminApp() {
     }
   };
 
-  const handleDeleteReportedAd = async (adId: string, reportId: string) => {
-    if (!window.confirm("Supprimer définitivement l'annonce signalée pour fraude ?")) return;
-    try {
-      await deleteDoc(doc(db, 'ads', adId));
-      await updateDoc(doc(db, 'reports', reportId), {
-        status: 'RESOLVED',
-        resolvedAt: new Date().toISOString(),
-        resolutionNotes: 'Annonce frauduleuse supprimée définitivement par la modération.',
-      });
-      await log(adId, 'AD_DELETED_FOR_FRAUD');
-    } catch (e) {
-      console.error(e);
-      alert("Erreur lors de la suppression de l'annonce signalée.");
-    }
+  const handleDeleteReportedAd = (adId: string, reportId: string) => {
+    const targetAd = ads.find((a) => a.id === adId);
+    setDeleteModalState({
+      isOpen: true,
+      adId,
+      reportId,
+      title: "Supprimer l'annonce signalée ?",
+      adTitle: targetAd?.title,
+      message: 'Cette annonce sera définitivement supprimée et le signalement sera marqué comme résolu.',
+    });
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -477,6 +504,18 @@ export default function AdminApp() {
         onOpenExtendModal={() => {}}
         currentUser={null}
       />
+      {deleteModalState && (
+        <DeleteConfirmModal
+          isOpen={deleteModalState.isOpen}
+          onClose={() => setDeleteModalState(null)}
+          onConfirm={handleConfirmDeleteModal}
+          title={deleteModalState.title}
+          adTitle={deleteModalState.adTitle}
+          message={deleteModalState.message}
+          confirmText="Supprimer définitivement"
+          cancelText="Annuler"
+        />
+      )}
     </>
   );
 }

@@ -27,8 +27,9 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
     currentUser?.exemptFromPaymentAndKyc ||
     currentUser?.isExempt
   );
-  const isKycVerified = currentUser?.idVerificationStatus === 'VERIFIED';
-  const isAllowedToPay = isVip || isKycVerified;
+  const isOwnerVerified = currentUser?.idVerificationStatus === 'VERIFIED';
+  // ID card is optional trust badge, no longer required for transactions or extensions
+  const isAllowedToPay = true;
 
   const isBusinessSubscriber = currentUser?.subscriptionTier === 'BUSINESS';
   const isEliteSubscriber = currentUser?.subscriptionTier === 'ELITE';
@@ -93,9 +94,9 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4">
+    <div className="app-modal-overlay">
       <div
-        className="bg-white rounded-3xl w-full max-w-lg max-h-[92vh] overflow-y-auto my-auto shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95"
+        className="app-modal-dialog bg-white rounded-3xl w-full max-w-lg overflow-y-auto shadow-2xl border border-slate-300/80 animate-in fade-in zoom-in-95"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -286,22 +287,6 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
               </div>
             )}
 
-            {/* Security Warning: Point 3 KYC Verification Gate */}
-            {!isAllowedToPay && (
-              <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-2xl text-xs text-amber-950 space-y-1.5">
-                <div className="flex items-center gap-1.5 font-black text-amber-900">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>Vérification d'identité requise (Sécurité BIZBOOSTER)</span>
-                </div>
-                <p className="text-[11px] leading-relaxed text-amber-900">
-                  Conformément aux règles strictes de sécurité, aucun annonceur ne peut effectuer de paiement ou prolonger une annonce sans avoir fait vérifier son identité au préalable (seuls les partenaires VIP en sont exemptés).
-                </p>
-                <p className="text-[10px] font-bold text-slate-700">
-                  Veuillez transmettre votre pièce d'identité dans « Mon Espace Annonceur » &gt; rubrique « Vérification d'identité (KYC) ».
-                </p>
-              </div>
-            )}
-
             {/* Action buttons */}
             <div className="flex items-center gap-3">
               <button
@@ -321,16 +306,6 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
                   >
                     <Crown className="w-4 h-4 text-slate-950" />
                     <span>Valider la prolongation gratuite ({isVip ? 'VIP' : 'Business'})</span>
-                  </button>
-                ) : !isAllowedToPay ? (
-                  <button
-                    type="button"
-                    disabled
-                    className="flex-2 bg-slate-200 text-slate-500 font-bold text-xs py-3 rounded-xl cursor-not-allowed flex items-center justify-center gap-2"
-                    title="Vérification d'identité obligatoire pour payer"
-                  >
-                    <ShieldCheck className="w-4 h-4 text-slate-400" />
-                    <span>Paiement bloqué (Identité requise)</span>
                   </button>
                 ) : (
                   <button

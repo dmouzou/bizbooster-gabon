@@ -50,15 +50,28 @@ export const KycUploadModal: React.FC<KycUploadModalProps> = ({
       return;
     }
 
-    // Validate type (must be image)
-    if (!file.type.startsWith('image/')) {
-      setErrorMsg('Veuillez sélectionner un fichier image valide (JPG, PNG, WEBP).');
+    // Validate type: support image mime types or image extensions
+    const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|bmp|gif)$/i.test(file.name);
+    if (!isImage && file.type) {
+      setErrorMsg('Veuillez sélectionner un fichier image valide (JPG, PNG, WEBP, HEIC).');
       return;
     }
 
     setErrorMsg(null);
     setSelectedFile(file);
-    setPreviewUrl(URL.createObjectURL(file));
+
+    // Read as Base64 data URL so it displays reliably inside the container on all devices
+    const reader = new FileReader();
+    reader.onload = (loadEvent) => {
+      if (loadEvent.target?.result) {
+        setPreviewUrl(loadEvent.target.result as string);
+      }
+    };
+    reader.onerror = () => {
+      // Fallback to object URL if FileReader fails
+      setPreviewUrl(URL.createObjectURL(file));
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -115,10 +128,10 @@ export const KycUploadModal: React.FC<KycUploadModalProps> = ({
             </div>
             <div>
               <h3 className="font-extrabold text-base text-white">
-                Vérification d’Identité (KYC)
+                Badge « Vérifié » (Facultatif)
               </h3>
               <p className="text-xs text-emerald-300">
-                Lutte anti-fraude obligatoire pour publier au Gabon
+                Signal de confiance recommandé pour rassurer vos acquéreurs au Gabon
               </p>
             </div>
           </div>

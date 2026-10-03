@@ -26,6 +26,7 @@ import {
   RollingStockCategory,
   BricABracCategory,
   DomesticJobType,
+  JobAdKind,
 } from '../types';
 import { GABON_PROVINCES } from '../data/gabonLocations';
 import { auth, storage } from '../services/firebase';
@@ -79,6 +80,9 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
   const [domesticJobType, setDomesticJobType] = useState<DomesticJobType>(
     ad.domesticJobType || 'Gardiens de nuit / de jour'
   );
+  const [jobKind, setJobKind] = useState<JobAdKind>(
+    ad.jobKind || (ad.transactionType === 'CHERCHE_EMPLOI' ? 'DEMANDE_EMPLOI' : 'OFFRE_EMPLOI')
+  );
 
   // Location fields
   const [selectedProvinceName, setSelectedProvinceName] = useState(
@@ -120,6 +124,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       setVehicleModel(ad.vehicleData?.model || '');
       setBricCategory(ad.bricCategory || 'Électronique & Smartphones');
       setDomesticJobType(ad.domesticJobType || 'Gardiens de nuit / de jour');
+      setJobKind(ad.jobKind || (ad.transactionType === 'CHERCHE_EMPLOI' ? 'DEMANDE_EMPLOI' : 'OFFRE_EMPLOI'));
       setSelectedProvinceName(ad.location?.province || 'Estuaire');
       setSelectedCityName(ad.location?.city || 'Libreville');
       setSelectedNeighborhood(ad.location?.neighborhood || 'Centre');
@@ -246,6 +251,10 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       updatedData.bricCategory = bricCategory;
     } else if (mainCategory === 'EMPLOI') {
       updatedData.domesticJobType = domesticJobType;
+      updatedData.jobKind = jobKind;
+      if (jobKind === 'DEMANDE_EMPLOI') {
+        updatedData.transactionType = 'CHERCHE_EMPLOI';
+      }
     }
 
     try {
@@ -261,13 +270,13 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
+    <div className="app-modal-overlay">
       <div
-        className="bg-white rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 my-6 flex flex-col max-h-[92vh]"
+        className="app-modal-dialog bg-white rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl border border-slate-300/80 animate-in fade-in zoom-in-95 flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+        <div className="px-4 py-3 sm:px-6 sm:py-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400">
               <Edit3 className="w-5 h-5" />
@@ -288,7 +297,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                 )}
               </div>
               <p className="text-[11px] text-slate-400 truncate max-w-md">
-                Ref: {ad.transactionRef || ad.id}
+                {ad.mainCategory} • {ad.location?.city || 'Gabon'}
               </p>
             </div>
           </div>
@@ -473,27 +482,59 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
               )}
 
               {mainCategory === 'EMPLOI' && (
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Métier Domestique :
-                  </label>
-                  <select
-                    value={domesticJobType}
-                    onChange={(e) => setDomesticJobType(e.target.value as DomesticJobType)}
-                    className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-emerald-500"
-                  >
-                    {[
-                      'Nounous (garde-bébé)',
-                      'Cuisiniers',
-                      'Gardiens de nuit / de jour',
-                      'Jardiniers',
-                      'Assistants aux personnes âgées',
-                      'Femmes de ménage / Repassage',
-                      'Chauffeurs particuliers',
-                    ].map((jt) => (
-                      <option key={jt} value={jt}>{jt}</option>
-                    ))}
-                  </select>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Type d'annonce Emploi :
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setJobKind('OFFRE_EMPLOI')}
+                        className={`p-2.5 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer ${
+                          jobKind === 'OFFRE_EMPLOI'
+                            ? 'bg-purple-600 border-purple-700 text-white shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-purple-50/50'
+                        }`}
+                      >
+                        💼 Offre d'emploi (Recruteur)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setJobKind('DEMANDE_EMPLOI')}
+                        className={`p-2.5 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer ${
+                          jobKind === 'DEMANDE_EMPLOI'
+                            ? 'bg-teal-600 border-teal-700 text-white shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-teal-50/50'
+                        }`}
+                      >
+                        🙋 Demande d'emploi (Candidat)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Métier Domestique :
+                    </label>
+                    <select
+                      value={domesticJobType}
+                      onChange={(e) => setDomesticJobType(e.target.value as DomesticJobType)}
+                      className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-emerald-500"
+                    >
+                      {[
+                        'Nounous (garde-bébé)',
+                        'Cuisiniers',
+                        'Gardiens de nuit / de jour',
+                        'Jardiniers',
+                        'Assistants aux personnes âgées',
+                        'Femmes de ménage / Repassage',
+                        'Chauffeurs particuliers',
+                      ].map((jt) => (
+                        <option key={jt} value={jt}>{jt}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               )}
             </div>
@@ -632,13 +673,13 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={4}
-                maxLength={600}
+                maxLength={500}
                 placeholder="Décrivez l'état, les caractéristiques et les conditions de la transaction..."
                 className="w-full text-xs bg-white border border-slate-200 rounded-xl p-3 text-slate-800 focus:outline-emerald-500 leading-relaxed"
                 required
               />
               <span className="text-[10px] text-slate-400 block text-right mt-1">
-                {description.length}/600 caractères
+                {description.length}/500 caractères
               </span>
             </div>
           </div>

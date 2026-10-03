@@ -1,11 +1,21 @@
-export type MainCategory = 'IMMOBILIER' | 'MATERIEL_ROULANT' | 'BRIC_A_BRAC' | 'EMPLOI';
+export type MainCategory = 
+  | 'IMMOBILIER' 
+  | 'MATERIEL_ROULANT' 
+  | 'BRIC_A_BRAC' 
+  | 'EMPLOI' 
+  | 'COURS_A_DOMICILE' 
+  | 'NECROLOGIE';
 
-export type TransactionType = 'VENTE' | 'LOCATION' | 'EMPLOYER' | 'A_EMPLOYER';
+export type TransactionType = 'VENTE' | 'LOCATION' | 'EMPLOYER' | 'A_EMPLOYER' | 'CHERCHE_EMPLOI';
+export type JobAdKind = 'OFFRE_EMPLOI' | 'DEMANDE_EMPLOI'; // Point 8: Offre (Recruteur cherche un employé) vs Demande (Candidat cherche à travailler)
 
 export type PropertyType = 
   | 'Villa'
   | 'Maison'
   | 'Appartement'
+  | 'Studio (1 chambre + 1 salon)'
+  | 'Chambre américaine (chambre + coin cuisine)'
+  | 'Chambre simple'
   | 'Studio / Chambre'
   | 'Terrain / Parcelle'
   | 'Bureau / Local commercial'
@@ -37,6 +47,42 @@ export type DomesticJobType =
   | 'Femmes de ménage / Repassage'
   | 'Chauffeurs particuliers';
 
+export type NecrologieMinistry = 
+  | 'Éducation nationale'
+  | 'Police nationale'
+  | 'Armée'
+  | 'Santé'
+  | 'Autre';
+
+export interface NecrologieData {
+  ministry: NecrologieMinistry;
+  deceasedName?: string;
+  ceremonyDate?: string;
+  ceremonyLocation?: string;
+  familyContact?: string;
+  funeralProgram?: string;
+}
+
+export type TutoringSubject = 
+  | 'Mathématiques'
+  | 'Physique-Chimie'
+  | 'SVT (Sciences de la Vie et de la Terre)'
+  | 'Français'
+  | 'Anglais'
+  | 'Philosophie'
+  | 'Histoire-Géographie'
+  | 'Informatique'
+  | 'Autre matière';
+
+export type TutoringAdKind = 'OFFRE' | 'DEMANDE'; // Offre de cours ou Demande de cours
+export type TutoringLevel = 'Tous niveaux' | 'Primaire' | 'Collège' | 'Lycée' | 'Supérieur / Université';
+
+export interface TutoringData {
+  kind: TutoringAdKind;
+  subject: TutoringSubject;
+  level?: TutoringLevel;
+}
+
 export type PaymentOperator = 'AIRTEL_MONEY' | 'MOOV_MONEY';
 
 export interface LocationHierarchy {
@@ -66,6 +112,9 @@ export interface Ad {
   vehicleData?: VehicleHierarchy; // For Matériel Roulant
   bricCategory?: BricABracCategory; // For Bric-à-Brac
   domesticJobType?: DomesticJobType; // For Emploi
+  jobKind?: JobAdKind; // Point 8: Offre (Recruteur cherche un employé) ou Demande (Candidat cherche du travail)
+  tutoringData?: TutoringData; // For Cours à Domicile
+  necrologieData?: NecrologieData; // For Nécrologie
   
   price: number; // in FCFA (XAF)
   priceUnit?: 'total' | 'mois' | 'jour' | 'heure' | 'trimestre' | 'an'; // ex: FCFA/mois, FCFA/trimestre, FCFA/an
@@ -76,8 +125,9 @@ export interface Ad {
   featuredAt?: string; // ISO string when boosted
   ownerTier?: SubscriptionTier;
   isOwnerVip?: boolean;
+  isOwnerVerified?: boolean; // Trust badge signal, does not discriminate against unverified listings
 
-  description: string; // limited character text (<= 300 chars)
+  description: string; // limited character text (<= 500 chars)
   images?: string[];
   videoUrl?: string;
   
@@ -96,6 +146,7 @@ export interface Ad {
   suspensionReason?: string; // Ex: 'FORFAIT_EXPIRE_QUOTA'
   suspendedAt?: string;
   userId?: string; // Links ad to the authenticated phone user
+  isTest?: boolean; // Flag to identify test or demo ads
   
   // Payment information
   paidAmount: number;
@@ -133,6 +184,7 @@ export interface UserProfile {
   // Subscription & Boosters
   subscriptionTier?: SubscriptionTier;
   subscriptionExpiresAt?: string;
+  subscriptionStartedAt?: string;
   freeBoostsRemaining?: number; // max 20 per user
   activePack?: AdPackType;
   activeBoosterPack?: BoosterPackType;

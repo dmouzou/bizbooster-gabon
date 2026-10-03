@@ -294,6 +294,8 @@ export const INITIAL_ADS: Ad[] = [
     id: 'ad-emp-1',
     title: 'Nounou expérimentée et attentionnée (garde-bébé)',
     mainCategory: 'EMPLOI',
+    jobKind: 'DEMANDE_EMPLOI',
+    transactionType: 'CHERCHE_EMPLOI',
     domesticJobType: 'Nounous (garde-bébé)',
     location: {
       province: 'Estuaire',
@@ -316,13 +318,16 @@ export const INITIAL_ADS: Ad[] = [
     paidAmount: 9500,
     paymentMethod: 'AIRTEL_MONEY',
     transactionRef: 'AM-EMP-102938',
-    viewsCount: 312
+    viewsCount: 312,
+    isOwnerVerified: true
   },
-  // 11. EMPLOI - CUISINIER
+  // 11. EMPLOI - CUISINIER (DEMANDE D'EMPLOI)
   {
     id: 'ad-emp-2',
     title: 'Chef cuisinier spécialités africaines et européennes',
     mainCategory: 'EMPLOI',
+    jobKind: 'DEMANDE_EMPLOI',
+    transactionType: 'CHERCHE_EMPLOI',
     domesticJobType: 'Cuisiniers',
     location: {
       province: 'Estuaire',
@@ -347,11 +352,13 @@ export const INITIAL_ADS: Ad[] = [
     transactionRef: 'MM-EMP-992011',
     viewsCount: 220
   },
-  // 12. EMPLOI - GARDIEN
+  // 12. EMPLOI - GARDIEN (DEMANDE D'EMPLOI)
   {
     id: 'ad-emp-3',
     title: 'Gardien de nuit vigilant et rigoureux pour villa ou dépôt',
     mainCategory: 'EMPLOI',
+    jobKind: 'DEMANDE_EMPLOI',
+    transactionType: 'CHERCHE_EMPLOI',
     domesticJobType: 'Gardiens de nuit / de jour',
     location: {
       province: 'Estuaire',
@@ -375,6 +382,38 @@ export const INITIAL_ADS: Ad[] = [
     paymentMethod: 'AIRTEL_MONEY',
     transactionRef: 'AM-GAR-661029',
     viewsCount: 145
+  },
+  // 12b. EMPLOI - RECRUTEMENT NOUNOU (OFFRE D'EMPLOI)
+  {
+    id: 'ad-emp-4',
+    title: 'Recrutement : Famille recherche Nounou / Gouvernante à domicile',
+    mainCategory: 'EMPLOI',
+    jobKind: 'OFFRE_EMPLOI',
+    transactionType: 'LOCATION',
+    domesticJobType: 'Nounous (garde-bébé)',
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'La Sablière'
+    },
+    price: 160000,
+    priceUnit: 'mois',
+    description: 'Famille résidant à La Sablière recherche une nounou dynamique et expérimentée pour s\'occuper de deux enfants de 2 et 4 ans. Du lundi au vendredi de 7h30 à 17h. Repas inclus.',
+    images: [
+      'https://images.unsplash.com/photo-1581579438747-1dc8d17bbce4?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 77 90 14 30',
+    hasWhatsapp: true,
+    contactName: 'Mme Boussougou',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 9500,
+    paymentMethod: 'AIRTEL_MONEY',
+    transactionRef: 'AM-REC-440192',
+    viewsCount: 284,
+    isOwnerVerified: true
   },
   // 13. IMMOBILIER - VENTE
   {
@@ -500,5 +539,148 @@ export const INITIAL_ADS: Ad[] = [
     transactionRef: 'AM-LBV-102938',
     viewsCount: 0,
     userId: 'user-particulier-sb'
+  },
+  // 17. COURS À DOMICILE - OFFRE MATHS & PC
+  {
+    id: 'ad-cours-1',
+    title: 'Cours de soutien en Mathématiques et Physique-Chimie (Collège & Lycée)',
+    mainCategory: 'COURS_A_DOMICILE',
+    transactionType: 'VENTE',
+    tutoringData: {
+      kind: 'OFFRE',
+      subject: 'Mathématiques',
+      level: 'Lycée'
+    },
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'Angondjé'
+    },
+    price: 35000,
+    priceUnit: 'mois',
+    description: 'Enseignant certifié avec 8 ans d\'expérience propose suivi personnalisé et remise à niveau en Mathématiques et Sciences Physiques. Préparation intensive aux épreuves du BAC C et D. Déplacements à domicile sur Akanda et Libreville nord.',
+    images: [
+      'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 66 12 34 56',
+    hasWhatsapp: true,
+    contactName: 'Prof. Jean-Marc M.',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 86400000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 3000,
+    paymentMethod: 'AIRTEL_MONEY',
+    transactionRef: 'AM-EDU-881290',
+    viewsCount: 142,
+    isOwnerVerified: true
+  },
+  // 18. COURS À DOMICILE - DEMANDE SVT & FRANÇAIS
+  {
+    id: 'ad-cours-2',
+    title: 'Recherche répétiteur expérimenté SVT et Français pour élève de 3e (Prépa BEPC)',
+    mainCategory: 'COURS_A_DOMICILE',
+    transactionType: 'VENTE',
+    tutoringData: {
+      kind: 'DEMANDE',
+      subject: 'SVT (Sciences de la Vie et de la Terre)',
+      level: 'Collège'
+    },
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'Louis'
+    },
+    price: 40000,
+    priceUnit: 'mois',
+    description: 'Famille résidant au quartier Louis recherche un répétiteur sérieux pour 3 séances par semaine (2h par séance) en Sciences de la Vie et de la Terre ainsi qu\'en Français pour une élève en classe d\'examen BEPC.',
+    images: [
+      'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 74 90 88 11',
+    hasWhatsapp: true,
+    contactName: 'Mme Sylvia N.',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 172800000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 3000,
+    paymentMethod: 'MOOV_MONEY',
+    transactionRef: 'MV-EDU-994321',
+    viewsCount: 98
+  },
+  // 19. NÉCROLOGIE - ÉDUCATION NATIONALE
+  {
+    id: 'ad-necro-1',
+    title: 'Avis d\'obsèques et hommage - M. Paul-Émile MVE (Inspecteur Pédagogique retraité)',
+    mainCategory: 'NECROLOGIE',
+    necrologieData: {
+      ministry: 'Éducation nationale',
+      deceasedName: 'Paul-Émile MVE',
+      ceremonyDate: 'Samedi 10 Octobre 2026',
+      ceremonyLocation: 'Église Sainte-Marie de Libreville',
+      funeralProgram: 'Veillée mortuaire au domicile familial de Glass le vendredi soir, messe de requiem à Sainte-Marie le samedi à 10h, suivie de l\'inhumation au cimetière de Lalala.',
+      familyContact: '+241 62 44 55 66'
+    },
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'Glass'
+    },
+    price: 0,
+    priceUnit: 'total',
+    description: 'La grande famille MVE et alliés ont la profonde douleur d\'annoncer le rappel à Dieu de leur père, grand-père et collègue Paul-Émile MVE, survenu dans sa 74e année. Le programme des obsèques est communiqué à l\'attention de la communauté éducative nationale.',
+    images: [
+      'https://images.unsplash.com/photo-1518895949257-7621c3c786d7?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 62 44 55 66',
+    hasWhatsapp: true,
+    contactName: 'Famille MVE',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 43200000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 3000,
+    paymentMethod: 'AIRTEL_MONEY',
+    transactionRef: 'AM-NEC-102931',
+    viewsCount: 450,
+    isOwnerVerified: true
+  },
+  // 20. NÉCROLOGIE - POLICE NATIONALE
+  {
+    id: 'ad-necro-2',
+    title: 'Faire-part et obsèques - Capitaine de Police Honoré ONDO OBAME',
+    mainCategory: 'NECROLOGIE',
+    necrologieData: {
+      ministry: 'Police nationale',
+      deceasedName: 'Honoré ONDO OBAME',
+      ceremonyDate: 'Vendredi 16 Octobre 2026',
+      ceremonyLocation: 'Camp de Police de FOPI / Cathédrale Saint-Pierre',
+      funeralProgram: 'Honneurs policiers à l\'École Nationale de Police de FOPI à 8h, cérémonie religieuse à la Cathédrale Saint-Pierre de Libreville à 11h.',
+      familyContact: '+241 77 33 22 11'
+    },
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'Plaine Orety'
+    },
+    price: 0,
+    priceUnit: 'total',
+    description: 'Les Forces de Police Nationale et la famille ONDO ont le regret de vous faire part du décès du Capitaine Honoré ONDO OBAME. Les condoléances sont reçues au domicile familial sis à Plaine Orety.',
+    images: [
+      'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 77 33 22 11',
+    hasWhatsapp: true,
+    contactName: 'Commandement FPN & Famille',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 86400000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 3000,
+    paymentMethod: 'MOOV_MONEY',
+    transactionRef: 'MV-NEC-771239',
+    viewsCount: 380,
+    isOwnerVerified: true
   }
 ];

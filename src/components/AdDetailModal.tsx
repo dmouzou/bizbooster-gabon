@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3 } from 'lucide-react';
+import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3, ShieldCheck } from 'lucide-react';
 import { Ad, UserProfile } from '../types';
 import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner } from '../utils/formatters';
 import { ReportAdModal } from './ReportAdModal';
@@ -23,18 +23,18 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
   const isOwner = isAdOwner(ad, currentUser ?? null);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6">
+    <div className="app-modal-overlay">
       <div
-        className="bg-white w-full max-w-3xl rounded-3xl overflow-hidden shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200"
+        className="app-modal-dialog bg-white max-w-3xl rounded-3xl overflow-hidden shadow-2xl border border-slate-300/80 flex flex-col animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-black uppercase tracking-wider text-amber-400 bg-amber-950/60 px-2.5 py-0.5 rounded-sm border border-amber-800/40">
-              Réf: {ad.id}
+        <div className="px-4 sm:px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 gap-2 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs font-black uppercase tracking-wider text-amber-400 bg-amber-950/70 px-2.5 py-1 rounded-lg border border-amber-500/30 shrink-0">
+              REF: {ad.id.toUpperCase()}
             </span>
-            <span className="text-xs text-slate-300 font-medium hidden sm:inline">
+            <span className="text-xs text-slate-300 font-medium hidden sm:inline truncate">
               BIZBOOSTER Gabon
             </span>
           </div>
@@ -64,9 +64,29 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
           {/* Main Title & Badges */}
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-2">
-              {ad.mainCategory === 'EMPLOI' ? (
-                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-purple-100 text-purple-900 border border-purple-300">
-                  À EMPLOYER (Emploi)
+              {ad.mainCategory === 'BRIC_A_BRAC' ? (
+                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300">
+                  À VENDRE (Bric-à-Brac)
+                </span>
+              ) : ad.mainCategory === 'EMPLOI' ? (
+                <span
+                  className={`text-xs font-black uppercase px-2.5 py-1 rounded-lg ${
+                    ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
+                      ? 'bg-teal-100 text-teal-900 border border-teal-300'
+                      : 'bg-purple-100 text-purple-900 border border-purple-300'
+                  }`}
+                >
+                  {ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
+                    ? "DEMANDE D'EMPLOI (Candidat cherche travail)"
+                    : "OFFRE D'EMPLOI (Recruteur cherche travailleur)"}
+                </span>
+              ) : ad.mainCategory === 'COURS_A_DOMICILE' ? (
+                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-indigo-100 text-indigo-900 border border-indigo-300">
+                  {ad.tutoringKind === 'DEMANDE' ? 'DEMANDE DE COURS' : 'OFFRE DE COURS'}
+                </span>
+              ) : ad.mainCategory === 'NECROLOGIE' ? (
+                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-slate-800 text-white border border-slate-700">
+                  NÉCROLOGIE ({ad.necroMinistry || 'Avis de décès'})
                 </span>
               ) : ad.transactionType ? (
                 <span
@@ -79,6 +99,13 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
                   {ad.transactionType === 'VENTE' ? 'À VENDRE (Achat)' : 'À LOUER (Location)'}
                 </span>
               ) : null}
+
+              {(ad.isOwnerVerified || ad.isOwnerVip) && (
+                <span className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-800 text-xs font-black px-2.5 py-1 rounded-lg border border-emerald-300 shadow-xs">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Vendeur Vérifié</span>
+                </span>
+              )}
 
               {ad.propertyType && (
                 <span className="text-xs font-bold bg-slate-100 text-slate-800 px-2.5 py-1 rounded-lg border border-slate-200">
@@ -260,13 +287,35 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
               </div>
             )}
 
+            {(ad.mainCategory === 'COURS_A_DOMICILE' || ad.tutoringSubject) && (
+              <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-200">
+                <span className="font-bold text-indigo-900 block mb-1">Détails Cours à Domicile</span>
+                <p className="font-semibold text-slate-900">
+                  {ad.tutoringKind === 'DEMANDE' ? 'Demande de tuteur' : 'Offre de répétiteur'}
+                </p>
+                {ad.tutoringSubject && <p className="text-slate-700">Matière : <strong>{ad.tutoringSubject}</strong></p>}
+                {ad.tutoringLevel && <p className="text-slate-700">Niveau : <strong>{ad.tutoringLevel}</strong></p>}
+              </div>
+            )}
+
+            {(ad.mainCategory === 'NECROLOGIE' || ad.necroMinistry) && (
+              <div className="bg-slate-100 p-3 rounded-xl border border-slate-300 space-y-1">
+                <span className="font-bold text-slate-800 block mb-1">Avis de Décès & Nécrologie</span>
+                {ad.necroMinistry && <p className="text-slate-800">Ministère / Corps : <strong>{ad.necroMinistry}</strong></p>}
+                {ad.necroDeceasedName && <p className="text-slate-900 font-bold">Défunt(e) : {ad.necroDeceasedName}</p>}
+                {ad.necroCeremonyDate && <p className="text-slate-700">Cérémonie : {ad.necroCeremonyDate}</p>}
+                {ad.necroCeremonyLocation && <p className="text-slate-700">Lieu : {ad.necroCeremonyLocation}</p>}
+                {ad.necroFamilyContact && <p className="text-slate-700">Contact famille : <strong>{ad.necroFamilyContact}</strong></p>}
+                {ad.necroFuneralProgram && <p className="text-slate-600 text-[11px] pt-1 border-t border-slate-200">{ad.necroFuneralProgram}</p>}
+              </div>
+            )}
+
             <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
               <span className="font-bold text-slate-500 block mb-1">Garantie BIZBOOSTER</span>
               <p className="text-slate-700 flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>Paiement certifié {ad.paymentMethod === 'AIRTEL_MONEY' ? 'Airtel Money' : 'Moov Money'}</span>
               </p>
-              <p className="text-slate-500 text-[11px] mt-1">Réf transac: {ad.transactionRef || 'AM-GAB-LIVE'}</p>
             </div>
           </div>
 

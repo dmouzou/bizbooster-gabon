@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { GABON_PROVINCES } from '../data/gabonLocations';
+import { CguModal } from './CguModal';
 
 interface PhoneAuthModalProps {
   isOpen: boolean;
@@ -81,6 +82,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const [selectedProvince, setSelectedProvince] = useState(GABON_PROVINCES[0]?.name || 'Estuaire');
   const [selectedCity, setSelectedCity] = useState(GABON_PROVINCES[0]?.cities[0]?.name || 'Libreville');
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [showCguModal, setShowCguModal] = useState(false);
 
   const confirmationRef = useRef<ConfirmationResult | null>(null);
   const recaptchaRef = useRef<RecaptchaVerifier | null>(null);
@@ -949,16 +951,42 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
               </div>
 
               {/* Charter & Terms Box */}
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2 max-h-36 overflow-y-auto text-xs text-slate-600">
-                <div className="flex items-center gap-2 text-slate-900 font-bold">
-                  <FileText className="w-4 h-4 text-emerald-600" />
-                  <span>Conditions Générales & Charte Déontologique (CGU Gabon)</span>
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2.5 max-h-48 overflow-y-auto text-xs text-slate-600">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-slate-900 font-bold">
+                    <FileText className="w-4 h-4 text-emerald-600" />
+                    <span>Conditions Générales & Charte Déontologique (CGU Gabon)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowCguModal(true)}
+                    className="text-[11px] font-extrabold text-emerald-700 hover:text-emerald-800 underline cursor-pointer"
+                  >
+                    Lire en plein écran
+                  </button>
                 </div>
-                <ul className="space-y-1 text-[11px] list-disc pl-4 text-slate-700 leading-relaxed">
-                  <li>Contrôle préalable obligatoire par l'administration avant parution.</li>
-                  <li>Interdiction de publier des terrains ou parcelles sans titre légal régulier.</li>
-                  <li>Exactitude impérative des tarifs indiqués en Francs CFA (XAF).</li>
+
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-[11px] text-amber-900 leading-relaxed">
+                  <strong className="block font-black text-amber-950 mb-0.5">
+                    Clause de Non-Responsabilité & Sécurité :
+                  </strong>
+                  BIZBOOSTER est un hébergeur technique. Nous déclinons toute responsabilité sur les transactions, la conformité des biens ou les litiges entre acheteurs et vendeurs. Ne versez jamais d'acompte avant visite physique.
+                </div>
+
+                <ul className="space-y-1.5 text-[11px] list-disc pl-4 text-slate-700 leading-relaxed">
+                  <li><strong>Prix sincères :</strong> Obligation d'exactitude des tarifs en Francs CFA (XAF).</li>
+                  <li><strong>Immobilier :</strong> Interdiction de publier des parcelles sans titre ou document régulier.</li>
+                  <li><strong>Véhicules & Matériel :</strong> Documents légaux en règle (carte grise, dédouanement régulier).</li>
+                  <li><strong>Badge Vérifié facultatif :</strong> Obtention optionnelle d'un badge de confiance pour rassurer les acheteurs.</li>
                 </ul>
+
+                <button
+                  type="button"
+                  onClick={() => setShowCguModal(true)}
+                  className="w-full text-center py-1.5 px-3 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl text-[11px] font-bold text-slate-700 transition-colors"
+                >
+                  Consulter l'intégralité de la charte et des CGU &rarr;
+                </button>
               </div>
 
               {/* Acceptance Checkbox */}
@@ -971,7 +999,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   required
                 />
                 <span className="text-xs text-slate-700 font-semibold leading-tight">
-                  J'accepte les Conditions Générales et la Charte Annonceur BizBooster Gabon.
+                  J'accepte sans réserve les <button type="button" onClick={(e) => { e.preventDefault(); setShowCguModal(true); }} className="text-emerald-700 font-bold underline">Conditions Générales d'Utilisation</button>, la clause de non-responsabilité et la Charte Déontologique BizBooster Gabon.
                 </span>
               </label>
 
@@ -1050,6 +1078,16 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           )}
         </div>
       </div>
+
+      <CguModal
+        isOpen={showCguModal}
+        onClose={() => setShowCguModal(false)}
+        onAccept={() => {
+          setTermsAccepted(true);
+          setShowCguModal(false);
+        }}
+        showAcceptButton
+      />
     </div>
   );
 };

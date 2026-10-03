@@ -122,8 +122,8 @@ export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
               </div>
 
               <div className="pt-3 border-t border-slate-100 mt-4 flex items-center justify-between gap-2">
-                <div className="text-[10px] text-slate-400">
-                  Ref: {ad.transactionRef || 'AM-GAB'}
+                <div className="text-[10px] text-slate-400 font-medium">
+                  {ad.publishedAt ? `Publié le ${new Date(ad.publishedAt).toLocaleDateString('fr-FR')}` : 'En attente'}
                 </div>
 
                 <div className="flex items-center gap-2">

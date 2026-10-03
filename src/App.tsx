@@ -22,6 +22,10 @@ import { Header } from './components/Header';
 import { CategoryBar } from './components/CategoryBar';
 import { ImmobilierFilterBar } from './components/ImmobilierFilterBar';
 import { VehiclesFilterBar } from './components/VehiclesFilterBar';
+import { TutoringFilterBar } from './components/TutoringFilterBar';
+import { NecrologieFilterBar } from './components/NecrologieFilterBar';
+import { EmploiFilterBar } from './components/EmploiFilterBar';
+import { CguModal } from './components/CguModal';
 import { AdCard } from './components/AdCard';
 import { AdDetailModal } from './components/AdDetailModal';
 import { PublishAdModal } from './components/PublishAdModal';
@@ -31,19 +35,25 @@ import { ConfirmEditOnlineModal } from './components/ConfirmEditOnlineModal';
 import { UserDashboard } from './components/UserDashboard';
 import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { LogoutConfirmModal } from './components/LogoutConfirmModal';
+import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { isAdOwner } from './utils/formatters';
 import { sortAdsPersonalized, sortAdsRecent, recordCategoryInterest } from './utils/personalization';
 import {
   Ad,
+  JobAdKind,
   MainCategory,
+  NecrologieMinistry,
   PaymentOperator,
   PropertyType,
   RollingStockCategory,
   TransactionType,
+  TutoringAdKind,
+  TutoringLevel,
+  TutoringSubject,
   UserProfile,
 } from './types';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment, writeBatch } from 'firebase/firestore';
 import { auth, db } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
 import AdminApp from './AdminApp';
@@ -138,14 +148,31 @@ function PublicApp() {
     // 3. Current user's own ads from Firestore (even if PENDING_REVIEW or EXPIRED, for dashboard management)
     myAds.forEach((a) => map.set(a.id, a));
 
+    const isCurrentUserVerified = currentUser?.idVerificationStatus === 'VERIFIED' || 
+      !!currentUser?.idVerifiedAt || 
+      currentUser?.isExempt || 
+      currentUser?.exemptFromPaymentAndKyc;
+
     return Array.from(map.values()).map((a) => {
-      const override = localViewOverrides[a.id];
-      if (override !== undefined && override > (a.viewsCount || 0)) {
-        return { ...a, viewsCount: override };
+      let currentAd = a;
+      // Point 2: Verified badge must also appear on VIP partners ads
+      if (currentAd.isOwnerVip) {
+        currentAd = { ...currentAd, isOwnerVerified: true };
       }
-      return a;
+      if (isCurrentUserVerified && isAdOwner(currentAd, currentUser)) {
+        currentAd = {
+          ...currentAd,
+          isOwnerVerified: true,
+          isOwnerVip: currentAd.isOwnerVip || Boolean(currentUser?.isExempt || currentUser?.exemptFromPaymentAndKyc)
+        };
+      }
+      const override = localViewOverrides[currentAd.id];
+      if (override !== undefined && override > (currentAd.viewsCount || 0)) {
+        return { ...currentAd, viewsCount: override };
+      }
+      return currentAd;
     });
-  }, [publicAds, myAds, localViewOverrides]);
+  }, [publicAds, myAds, localViewOverrides, currentUser]);
 
   // Frontend Tab State: 'catalog' | 'user-dashboard'
   const [frontendTab, setFrontendTab] = useState<'catalog' | 'user-dashboard'>('catalog');
@@ -170,8 +197,27 @@ function PublicApp() {
   // Global transaction filter when in 'ALL'
   const [globalTransaction, setGlobalTransaction] = useState<TransactionType | 'ALL'>('ALL');
 
+  // Cours à domicile specific filters (Point 9)
+  const [tutoringKind, setTutoringKind] = useState<TutoringAdKind | 'ALL'>('ALL');
+  const [tutoringSubject, setTutoringSubject] = useState<TutoringSubject | 'ALL'>('ALL');
+  const [tutoringLevel, setTutoringLevel] = useState<TutoringLevel | 'ALL'>('ALL');
+  const [tutoringProvince, setTutoringProvince] = useState('');
+  const [tutoringCity, setTutoringCity] = useState('');
+
+  // Nécrologie specific filters (Point 8)
+  const [necroMinistry, setNecroMinistry] = useState<NecrologieMinistry | 'ALL'>('ALL');
+  const [necroProvince, setNecroProvince] = useState('');
+  const [necroCity, setNecroCity] = useState('');
+
+  // Emploi specific filters (Point 8: Distinction Offre vs Demande)
+  const [emploiJobKind, setEmploiJobKind] = useState<JobAdKind | 'ALL'>('ALL');
+  const [emploiJobType, setEmploiJobType] = useState<string>('ALL');
+  const [emploiProvince, setEmploiProvince] = useState('');
+  const [emploiCity, setEmploiCity] = useState('');
+
   // Modals state
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
+  const [isCguModalOpen, setIsCguModalOpen] = useState(false);
   const [isPhoneAuthOpen, setIsPhoneAuthOpen] = useState(false);
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
   const [authTriggerPurpose, setAuthTriggerPurpose] = useState<'PUBLISH' | 'DASHBOARD'>('DASHBOARD');
@@ -213,6 +259,8 @@ function PublicApp() {
       MATERIEL_ROULANT: 0,
       BRIC_A_BRAC: 0,
       EMPLOI: 0,
+      COURS_A_DOMICILE: 0,
+      NECROLOGIE: 0,
     };
     ads.forEach((ad) => {
       if (ad.status === 'ACTIVE' && new Date(ad.expiresAt).getTime() > now) {
@@ -310,6 +358,59 @@ function PublicApp() {
         }
       }
 
+      // 6. Specific Cours à Domicile filters (Point 9)
+      if (activeCategory === 'COURS_A_DOMICILE') {
+        if (tutoringKind !== 'ALL' && ad.tutoringKind && ad.tutoringKind !== tutoringKind) {
+          return false;
+        }
+        if (tutoringSubject !== 'ALL' && ad.tutoringSubject && ad.tutoringSubject !== tutoringSubject) {
+          return false;
+        }
+        if (tutoringLevel !== 'ALL' && ad.tutoringLevel && ad.tutoringLevel !== tutoringLevel) {
+          return false;
+        }
+        if (tutoringProvince && ad.location?.province?.toLowerCase() !== tutoringProvince.toLowerCase()) {
+          return false;
+        }
+        if (tutoringCity && ad.location?.city?.toLowerCase() !== tutoringCity.toLowerCase()) {
+          return false;
+        }
+      }
+
+      // 7. Specific Nécrologie filters (Point 8)
+      if (activeCategory === 'NECROLOGIE') {
+        if (necroMinistry !== 'ALL' && ad.necroMinistry && ad.necroMinistry !== necroMinistry) {
+          return false;
+        }
+        if (necroProvince && ad.location?.province?.toLowerCase() !== necroProvince.toLowerCase()) {
+          return false;
+        }
+        if (necroCity && ad.location?.city?.toLowerCase() !== necroCity.toLowerCase()) {
+          return false;
+        }
+      }
+
+      // 8. Specific Emploi filters (Point 8: Offres vs Demandes)
+      if (activeCategory === 'EMPLOI') {
+        if (emploiJobKind !== 'ALL') {
+          if (emploiJobKind === 'OFFRE_EMPLOI' && (ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI')) {
+            return false;
+          }
+          if (emploiJobKind === 'DEMANDE_EMPLOI' && (ad.jobKind === 'OFFRE_EMPLOI' || (ad.transactionType !== 'CHERCHE_EMPLOI' && !ad.jobKind))) {
+            return false;
+          }
+        }
+        if (emploiJobType !== 'ALL' && ad.domesticJobType?.toLowerCase() !== emploiJobType.toLowerCase()) {
+          return false;
+        }
+        if (emploiProvince && ad.location?.province?.toLowerCase() !== emploiProvince.toLowerCase()) {
+          return false;
+        }
+        if (emploiCity && ad.location?.city?.toLowerCase() !== emploiCity.toLowerCase()) {
+          return false;
+        }
+      }
+
       return true;
     });
 
@@ -334,6 +435,18 @@ function PublicApp() {
     vehicleBrand,
     vehicleModel,
     vehicleTransaction,
+    tutoringKind,
+    tutoringSubject,
+    tutoringLevel,
+    tutoringProvince,
+    tutoringCity,
+    necroMinistry,
+    necroProvince,
+    necroCity,
+    emploiJobKind,
+    emploiJobType,
+    emploiProvince,
+    emploiCity,
   ]);
 
   // Handle open publish flow with mandatory auth check
@@ -387,11 +500,27 @@ function PublicApp() {
     showToast(`Annonce "${newAd.title}" transmise à la modération administrative !`);
   };
 
-  // Delete Ad
-  const handleDeleteAd = async (adId: string) => {
-    if (!window.confirm('Êtes-vous sûr de vouloir supprimer cette annonce ?')) return;
+  // Ad pending deletion confirmation state (replaces native browser window.confirm - Point 6)
+  const [adPendingDelete, setAdPendingDelete] = useState<Ad | null>(null);
+
+  // Trigger custom in-app Delete Confirmation Modal
+  const handleDeleteAd = (adId: string) => {
+    const targetAd = ads.find((a) => a.id === adId) || null;
+    if (targetAd) {
+      setAdPendingDelete(targetAd);
+    } else {
+      setAdPendingDelete({ id: adId, title: 'Annonce sélectionnée' } as any);
+    }
+  };
+
+  const handleConfirmDeleteAd = async () => {
+    if (!adPendingDelete) return;
+    const adId = adPendingDelete.id;
+    setAdPendingDelete(null);
     try {
       await deleteDoc(doc(db, 'ads', adId));
+      setMyAds((prev) => prev.filter((a) => a.id !== adId));
+      setPublicAds((prev) => prev.filter((a) => a.id !== adId));
       showToast('Annonce supprimée avec succès.');
     } catch (e) {
       console.error(e);
@@ -577,6 +706,13 @@ function PublicApp() {
     setVehicleTransaction('ALL');
   };
 
+  const handleResetEmploiFilters = () => {
+    setEmploiJobKind('ALL');
+    setEmploiJobType('ALL');
+    setEmploiProvince('');
+    setEmploiCity('');
+  };
+
   const handleSelectCategory = (category: MainCategory | 'ALL') => {
     setActiveCategory(category);
     if (category !== 'ALL') {
@@ -584,6 +720,7 @@ function PublicApp() {
     }
     handleResetImmoFilters();
     handleResetVehiclesFilters();
+    handleResetEmploiFilters();
   };
 
   // Update user profile in Firestore (for subscriptions, ad packs, free boosts)
@@ -597,6 +734,37 @@ function PublicApp() {
     try {
       await updateDoc(doc(db, 'users', uid), updated);
       setCurrentUser((prev) => (prev ? { ...prev, ...updated, id: uid } : null));
+
+      // Point 1: If advertiser name is updated, automatically synchronize the new name on ALL their ads
+      if (updated.name && updated.name.trim() && (!currentUser || updated.name.trim() !== currentUser.name)) {
+        const newName = updated.name.trim();
+        const userAdsToUpdate = ads.filter((ad) => isAdOwner(ad, currentUser) || (ad.userId && ad.userId === uid));
+        if (userAdsToUpdate.length > 0) {
+          try {
+            const batch = writeBatch(db);
+            userAdsToUpdate.forEach((ad) => {
+              batch.update(doc(db, 'ads', ad.id), { contactName: newName });
+            });
+            await batch.commit();
+            setMyAds((prev) =>
+              prev.map((ad) =>
+                isAdOwner(ad, currentUser) || (ad.userId && ad.userId === uid)
+                  ? { ...ad, contactName: newName }
+                  : ad
+              )
+            );
+            setPublicAds((prev) =>
+              prev.map((ad) =>
+                isAdOwner(ad, currentUser) || (ad.userId && ad.userId === uid)
+                  ? { ...ad, contactName: newName }
+                  : ad
+              )
+            );
+          } catch (batchErr) {
+            console.error('Error synchronizing advertiser name on ads:', batchErr);
+          }
+        }
+      }
     } catch (e: any) {
       console.error('Failed to update user profile in Firestore:', e);
       showToast("Erreur lors de la mise à jour du profil.");
@@ -669,7 +837,7 @@ function PublicApp() {
         totalActiveAdsCount={activeAdsCount}
       />
 
-      <main className="flex-1 max-w-7xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 w-full space-y-5 sm:space-y-6 pb-24 md:pb-8">
+      <main className="flex-1 max-w-7xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 w-full space-y-5 sm:space-y-6 pb-28 md:pb-8">
         {/* TAB 1: PUBLIC CATALOGUE (100% LIBRE, GRATUIT, VÉRIFIÉ) */}
         {frontendTab === 'catalog' && (
           <div className="space-y-5 sm:space-y-6 animate-in fade-in duration-150">
@@ -809,6 +977,61 @@ function PublicApp() {
                 selectedTransaction={vehicleTransaction}
                 onChangeTransaction={setVehicleTransaction}
                 onResetFilters={handleResetVehiclesFilters}
+              />
+            )}
+
+            {/* Specialized Filters: COURS A DOMICILE (Point 9) */}
+            {activeCategory === 'COURS_A_DOMICILE' && (
+              <TutoringFilterBar
+                selectedKind={tutoringKind}
+                onChangeKind={setTutoringKind}
+                selectedSubject={tutoringSubject}
+                onChangeSubject={setTutoringSubject}
+                selectedLevel={tutoringLevel}
+                onChangeLevel={setTutoringLevel}
+                selectedProvince={tutoringProvince}
+                onChangeProvince={setTutoringProvince}
+                selectedCity={tutoringCity}
+                onChangeCity={setTutoringCity}
+                onResetFilters={() => {
+                  setTutoringKind('ALL');
+                  setTutoringSubject('ALL');
+                  setTutoringLevel('ALL');
+                  setTutoringProvince('');
+                  setTutoringCity('');
+                }}
+              />
+            )}
+
+            {/* Specialized Filters: NECROLOGIE (Point 8) */}
+            {activeCategory === 'NECROLOGIE' && (
+              <NecrologieFilterBar
+                selectedMinistry={necroMinistry}
+                onChangeMinistry={setNecroMinistry}
+                selectedProvince={necroProvince}
+                onChangeProvince={setNecroProvince}
+                selectedCity={necroCity}
+                onChangeCity={setNecroCity}
+                onResetFilters={() => {
+                  setNecroMinistry('ALL');
+                  setNecroProvince('');
+                  setNecroCity('');
+                }}
+              />
+            )}
+
+            {/* Specialized Filters: EMPLOI (Point 8: Distinction Offre vs Demande) */}
+            {activeCategory === 'EMPLOI' && (
+              <EmploiFilterBar
+                selectedJobKind={emploiJobKind}
+                onChangeJobKind={setEmploiJobKind}
+                selectedJobType={emploiJobType}
+                onChangeJobType={setEmploiJobType}
+                selectedProvince={emploiProvince}
+                onChangeProvince={setEmploiProvince}
+                selectedCity={emploiCity}
+                onChangeCity={setEmploiCity}
+                onResetFilters={handleResetEmploiFilters}
               />
             )}
 
@@ -974,8 +1197,8 @@ function PublicApp() {
         )}
       </main>
 
-      {/* Frontend Footer */}
-      <footer className="bg-white border-t border-slate-200 mt-12 py-8 text-xs text-slate-500">
+      {/* Frontend Footer - Extra bottom padding on mobile so floating bottom nav doesn't overlap footer (Point 2, Image 3) */}
+      <footer className="bg-white border-t border-slate-200 mt-12 py-8 pb-32 md:pb-8 text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-800 flex items-center justify-center text-white font-black text-sm shadow-sm">
@@ -986,12 +1209,19 @@ function PublicApp() {
                 BIZBOOSTER GABON • Solution anti-perte de temps
               </p>
               <p className="text-[11px] text-slate-400">
-                Immobilier (9 provinces) • Matériel Roulant • Bric-à-Brac • Emploi
+                Immobilier (9 provinces) • Matériel Roulant • Bric-à-Brac • Emploi • Cours à Domicile • Nécrologie
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-4 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setIsCguModalOpen(true)}
+              className="text-slate-600 hover:text-emerald-700 underline cursor-pointer transition-colors"
+            >
+              Conditions Générales (CGU) & Clause de Non-responsabilité
+            </button>
             <span className="text-emerald-700">✓ Vente & Location</span>
             <span className="text-red-600">✓ Airtel Money Gabon</span>
             <span className="text-blue-600">✓ Moov Money Gabon</span>
@@ -1070,8 +1300,26 @@ function PublicApp() {
         cancelText="Rester connecté"
       />
 
+      {/* 6. CGU & Clause de Non-responsabilité Modal (Point 2) */}
+      <CguModal
+        isOpen={isCguModalOpen}
+        onClose={() => setIsCguModalOpen(false)}
+      />
+
+      {/* 7. Delete Ad Confirmation Modal (Replaces browser confirm dialog - Point 6) */}
+      <DeleteConfirmModal
+        isOpen={!!adPendingDelete}
+        onClose={() => setAdPendingDelete(null)}
+        onConfirm={handleConfirmDeleteAd}
+        title="Supprimer cette annonce ?"
+        adTitle={adPendingDelete?.title}
+        message="Êtes-vous certain de vouloir supprimer cette annonce ? Cette action est irréversible et retirera définitivement votre annonce du catalogue."
+        confirmText="Supprimer définitivement"
+        cancelText="Annuler"
+      />
+
       {/* 6. Native Mobile Bottom Navigation Bar (Optimized for quick thumb reach) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 px-4 py-1.5 shadow-2xl flex items-center justify-around">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 px-4 py-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-2xl flex items-center justify-around">
         {/* Tab 1: Catalogue */}
         <button
           onClick={() => {

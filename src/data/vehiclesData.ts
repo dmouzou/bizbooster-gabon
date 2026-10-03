@@ -20,7 +20,7 @@ export const CAR_BRANDS_AND_MODELS: CarBrandModels[] = [
   },
   {
     brand: 'KIA',
-    models: ['Sportage', 'Sorento', 'Picanto', 'Seltos', 'Rio', 'Carnival', 'EV6']
+    models: ['Morning', 'Sportage', 'Sorento', 'Picanto', 'Seltos', 'Rio', 'Carnival', 'EV6']
   },
   {
     brand: 'MERCEDES-BENZ',

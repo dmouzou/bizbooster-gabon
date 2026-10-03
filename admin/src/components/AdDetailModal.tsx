@@ -23,16 +23,16 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
   const isOwner = isAdOwner(ad, currentUser ?? null);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6">
+    <div className="app-modal-overlay">
       <div
-        className="bg-white w-full max-w-3xl rounded-3xl overflow-hidden shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200"
+        className="app-modal-dialog bg-white max-w-3xl rounded-3xl overflow-hidden shadow-2xl border border-slate-300/80 flex flex-col animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
         <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-black uppercase tracking-wider text-amber-400 bg-amber-950/60 px-2.5 py-0.5 rounded-sm border border-amber-800/40">
-              Réf: {ad.id}
+            <span className="text-xs font-black uppercase tracking-wider text-amber-400 bg-amber-950/70 px-2.5 py-1 rounded-lg border border-amber-500/30 shrink-0">
+              REF: {ad.id.toUpperCase()}
             </span>
             <span className="text-xs text-slate-300 font-medium hidden sm:inline">
               BIZBOOSTER Gabon
