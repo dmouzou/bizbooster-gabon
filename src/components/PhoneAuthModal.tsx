@@ -274,6 +274,50 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       setErrorMessage("Veuillez d'abord renseigner votre numéro Gabon (+241) dans le formulaire ci-dessus, puis cliquer sur 'Mot de passe oublié ?'.");
       return;
     }
+
+    const cleanDigits = getPhoneClean(e164);
+    // 1. Local storage check for instant feedback
+    try {
+      const localLastChange = localStorage.getItem('bizbooster_last_pwd_change_' + cleanDigits);
+      if (localLastChange) {
+        const lastTime = new Date(localLastChange).getTime();
+        const diffHours = (Date.now() - lastTime) / (1000 * 60 * 60);
+        if (diffHours < 24) {
+          const remainingHours = Math.ceil(24 - diffHours);
+          setErrorMessage(
+            `Votre mot de passe a été récemment modifié dans les dernières 24 heures. Pour prévenir les abus d'envoi de SMS et sécuriser votre compte, vous pourrez réinitialiser votre mot de passe dans ${remainingHours} heure${remainingHours > 1 ? 's' : ''}.`
+          );
+          return;
+        }
+      }
+    } catch {
+      // ignore localstorage errors
+    }
+
+    // 2. Cloud Function / Firestore verification
+    setIsLoading(true);
+    try {
+      const checkFn = httpsCallable(functions, 'checkPasswordResetEligibility');
+      const res = await checkFn({ phoneNumber: e164 });
+      const data = res.data as { allowed: boolean; remainingHours: number; lastPasswordChangeDate?: string };
+      if (!data.allowed) {
+        if (data.lastPasswordChangeDate) {
+          try {
+            localStorage.setItem('bizbooster_last_pwd_change_' + cleanDigits, data.lastPasswordChangeDate);
+          } catch {
+            // ignore
+          }
+        }
+        setErrorMessage(
+          `Votre mot de passe a été récemment modifié dans les dernières 24 heures. Pour prévenir les abus d'envoi de SMS et sécuriser votre compte, vous pourrez réinitialiser votre mot de passe dans ${data.remainingHours} heure${data.remainingHours > 1 ? 's' : ''}.`
+        );
+        setIsLoading(false);
+        return;
+      }
+    } catch (checkErr) {
+      console.warn('checkPasswordResetEligibility error/skipped:', checkErr);
+    }
+
     setIsForgotPasswordFlow(true);
     setSuccessNotice("Envoi du code de vérification SMS pour réinitialiser votre mot de passe...");
     if (await sendCode()) {
@@ -549,6 +593,12 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
       // 2. Update Firestore user document
       const nowIso = new Date().toISOString();
+      try {
+        const cleanDigits = getPhoneClean(contactPhone);
+        localStorage.setItem('bizbooster_last_pwd_change_' + cleanDigits, nowIso);
+      } catch {
+        // ignore
+      }
       await updateDoc(doc(db, 'users', uid), {
         password: password.trim(),
         lastPasswordChangeDate: nowIso,

@@ -196,6 +196,68 @@ export const loginWithPhonePassword = onCall(
 );
 
 /**
+ * Vérifie l'éligibilité au renouvellement de mot de passe (règle des 24 heures).
+ * Empêche le spam de SMS OTP si le mot de passe a été modifié récemment.
+ */
+export const checkPasswordResetEligibility = onCall(
+  {cors: true},
+  async (request) => {
+    const {phoneNumber} = request.data || {};
+    if (!phoneNumber) {
+      throw new HttpsError("invalid-argument", "Numéro de téléphone requis.");
+    }
+
+    const {e164, rawDigits} = normalizeGabonPhone(String(phoneNumber));
+    const db = getFirestore();
+
+    let snap = await db
+      .collection("users")
+      .where("contactPhone", "==", e164)
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      snap = await db
+        .collection("users")
+        .where("phoneNumber", "==", e164)
+        .limit(1)
+        .get();
+    }
+
+    if (snap.empty) {
+      snap = await db
+        .collection("users")
+        .where("contactPhone", "==", rawDigits)
+        .limit(1)
+        .get();
+    }
+
+    if (!snap.empty) {
+      const userData = snap.docs[0].data();
+      const lastChange = userData.lastPasswordChangeDate;
+      if (lastChange) {
+        const lastTime = new Date(lastChange).getTime();
+        const now = Date.now();
+        const diffHours = (now - lastTime) / (1000 * 60 * 60);
+        if (diffHours < 24) {
+          const remainingHours = Math.ceil(24 - diffHours);
+          return {
+            allowed: false,
+            remainingHours,
+            lastPasswordChangeDate: lastChange,
+          };
+        }
+      }
+    }
+
+    return {
+      allowed: true,
+      remainingHours: 0,
+    };
+  }
+);
+
+/**
  * 2. Expiration automatique des annonces et gestion des dépassements de quota :
  * - Expire les annonces actives dont la date de validité est passée.
  * - Rétrograde les abonnements expirés (PRO/ELITE/BUSINESS vers STANDARD).

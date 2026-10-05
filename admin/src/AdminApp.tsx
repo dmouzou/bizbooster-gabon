@@ -20,6 +20,7 @@ import { AdDetailModal } from './components/AdDetailModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { INITIAL_ADS } from './data/initialAds';
 import { getFrontendUrl } from './utils/navigation';
+import { AppAlertModal, AlertModalConfig } from './components/AppAlertModal';
 
 type AdminStatus = 'loading' | 'signedOut' | 'denied' | 'admin';
 
@@ -46,6 +47,17 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const [alertModalConfig, setAlertModalConfig] = useState<AlertModalConfig | null>(null);
+
+  const showAlert = (message: string, type: 'success' | 'error' | 'info' = 'info', title?: string) => {
+    setAlertModalConfig({
+      isOpen: true,
+      message,
+      type,
+      title,
+    });
+  };
 
   // 1. Watch the Firebase session and verify the ADMIN / SUPER_ADMIN role in users/{uid}
   useEffect(() => {
@@ -213,7 +225,7 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       }
     } catch (e) {
       console.error(e);
-      alert("Échec de l'approbation. Vérifiez votre connexion et vos droits.");
+      showAlert("Échec de l'approbation. Vérifiez votre connexion et vos droits.", 'error');
     }
   };
 
@@ -227,7 +239,7 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       await log(adId, 'REJECTED', reason);
     } catch (e) {
       console.error(e);
-      alert('Échec du rejet.');
+      showAlert('Échec du rejet.', 'error');
     }
   };
 
@@ -260,14 +272,14 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       }
     } catch (e) {
       console.error(e);
-      alert('Échec de la suppression.');
+      showAlert('Échec de la suppression.', 'error');
     }
   };
 
   // 4. KYC & VIP Exemption handlers (VIP exemption STRICTLY restricted to SUPER ADMIN)
   const handleToggleExemption = async (userId: string, isExempt: boolean) => {
     if (!isUserSuperAdmin(currentAdmin)) {
-      alert("Action réservée exclusivement au SUPER ADMIN : création/révocation de partenaire VIP interdite.");
+      showAlert("Action réservée exclusivement au SUPER ADMIN : création/révocation de partenaire VIP interdite.", 'error', 'Accès Refusé');
       return;
     }
     try {
@@ -278,7 +290,7 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       await log(userId, isExempt ? 'EXEMPTION_GRANTED' : 'EXEMPTION_REVOKED');
     } catch (e) {
       console.error(e);
-      alert("Erreur lors de la mise à jour de l'exonération.");
+      showAlert("Erreur lors de la mise à jour de l'exonération.", 'error');
     }
   };
 
@@ -291,7 +303,7 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       await log(userId, 'KYC_APPROVED');
     } catch (e) {
       console.error(e);
-      alert("Erreur lors de la validation de la pièce d'identité.");
+      showAlert("Erreur lors de la validation de la pièce d'identité.", 'error');
     }
   };
 
@@ -304,14 +316,14 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       await log(userId, 'KYC_REJECTED', reason);
     } catch (e) {
       console.error(e);
-      alert("Erreur lors du rejet de la pièce d'identité.");
+      showAlert("Erreur lors du rejet de la pièce d'identité.", 'error');
     }
   };
 
   // 4b. Subscription & Boosters management (STRICTLY restricted to SUPER ADMIN)
   const handleUpdateUserSubscription = async (userId: string, tier: SubscriptionTier) => {
     if (!isUserSuperAdmin(currentAdmin)) {
-      alert("Action réservée exclusivement au SUPER ADMIN : modification d'abonnement interdite.");
+      showAlert("Action réservée exclusivement au SUPER ADMIN : modification d'abonnement interdite.", 'error', 'Accès Refusé');
       return;
     }
     try {
@@ -329,13 +341,13 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       await log(userId, 'SUBSCRIPTION_UPDATED', `Forfait défini sur: ${tier} (+${boostsToAdd} boosters crédités)`);
     } catch (e) {
       console.error(e);
-      alert("Erreur lors de la mise à jour de l'abonnement.");
+      showAlert("Erreur lors de la mise à jour de l'abonnement.", 'error');
     }
   };
 
   const handleUpdateUserBoosters = async (userId: string, count: number) => {
     if (!isUserSuperAdmin(currentAdmin)) {
-      alert("Action réservée exclusivement au SUPER ADMIN : modification des boosters interdite.");
+      showAlert("Action réservée exclusivement au SUPER ADMIN : modification des boosters interdite.", 'error', 'Accès Refusé');
       return;
     }
     try {
@@ -346,13 +358,13 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       await log(userId, 'BOOSTERS_UPDATED', `Solde de boosters ajusté à ${safeCount}`);
     } catch (e) {
       console.error(e);
-      alert("Erreur lors de la modification des boosters.");
+      showAlert("Erreur lors de la modification des boosters.", 'error');
     }
   };
 
   const handleUpdateUserRole = async (userId: string, newRole: 'USER' | 'ADMIN' | 'SUPER_ADMIN') => {
     if (!isUserSuperAdmin(currentAdmin)) {
-      alert("Action réservée exclusivement au SUPER ADMIN : modification des rôles interdite.");
+      showAlert("Action réservée exclusivement au SUPER ADMIN : modification des rôles interdite.", 'error', 'Accès Refusé');
       return;
     }
     const targetUser = users.find((u) => u.id === userId);
@@ -360,19 +372,19 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
 
     // Règle 2b: Un Super Admin ne peut pas être révoqué par un autre Super Admin depuis l'interface
     if ((targetUser.role as any) === 'SUPER_ADMIN' || (targetUser.role as any) === 'SUPER ADMIN') {
-      alert("Action interdite : un Super Administrateur ne peut pas être rétrogradé depuis cette interface. Toute révocation doit être effectuée manuellement dans la base de données Firestore.");
+      showAlert("Action interdite : un Super Administrateur ne peut pas être rétrogradé depuis cette interface. Toute révocation doit être effectuée manuellement dans la base de données Firestore.", 'error', 'Action interdite');
       return;
     }
 
     // Règle 2a: Un utilisateur standard ne peut pas devenir un admin/modérateur depuis cette interface
     if (targetUser.role !== 'ADMIN') {
-      alert("Action refusée : un utilisateur standard ne peut pas être nommé modérateur/admin depuis cette interface (création réservée manuellement avec identifiants distincts).");
+      showAlert("Action refusée : un utilisateur standard ne peut pas être nommé modérateur/admin depuis cette interface (création réservée manuellement avec identifiants distincts).", 'error', 'Action refusée');
       return;
     }
 
     // Règle 2b: Un modérateur ne peut être que promu SUPER ADMIN
     if (newRole !== 'SUPER_ADMIN') {
-      alert("Un modérateur ne peut être que promu au rang de Super Administrateur.");
+      showAlert("Un modérateur ne peut être que promu au rang de Super Administrateur.", 'error', 'Action refusée');
       return;
     }
 
@@ -381,10 +393,10 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
         role: 'SUPER_ADMIN',
       });
       await log(userId, 'ROLE_PROMOTED_SUPER_ADMIN', `Modérateur promu au rang de Super Administrateur`);
-      alert(`Le modérateur "${targetUser.name || targetUser.contactPhone}" a été promu Super Administrateur avec succès.`);
+      showAlert(`Le modérateur "${targetUser.name || targetUser.contactPhone}" a été promu Super Administrateur avec succès.`, 'success', 'Promotion Réussie');
     } catch (e) {
       console.error(e);
-      alert("Erreur lors de la mise à jour du rôle.");
+      showAlert("Erreur lors de la mise à jour du rôle.", 'error');
     }
   };
 
@@ -399,7 +411,7 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       await log(reportId, 'REPORT_RESOLVED');
     } catch (e) {
       console.error(e);
-      alert('Erreur lors du traitement du signalement.');
+      showAlert('Erreur lors du traitement du signalement.', 'error');
     }
   };
 
@@ -413,7 +425,7 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       await log(reportId, 'REPORT_DISMISSED');
     } catch (e) {
       console.error(e);
-      alert('Erreur lors du classement du signalement.');
+      showAlert('Erreur lors du classement du signalement.', 'error');
     }
   };
 
@@ -446,7 +458,7 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
     if (onSwitchToFrontend) {
       onSwitchToFrontend();
     } else {
-      window.location.href = getFrontendUrl();
+      window.location.replace(getFrontendUrl());
     }
   };
 
@@ -599,6 +611,10 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
           cancelText="Annuler"
         />
       )}
+      <AppAlertModal
+        config={alertModalConfig}
+        onClose={() => setAlertModalConfig(null)}
+      />
     </>
   );
 }

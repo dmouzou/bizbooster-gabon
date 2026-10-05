@@ -5,8 +5,10 @@ import { DOMESTIC_JOB_TYPES } from '../data/categoriesData';
 import { GABON_PROVINCES } from '../data/gabonLocations';
 
 interface EmploiFilterBarProps {
-  selectedKind: JobAdKind | 'ALL';
-  onChangeKind: (kind: JobAdKind | 'ALL') => void;
+  selectedKind?: JobAdKind | 'ALL';
+  selectedJobKind?: JobAdKind | 'ALL';
+  onChangeKind?: (kind: JobAdKind | 'ALL') => void;
+  onChangeJobKind?: (kind: JobAdKind | 'ALL') => void;
   selectedJobType: string | 'ALL';
   onChangeJobType: (jobType: string | 'ALL') => void;
   selectedProvince: string;
@@ -18,7 +20,9 @@ interface EmploiFilterBarProps {
 
 export const EmploiFilterBar: React.FC<EmploiFilterBarProps> = ({
   selectedKind,
+  selectedJobKind,
   onChangeKind,
+  onChangeJobKind,
   selectedJobType,
   onChangeJobType,
   selectedProvince,
@@ -27,10 +31,16 @@ export const EmploiFilterBar: React.FC<EmploiFilterBarProps> = ({
   onChangeCity,
   onResetFilters,
 }) => {
+  const currentKind = selectedJobKind || selectedKind || 'ALL';
+  const handleKindChange = (kind: JobAdKind | 'ALL') => {
+    if (onChangeJobKind) onChangeJobKind(kind);
+    if (onChangeKind) onChangeKind(kind);
+  };
+
   const currentProvinceData = GABON_PROVINCES.find((p) => p.name === selectedProvince);
   const cities = currentProvinceData?.cities || [];
   const hasActiveFilters =
-    selectedKind !== 'ALL' ||
+    currentKind !== 'ALL' ||
     selectedJobType !== 'ALL' ||
     Boolean(selectedProvince) ||
     Boolean(selectedCity);
@@ -76,9 +86,9 @@ export const EmploiFilterBar: React.FC<EmploiFilterBarProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <button
             type="button"
-            onClick={() => onChangeKind('ALL')}
+            onClick={() => handleKindChange('ALL')}
             className={`p-2.5 rounded-xl border text-center text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${
-              selectedKind === 'ALL'
+              currentKind === 'ALL'
                 ? 'bg-white text-purple-950 border-white shadow-sm'
                 : 'bg-purple-900/40 hover:bg-purple-900/70 text-purple-200 border-purple-800'
             }`}
@@ -89,9 +99,9 @@ export const EmploiFilterBar: React.FC<EmploiFilterBarProps> = ({
 
           <button
             type="button"
-            onClick={() => onChangeKind('OFFRE_EMPLOI')}
+            onClick={() => handleKindChange('OFFRE_EMPLOI')}
             className={`p-2.5 rounded-xl border text-center text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${
-              selectedKind === 'OFFRE_EMPLOI'
+              currentKind === 'OFFRE_EMPLOI'
                 ? 'bg-purple-500 text-white border-purple-400 shadow-md ring-2 ring-purple-300/40'
                 : 'bg-purple-900/40 hover:bg-purple-900/70 text-purple-200 border-purple-800'
             }`}
@@ -102,9 +112,9 @@ export const EmploiFilterBar: React.FC<EmploiFilterBarProps> = ({
 
           <button
             type="button"
-            onClick={() => onChangeKind('DEMANDE_EMPLOI')}
+            onClick={() => handleKindChange('DEMANDE_EMPLOI')}
             className={`p-2.5 rounded-xl border text-center text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${
-              selectedKind === 'DEMANDE_EMPLOI'
+              currentKind === 'DEMANDE_EMPLOI'
                 ? 'bg-teal-500 text-white border-teal-400 shadow-md ring-2 ring-teal-300/40'
                 : 'bg-purple-900/40 hover:bg-purple-900/70 text-purple-200 border-purple-800'
             }`}

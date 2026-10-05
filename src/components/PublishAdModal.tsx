@@ -36,6 +36,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, auth, db } from '../services/firebase';
+import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
 import {
   Ad,
   BricABracCategory,
@@ -151,6 +152,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
   // Wizard Step: 1 = Categorization, 2 = Content & Media, 3 = Billing & Payment, 4 = Confirmation
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [alertModalConfig, setAlertModalConfig] = useState<AlertModalConfig | null>(null);
 
   // Point 1: Identity is NOT required for transactions or ad deposits
   // Verification is treated as an optional trust badge
@@ -244,7 +246,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
   // Step 2 Fields
   const [title, setTitle] = useState('');
-  const [price, setPrice] = useState<number>(350000);
+  const [price, setPrice] = useState<number | ''>(350000);
   const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour' | 'trimestre' | 'an' | 'heure'>('mois');
   const [description, setDescription] = useState('');
 
@@ -747,18 +749,21 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
     }
     if (cat === 'IMMOBILIER') {
       setPriceUnit(transactionType === 'LOCATION' ? 'mois' : 'total');
+      if (price === 0 || price === '') setPrice(350000);
     } else if (cat === 'MATERIEL_ROULANT') {
       setPriceUnit(transactionType === 'LOCATION' ? 'jour' : 'total');
+      if (price === 0 || price === '') setPrice(5000000);
     } else if (cat === 'EMPLOI') {
       setPriceUnit('mois');
-      setPrice(120000);
+      if (price === 0 || price === '') setPrice(120000);
       setTransactionType('EMPLOYER');
     } else if (cat === 'BRIC_A_BRAC') {
       setPriceUnit('total');
+      if (price === 0 || price === '') setPrice(25000);
       setTransactionType('VENTE');
     } else if (cat === 'COURS_A_DOMICILE') {
       setPriceUnit('mois');
-      setPrice(45000);
+      if (price === 0 || price === '') setPrice(45000);
       setTransactionType('VENTE');
     } else if (cat === 'NECROLOGIE') {
       setPriceUnit('total');
@@ -854,7 +859,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 familyContact: necroFamilyContact,
               }
             : undefined,
-        price: Number(price) || 0,
+        price: mainCategory === 'NECROLOGIE' ? 0 : (Number(price) || 0),
         priceUnit,
         isFeatured: isBoostFeatured,
         featuredUntil: isBoostFeatured ? new Date(now.getTime() + 7 * 86400000).toISOString() : undefined,
@@ -918,7 +923,12 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
       }
     } catch (e: any) {
       console.error(e);
-      alert("L'annonce n'a pas pu être enregistrée : " + (e?.message || 'Vérifiez votre connexion et réessayez.'));
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'error',
+        title: "Échec de l'enregistrement",
+        message: "L'annonce n'a pas pu être enregistrée : " + (e?.message || 'Vérifiez votre connexion et réessayez.'),
+      });
     } finally {
       setIsSubmitting(false);
       setUploadProgressText('');
@@ -1801,48 +1811,58 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 />
               </div>
 
-              {/* Price & Unit (Customized for EMPLOI / Métiers Domestiques) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    {mainCategory === 'EMPLOI' ? 'Salaire proposé / souhaité (en FCFA) *' : 'Prix (en FCFA) *'}
-                  </label>
-                  <input
-                    type="number"
-                    value={price}
-                    onChange={(e) => setPrice(Number(e.target.value))}
-                    placeholder={mainCategory === 'EMPLOI' ? 'Ex: 150000' : 'Ex: 250000'}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                    id="publish-price-input"
-                  />
-                </div>
+              {/* Price & Unit (Customized for EMPLOI / Métiers Domestiques, excluded for NECROLOGIE - Point 4) */}
+              {mainCategory !== 'NECROLOGIE' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      {mainCategory === 'EMPLOI' ? 'Salaire proposé / souhaité (en FCFA) *' : 'Prix (en FCFA) *'}
+                    </label>
+                    <input
+                      type="number"
+                      value={price === '' ? '' : price}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '') {
+                          setPrice('');
+                        } else {
+                          const parsed = Number(val);
+                          setPrice(isNaN(parsed) ? '' : parsed);
+                        }
+                      }}
+                      placeholder={mainCategory === 'EMPLOI' ? 'Ex: 150000' : 'Ex: 250000'}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                      id="publish-price-input"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    {mainCategory === 'EMPLOI' ? 'Périodicité du salaire *' : 'Unité de prix'}
-                  </label>
-                  <select
-                    value={priceUnit}
-                    onChange={(e) => setPriceUnit(e.target.value as any)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                  >
-                    {mainCategory === 'EMPLOI' ? (
-                      <>
-                        <option value="mois">Mensuelle (par mois)</option>
-                        <option value="jour">Journalière (par jour)</option>
-                        <option value="trimestre">Trimestrielle (par trimestre)</option>
-                        <option value="an">Annuelle (par an)</option>
-                      </>
-                    ) : (
-                      <>
-                        <option value="total">Prix total (Achat définitif)</option>
-                        <option value="mois">Par mois (Location mensuelle)</option>
-                        <option value="jour">Par jour (Location journalière)</option>
-                      </>
-                    )}
-                  </select>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      {mainCategory === 'EMPLOI' ? 'Périodicité du salaire *' : 'Unité de prix'}
+                    </label>
+                    <select
+                      value={priceUnit}
+                      onChange={(e) => setPriceUnit(e.target.value as any)}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {mainCategory === 'EMPLOI' ? (
+                        <>
+                          <option value="mois">Mensuelle (par mois)</option>
+                          <option value="jour">Journalière (par jour)</option>
+                          <option value="trimestre">Trimestrielle (par trimestre)</option>
+                          <option value="an">Annuelle (par an)</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="total">Prix total (Achat définitif)</option>
+                          <option value="mois">Par mois (Location mensuelle)</option>
+                          <option value="jour">Par jour (Location journalière)</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Section C: Mandatory detailed description with min 50 and max chars */}
               <div>
@@ -2282,7 +2302,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       {(isOwnerVerified || isExempt) && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-black bg-emerald-600/90 text-white px-2 py-0.5 rounded-md border border-emerald-400/50 shadow-xs">
                           <ShieldCheck className="w-3 h-3 text-emerald-200" />
-                          <span>Vendeur Vérifié</span>
+                          <span>Annonceur Vérifié</span>
                         </span>
                       )}
                     </div>
@@ -2292,12 +2312,18 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     </h4>
 
                     <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300">
-                      <div className="flex items-center gap-1 text-emerald-400 font-black">
-                        <span>{formatFCFA(Number(price) || 0)}</span>
-                        {priceUnit !== 'total' && (
-                          <span className="text-[11px] font-normal text-emerald-200">/ {priceUnit}</span>
-                        )}
-                      </div>
+                      {mainCategory !== 'NECROLOGIE' ? (
+                        <div className="flex items-center gap-1 text-emerald-400 font-black">
+                          <span>{formatFCFA(Number(price) || 0)}</span>
+                          {priceUnit !== 'total' && (
+                            <span className="text-[11px] font-normal text-emerald-200">/ {priceUnit}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-slate-300 font-bold text-xs bg-slate-800 px-2 py-0.5 rounded">
+                          Nécrologie • Avis d'obsèques
+                        </div>
+                      )}
                       <div className="flex items-center gap-1 text-slate-300 text-[11px]">
                         <MapPin className="w-3.5 h-3.5 text-red-400 shrink-0" />
                         <span className="truncate">{province} • {city} • <strong className="text-amber-300 font-bold">{neighborhood || 'Non précisé'}</strong></span>
@@ -2741,6 +2767,32 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   setMediaError(null);
                   setStep(2);
                 } else if (step === 2) {
+                  // Price validation (Point 4: cannot be empty or 0, except for NECROLOGIE)
+                  if (mainCategory !== 'NECROLOGIE') {
+                    if (price === '' || price === null || price === undefined || String(price).trim() === '') {
+                      setMediaError(
+                        mainCategory === 'EMPLOI'
+                          ? 'Veuillez renseigner le montant du salaire proposé ou souhaité.'
+                          : 'Le prix de votre annonce est obligatoire. Veuillez renseigner le montant en FCFA.'
+                      );
+                      const el = document.getElementById('publish-price-input');
+                      if (el) el.focus();
+                      return;
+                    }
+
+                    const numPrice = Number(price);
+                    if (isNaN(numPrice) || numPrice <= 0) {
+                      setMediaError(
+                        mainCategory === 'EMPLOI'
+                          ? 'Le salaire proposé ou souhaité ne peut pas être égal à 0 FCFA. Veuillez indiquer un montant supérieur à 0.'
+                          : 'Le prix de votre annonce ne peut pas être égal à 0 FCFA. Veuillez indiquer un montant supérieur à 0.'
+                      );
+                      const el = document.getElementById('publish-price-input');
+                      if (el) el.focus();
+                      return;
+                    }
+                  }
+
                   const trimmedDesc = description.trim();
                   if (trimmedDesc.length < 50) {
                     setMediaError(
@@ -2799,6 +2851,12 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
         {/* CGU & Disclaimer Modal (Point 2) */}
         <CguModal isOpen={showCguModal} onClose={() => setShowCguModal(false)} />
+
+        {/* Reusable App Alert Modal (Point 1) */}
+        <AppAlertModal
+          config={alertModalConfig}
+          onClose={() => setAlertModalConfig(null)}
+        />
 
         {/* Loading / Uploading Overlay during secure media transfer */}
         {isSubmitting && (

@@ -56,6 +56,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment, writeBatch } from 'firebase/firestore';
 import { auth, db } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
+import { isTestAd } from './components/AdminPanel';
 import AdminApp from './AdminApp';
 
 function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
@@ -81,6 +82,22 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
         (snap) => {
           if (snap.exists()) {
             const data = snap.data();
+            const existingFavs: string[] = data.favoriteAdIds || [];
+            try {
+              const guestStored = localStorage.getItem('bizbooster_guest_favorites');
+              if (guestStored) {
+                const guestFavs: string[] = JSON.parse(guestStored);
+                if (Array.isArray(guestFavs) && guestFavs.length > 0) {
+                  const merged = Array.from(new Set([...existingFavs, ...guestFavs]));
+                  if (merged.length !== existingFavs.length) {
+                    updateDoc(doc(db, 'users', fbUser.uid), { favoriteAdIds: merged });
+                  }
+                  localStorage.removeItem('bizbooster_guest_favorites');
+                }
+              }
+            } catch {
+              // ignore
+            }
             setCurrentUser({
               id: fbUser.uid,
               ...data,
@@ -127,6 +144,74 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     );
   }, [currentUser?.id]);
 
+  // Point 3: Test ads visibility state (synced with Firestore system_config and localStorage, defaults to OFF/false)
+  const [showTestAds, setShowTestAds] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('bizbooster_show_test_ads');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return false;
+  });
+
+  const [registeredUserIds, setRegisteredUserIds] = useState<string[]>([]);
+  const [registeredPhones, setRegisteredPhones] = useState<string[]>([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'settings', 'system_config'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (typeof data.showTestAds === 'boolean') {
+            setShowTestAds(data.showTestAds);
+            try {
+              localStorage.setItem('bizbooster_show_test_ads', String(data.showTestAds));
+            } catch {}
+          }
+          if (Array.isArray(data.registeredUserIds)) {
+            setRegisteredUserIds(data.registeredUserIds);
+          }
+          if (Array.isArray(data.registeredPhones)) {
+            setRegisteredPhones(data.registeredPhones);
+          }
+        }
+      },
+      (err) => console.warn('system_config listener error:', err)
+    );
+
+    const handleLocalToggle = (e: any) => {
+      if (typeof e?.detail?.showTestAds === 'boolean') {
+        setShowTestAds(e.detail.showTestAds);
+      }
+    };
+    window.addEventListener('bizbooster_test_ads_toggled', handleLocalToggle);
+
+    return () => {
+      unsub();
+      window.removeEventListener('bizbooster_test_ads_toggled', handleLocalToggle);
+    };
+  }, []);
+
+  // Check whether an ad belongs to a registered advertiser from the Admin Directory
+  const isAdFromRegisteredAdvertiser = (ad: Ad): boolean => {
+    if (ad.isTest) return false;
+    // An ad must have a registered userId
+    if (!ad.userId || ad.userId.startsWith('demo-') || ad.userId.startsWith('test-')) {
+      return false;
+    }
+    // If registeredUserIds is available from system_config, check direct membership
+    if (registeredUserIds.length > 0) {
+      if (registeredUserIds.includes(ad.userId)) return true;
+      const cleanPhone = (ad.contactPhone || '').replace(/\D/g, '');
+      if (cleanPhone && registeredPhones.length > 0 && registeredPhones.some((p) => p.includes(cleanPhone) || cleanPhone.includes(p))) {
+        return true;
+      }
+      return false;
+    }
+    // Fallback if list not yet loaded
+    return !isTestAd(ad);
+  };
+
   // Local views overrides for instant UI updates & non-duplicated views tracking
   const [localViewOverrides, setLocalViewOverrides] = useState<Record<string, number>>({});
 
@@ -135,14 +220,17 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     const map = new Map<string, Ad>();
     const now = Date.now();
 
-    // 1. Initial test ads (kept displayed on the site for demonstration & test - strictly active and non-expired)
-    INITIAL_ADS
-      .filter((a) => a.status === 'ACTIVE' && new Date(a.expiresAt).getTime() > now)
-      .forEach((a) => map.set(a.id, a));
+    // 1. Initial test ads (Point 3: strictly active, non-expired, and ONLY if showTestAds is ON)
+    if (showTestAds) {
+      INITIAL_ADS
+        .filter((a) => a.status === 'ACTIVE' && new Date(a.expiresAt).getTime() > now)
+        .forEach((a) => map.set(a.id, a));
+    }
 
-    // 2. Real-time active public ads from Firestore
+    // 2. Real-time active public ads from Firestore (filtered if test ads are disabled)
     publicAds
       .filter((a) => a.status === 'ACTIVE' && new Date(a.expiresAt).getTime() > now)
+      .filter((a) => showTestAds || isAdFromRegisteredAdvertiser(a))
       .forEach((a) => map.set(a.id, a));
 
     // 3. Current user's own ads from Firestore (even if PENDING_REVIEW or EXPIRED, for dashboard management)
@@ -172,7 +260,7 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       }
       return currentAd;
     });
-  }, [publicAds, myAds, localViewOverrides, currentUser]);
+  }, [publicAds, myAds, localViewOverrides, currentUser, showTestAds, registeredUserIds, registeredPhones]);
 
   // Frontend Tab State: 'catalog' | 'user-dashboard'
   const [frontendTab, setFrontendTab] = useState<'catalog' | 'user-dashboard'>('catalog');
@@ -227,6 +315,99 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
   const [adPendingEditConfirm, setAdPendingEditConfirm] = useState<Ad | null>(null);
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
 
+  // Favorites management (Requirement 4)
+  const [guestFavoriteIds, setGuestFavoriteIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('bizbooster_guest_favorites');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const activeFavoriteIds = useMemo(() => {
+    if (currentUser) {
+      return currentUser.favoriteAdIds || [];
+    }
+    return guestFavoriteIds;
+  }, [currentUser, guestFavoriteIds]);
+
+  const handleToggleFavorite = async (adId: string) => {
+    const isFav = activeFavoriteIds.includes(adId);
+    const newFavs = isFav
+      ? activeFavoriteIds.filter((id) => id !== adId)
+      : [...activeFavoriteIds, adId];
+
+    if (currentUser) {
+      const updatedUser: UserProfile = {
+        ...currentUser,
+        favoriteAdIds: newFavs,
+      };
+      setCurrentUser(updatedUser);
+      showToast(isFav ? 'Annonce retirée de vos favoris' : 'Annonce ajoutée à vos favoris ❤️');
+      try {
+        await updateDoc(doc(db, 'users', currentUser.id), {
+          favoriteAdIds: newFavs,
+        });
+      } catch (err) {
+        console.error('Error saving favorite to Firestore:', err);
+      }
+    } else {
+      setGuestFavoriteIds(newFavs);
+      try {
+        localStorage.setItem('bizbooster_guest_favorites', JSON.stringify(newFavs));
+      } catch (err) {
+        console.error('Error saving guest favorite:', err);
+      }
+      if (!isFav) {
+        showToast('Annonce ajoutée à vos favoris ❤️ (Connectez-vous pour voir votre liste dans votre espace)');
+      } else {
+        showToast('Annonce retirée de vos favoris');
+      }
+    }
+  };
+
+  // Deep-linking for shared ad (Requirement 5: ?ad=... or #ad-...)
+  useEffect(() => {
+    if (ads.length === 0) return;
+
+    const checkUrlForAd = () => {
+      try {
+        const searchParams = new URLSearchParams(window.location.search);
+        const adIdFromQuery = searchParams.get('ad');
+        const hash = window.location.hash;
+        const adIdFromHash = hash.startsWith('#ad-') ? hash.slice(1) : (hash.startsWith('#') ? hash.slice(1) : null);
+        const targetAdId = adIdFromQuery || adIdFromHash;
+
+        if (targetAdId) {
+          const matchedAd = ads.find((a) => a.id === targetAdId);
+          if (matchedAd) {
+            setSelectedAdForDetail(matchedAd);
+            setFrontendTab('catalog');
+          }
+        }
+      } catch (err) {
+        console.error('Error parsing shared ad URL:', err);
+      }
+    };
+
+    checkUrlForAd();
+    window.addEventListener('popstate', checkUrlForAd);
+    return () => window.removeEventListener('popstate', checkUrlForAd);
+  }, [ads]);
+
+  const handleCloseAdDetail = () => {
+    setSelectedAdForDetail(null);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('ad');
+      const cleanUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+      window.history.replaceState(null, '', cleanUrl);
+    } catch {
+      // ignore
+    }
+  };
+
   // Computed selected ad with freshest views count
   const activeSelectedAd = useMemo(() => {
     if (!selectedAdForDetail) return null;
@@ -244,11 +425,16 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     }, 4500);
   };
 
-  // Total active (publicly visible) ads count (strictly active & non-expired)
+  // Total active (publicly visible) ads count (strictly active & non-expired & excluding test ads if OFF)
   const activeAdsCount = useMemo(() => {
     const now = Date.now();
-    return ads.filter((ad) => ad.status === 'ACTIVE' && new Date(ad.expiresAt).getTime() > now).length;
-  }, [ads]);
+    return ads.filter(
+      (ad) =>
+        ad.status === 'ACTIVE' &&
+        new Date(ad.expiresAt).getTime() > now &&
+        (showTestAds || isAdFromRegisteredAdvertiser(ad))
+    ).length;
+  }, [ads, showTestAds, registeredUserIds, registeredPhones]);
 
   // Category counts calculation for ACTIVE and non-expired ads only (general visitors)
   const categoryCounts = useMemo(() => {
@@ -263,7 +449,11 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       NECROLOGIE: 0,
     };
     ads.forEach((ad) => {
-      if (ad.status === 'ACTIVE' && new Date(ad.expiresAt).getTime() > now) {
+      if (
+        ad.status === 'ACTIVE' &&
+        new Date(ad.expiresAt).getTime() > now &&
+        (showTestAds || isAdFromRegisteredAdvertiser(ad))
+      ) {
         counts.ALL++;
         if (counts[ad.mainCategory] !== undefined) {
           counts[ad.mainCategory]++;
@@ -271,7 +461,7 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       }
     });
     return counts;
-  }, [ads]);
+  }, [ads, showTestAds, registeredUserIds, registeredPhones]);
 
   // Feed Sort Mode: 'RECOMMENDED' (personalisation selon historique & affinités) ou 'RECENT' (plus récentes en premier)
   const [feedSortMode, setFeedSortMode] = useState<'RECOMMENDED' | 'RECENT'>('RECOMMENDED');
@@ -280,6 +470,11 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
   const filteredAds = useMemo(() => {
     const now = Date.now();
     const list = ads.filter((ad) => {
+      // Point 3: When test ads are OFF (showTestAds === false), strictly hide any ad whose advertiser is not in the directory
+      if (!showTestAds && !isAdFromRegisteredAdvertiser(ad)) {
+        return false;
+      }
+
       // 0. Only show ACTIVE ads to public viewers!
       if (ad.status !== 'ACTIVE') {
         return false;
@@ -360,14 +555,29 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
       // 6. Specific Cours à Domicile filters (Point 9)
       if (activeCategory === 'COURS_A_DOMICILE') {
-        if (tutoringKind !== 'ALL' && ad.tutoringKind && ad.tutoringKind !== tutoringKind) {
-          return false;
+        const adKind = ad.tutoringData?.kind || (ad as any).tutoringKind;
+        if (tutoringKind !== 'ALL') {
+          if (!adKind || adKind !== tutoringKind) {
+            return false;
+          }
         }
-        if (tutoringSubject !== 'ALL' && ad.tutoringSubject && ad.tutoringSubject !== tutoringSubject) {
-          return false;
+        const adSubject = ad.tutoringData?.subject || (ad as any).tutoringSubject;
+        if (tutoringSubject !== 'ALL') {
+          if (!adSubject) return false;
+          const normAdSub = adSubject.toLowerCase();
+          const normFilterSub = tutoringSubject.toLowerCase();
+          if (normAdSub !== normFilterSub && !normAdSub.includes(normFilterSub) && !normFilterSub.includes(normAdSub)) {
+            return false;
+          }
         }
-        if (tutoringLevel !== 'ALL' && ad.tutoringLevel && ad.tutoringLevel !== tutoringLevel) {
-          return false;
+        const adLevel = ad.tutoringData?.level || (ad as any).tutoringLevel;
+        if (tutoringLevel !== 'ALL' && tutoringLevel !== 'Tous niveaux') {
+          if (!adLevel) return false;
+          const normAdLevel = adLevel.toLowerCase();
+          const normFilterLevel = tutoringLevel.toLowerCase();
+          if (normAdLevel !== normFilterLevel && !normAdLevel.includes(normFilterLevel) && !normFilterLevel.includes(normAdLevel)) {
+            return false;
+          }
         }
         if (tutoringProvince && ad.location?.province?.toLowerCase() !== tutoringProvince.toLowerCase()) {
           return false;
@@ -379,8 +589,14 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
       // 7. Specific Nécrologie filters (Point 8)
       if (activeCategory === 'NECROLOGIE') {
-        if (necroMinistry !== 'ALL' && ad.necroMinistry && ad.necroMinistry !== necroMinistry) {
-          return false;
+        const adMinistry = ad.necrologieData?.ministry || (ad as any).necroMinistry;
+        if (necroMinistry !== 'ALL') {
+          if (!adMinistry) return false;
+          const normAdMin = adMinistry.toLowerCase();
+          const normFilterMin = necroMinistry.toLowerCase();
+          if (normAdMin !== normFilterMin && !normAdMin.includes(normFilterMin) && !normFilterMin.includes(normAdMin)) {
+            return false;
+          }
         }
         if (necroProvince && ad.location?.province?.toLowerCase() !== necroProvince.toLowerCase()) {
           return false;
@@ -392,16 +608,23 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
       // 8. Specific Emploi filters (Point 8: Offres vs Demandes)
       if (activeCategory === 'EMPLOI') {
+        const isDemand = ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI';
         if (emploiJobKind !== 'ALL') {
-          if (emploiJobKind === 'OFFRE_EMPLOI' && (ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI')) {
+          if (emploiJobKind === 'OFFRE_EMPLOI' && isDemand) {
             return false;
           }
-          if (emploiJobKind === 'DEMANDE_EMPLOI' && (ad.jobKind === 'OFFRE_EMPLOI' || (ad.transactionType !== 'CHERCHE_EMPLOI' && !ad.jobKind))) {
+          if (emploiJobKind === 'DEMANDE_EMPLOI' && !isDemand) {
             return false;
           }
         }
-        if (emploiJobType !== 'ALL' && ad.domesticJobType?.toLowerCase() !== emploiJobType.toLowerCase()) {
-          return false;
+        const adJobType = ad.domesticJobType || (ad as any).jobType;
+        if (emploiJobType !== 'ALL') {
+          if (!adJobType) return false;
+          const normAdJob = adJobType.toLowerCase();
+          const normFilterJob = emploiJobType.toLowerCase();
+          if (normAdJob !== normFilterJob && !normAdJob.includes(normFilterJob) && !normFilterJob.includes(normAdJob)) {
+            return false;
+          }
         }
         if (emploiProvince && ad.location?.province?.toLowerCase() !== emploiProvince.toLowerCase()) {
           return false;
@@ -528,9 +751,16 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     }
   };
 
-  // Handle selecting an ad detail with view counting
+  // Handle selecting an ad detail with view counting and deep-link URL sync
   const handleSelectAdDetail = async (ad: Ad) => {
     setSelectedAdForDetail(ad);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('ad', ad.id);
+      window.history.replaceState(null, '', url.toString());
+    } catch {
+      // ignore
+    }
 
     const sessionKey = `bizbooster_view_${ad.id}`;
     if (!sessionStorage.getItem(sessionKey)) {
@@ -713,6 +943,20 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     setEmploiCity('');
   };
 
+  const handleResetTutoringFilters = () => {
+    setTutoringKind('ALL');
+    setTutoringSubject('ALL');
+    setTutoringLevel('ALL');
+    setTutoringProvince('');
+    setTutoringCity('');
+  };
+
+  const handleResetNecroFilters = () => {
+    setNecroMinistry('ALL');
+    setNecroProvince('');
+    setNecroCity('');
+  };
+
   const handleSelectCategory = (category: MainCategory | 'ALL') => {
     setActiveCategory(category);
     if (category !== 'ALL') {
@@ -721,6 +965,8 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     handleResetImmoFilters();
     handleResetVehiclesFilters();
     handleResetEmploiFilters();
+    handleResetTutoringFilters();
+    handleResetNecroFilters();
   };
 
   // Update user profile in Firestore (for subscriptions, ad packs, free boosts)
@@ -1026,6 +1272,8 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
               <EmploiFilterBar
                 selectedJobKind={emploiJobKind}
                 onChangeJobKind={setEmploiJobKind}
+                selectedKind={emploiJobKind}
+                onChangeKind={setEmploiJobKind}
                 selectedJobType={emploiJobType}
                 onChangeJobType={setEmploiJobType}
                 selectedProvince={emploiProvince}
@@ -1122,6 +1370,8 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
                       key={ad.id}
                       ad={ad}
                       isOwner={isOwner}
+                      isFavorite={activeFavoriteIds.includes(ad.id)}
+                      onToggleFavorite={handleToggleFavorite}
                       onSelectAd={(selected) => handleSelectAdDetail(selected)}
                       onOpenExtendModal={isOwner ? () => handleTriggerExtend(ad) : undefined}
                       onEditAd={isOwner ? () => handleTriggerEdit(ad) : undefined}
@@ -1174,6 +1424,7 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
               onBoostAd={handleBoostAd}
               onUpdateUser={handleUpdateUserProfile}
               onSwitchToAdmin={onSwitchToAdmin}
+              onToggleFavorite={handleToggleFavorite}
             />
           ) : (
             <div className="bg-white rounded-3xl p-8 sm:p-12 text-center border border-slate-200 shadow-sm max-w-lg mx-auto space-y-4">
@@ -1227,13 +1478,6 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
             <span className="text-emerald-700">✓ Vente & Location</span>
             <span className="text-red-600">✓ Airtel Money Gabon</span>
             <span className="text-blue-600">✓ Moov Money Gabon</span>
-            <button
-              type="button"
-              onClick={onSwitchToAdmin}
-              className="text-slate-500 hover:text-amber-700 underline font-medium cursor-pointer transition-colors"
-            >
-              🔒 Cockpit Back-Office Modération
-            </button>
           </div>
         </div>
       </footer>
@@ -1250,10 +1494,12 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       {/* 2. Detail Modal */}
       <AdDetailModal
         ad={activeSelectedAd}
-        onClose={() => setSelectedAdForDetail(null)}
+        onClose={handleCloseAdDetail}
         onOpenExtendModal={(ad) => handleTriggerExtend(ad)}
         onEditAd={(ad) => handleTriggerEdit(ad)}
         currentUser={currentUser}
+        isFavorite={activeSelectedAd ? activeFavoriteIds.includes(activeSelectedAd.id) : false}
+        onToggleFavorite={handleToggleFavorite}
       />
 
       {/* 3. Full Publishing & Mobile Payment Wizard */}
@@ -1399,41 +1645,30 @@ export default function App() {
       if (window.location.pathname.startsWith('/admin')) {
         return 'admin';
       }
-      try {
-        const saved = localStorage.getItem('bizbooster_active_panel');
-        if (saved === 'admin') {
-          return 'admin';
-        }
-      } catch (e) {
-        // ignore
-      }
     }
     return 'frontend';
   });
 
   useEffect(() => {
     const handlePopState = () => {
+      // Point 5: Prevent the browser back button on frontend from routing to /admin
       if (window.location.pathname.startsWith('/admin')) {
+        if (currentView === 'frontend') {
+          // If already on frontend, replace state to root and stay on frontend
+          window.history.replaceState(null, '', '/');
+          return;
+        }
         setCurrentView('admin');
-        try {
-          localStorage.setItem('bizbooster_active_panel', 'admin');
-        } catch (e) {}
       } else {
         setCurrentView('frontend');
-        try {
-          localStorage.setItem('bizbooster_active_panel', 'frontend');
-        } catch (e) {}
       }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [currentView]);
 
   const switchToAdmin = () => {
     setCurrentView('admin');
-    try {
-      localStorage.setItem('bizbooster_active_panel', 'admin');
-    } catch (e) {}
     if (!window.location.pathname.startsWith('/admin')) {
       window.history.pushState(null, '', '/admin');
     }
@@ -1441,12 +1676,8 @@ export default function App() {
 
   const switchToFrontend = () => {
     setCurrentView('frontend');
-    try {
-      localStorage.setItem('bizbooster_active_panel', 'frontend');
-    } catch (e) {}
-    if (window.location.pathname.startsWith('/admin')) {
-      window.history.pushState(null, '', '/');
-    }
+    // Point 5: Use replaceState so /admin is NOT kept in browser history behind frontend
+    window.history.replaceState(null, '', '/');
   };
 
   return currentView === 'admin' ? (

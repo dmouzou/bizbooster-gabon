@@ -204,10 +204,18 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       setErrorMsg('La description de l\'annonce est obligatoire.');
       return;
     }
-    const numPrice = Number(price);
-    if (isNaN(numPrice) || numPrice < 0) {
-      setErrorMsg('Veuillez renseigner un prix valide en FCFA.');
-      return;
+    let numPrice = Number(price);
+    if (mainCategory === 'NECROLOGIE') {
+      numPrice = 0;
+    } else {
+      if (price === '' || String(price).trim() === '') {
+        setErrorMsg('Le prix de votre annonce est obligatoire.');
+        return;
+      }
+      if (isNaN(numPrice) || numPrice <= 0) {
+        setErrorMsg('Le prix en FCFA ne peut pas être égal à 0. Veuillez renseigner un montant supérieur à 0.');
+        return;
+      }
     }
     if (images.length === 0) {
       setErrorMsg('Au moins une photo est requise pour illustrer votre annonce.');
@@ -622,48 +630,50 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  {mainCategory === 'EMPLOI' ? 'Salaire en Francs CFA (XAF) :' : 'Prix en Francs CFA (XAF) :'}
-                </label>
-                <input
-                  type="number"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  placeholder={mainCategory === 'EMPLOI' ? 'Ex: 150000' : 'Ex: 250000'}
-                  className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-emerald-800 focus:outline-emerald-500"
-                  required
-                />
-              </div>
+            {mainCategory !== 'NECROLOGIE' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    {mainCategory === 'EMPLOI' ? 'Salaire en Francs CFA (XAF) :' : 'Prix en Francs CFA (XAF) :'}
+                  </label>
+                  <input
+                    type="number"
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    placeholder={mainCategory === 'EMPLOI' ? 'Ex: 150000' : 'Ex: 250000'}
+                    className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-emerald-800 focus:outline-emerald-500"
+                    required
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  {mainCategory === 'EMPLOI' ? 'Périodicité du salaire :' : 'Unité du prix :'}
-                </label>
-                <select
-                  value={priceUnit}
-                  onChange={(e) => setPriceUnit(e.target.value as any)}
-                  className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-emerald-500"
-                >
-                  {mainCategory === 'EMPLOI' ? (
-                    <>
-                      <option value="mois">Mensuelle (par mois)</option>
-                      <option value="jour">Journalière (par jour)</option>
-                      <option value="trimestre">Trimestrielle (par trimestre)</option>
-                      <option value="an">Annuelle (par an)</option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="total">Prix Total (Achat / Vente)</option>
-                      <option value="mois">Par Mois (Location)</option>
-                      <option value="jour">Par Jour</option>
-                      <option value="heure">Par Heure</option>
-                    </>
-                  )}
-                </select>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    {mainCategory === 'EMPLOI' ? 'Périodicité du salaire :' : 'Unité du prix :'}
+                  </label>
+                  <select
+                    value={priceUnit}
+                    onChange={(e) => setPriceUnit(e.target.value as any)}
+                    className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-emerald-500"
+                  >
+                    {mainCategory === 'EMPLOI' ? (
+                      <>
+                        <option value="mois">Mensuelle (par mois)</option>
+                        <option value="jour">Journalière (par jour)</option>
+                        <option value="trimestre">Trimestrielle (par trimestre)</option>
+                        <option value="an">Annuelle (par an)</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="total">Prix Total (Achat / Vente)</option>
+                        <option value="mois">Par Mois (Location)</option>
+                        <option value="jour">Par Jour</option>
+                        <option value="heure">Par Heure</option>
+                      </>
+                    )}
+                  </select>
+                </div>
               </div>
-            </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">

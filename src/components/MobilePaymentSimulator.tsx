@@ -32,36 +32,63 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
 }) => {
   const formattedInitial = to8Digits(initialPhone);
   const initialOperator: PaymentOperator =
-    formattedInitial.startsWith('65') || formattedInitial.startsWith('66') || formattedInitial.startsWith('62')
+    formattedInitial.startsWith('65') ||
+    formattedInitial.startsWith('66') ||
+    formattedInitial.startsWith('62') ||
+    formattedInitial.startsWith('60')
       ? 'MOOV_MONEY'
       : 'AIRTEL_MONEY';
 
   const [operator, setOperator] = useState<PaymentOperator>(initialOperator);
-  const [mobileNumber, setMobileNumber] = useState(
-    formattedInitial || (initialOperator === 'AIRTEL_MONEY' ? '77 45 20 18' : '65 12 89 04')
-  );
+  const [mobileNumber, setMobileNumber] = useState(formattedInitial || '');
+  const [phoneError, setPhoneError] = useState('');
   const [step, setStep] = useState<'FORM' | 'PUSH_SENT' | 'PIN_ENTRY' | 'PROCESSING' | 'SUCCESS'>('FORM');
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState('');
   const [countdown, setCountdown] = useState(45);
 
-  // Switch default phone placeholder based on Gabon operator (8 digits)
+  const handlePhoneChange = (val: string) => {
+    setMobileNumber(val);
+    setPhoneError('');
+    // Auto-detect Gabon telecom operator if user types recognizable prefix
+    const clean = val.replace(/[^0-9]/g, '');
+    let checkDigits = clean;
+    if (checkDigits.startsWith('241')) checkDigits = checkDigits.slice(3);
+    if (checkDigits.startsWith('0')) checkDigits = checkDigits.slice(1);
+    if (
+      checkDigits.startsWith('60') ||
+      checkDigits.startsWith('62') ||
+      checkDigits.startsWith('65') ||
+      checkDigits.startsWith('66')
+    ) {
+      setOperator('MOOV_MONEY');
+    } else if (
+      checkDigits.startsWith('74') ||
+      checkDigits.startsWith('77') ||
+      checkDigits.startsWith('76')
+    ) {
+      setOperator('AIRTEL_MONEY');
+    }
+  };
+
   const handleOperatorChange = (op: PaymentOperator) => {
     setOperator(op);
-    const clean = mobileNumber.replace(/[^0-9]/g, '');
-    if (op === 'AIRTEL_MONEY' && (clean.startsWith('65') || clean.startsWith('66') || clean.startsWith('62'))) {
-      setMobileNumber('77 45 20 18');
-    } else if (op === 'MOOV_MONEY' && (clean.startsWith('74') || clean.startsWith('77') || clean.startsWith('76'))) {
-      setMobileNumber('65 12 89 04');
-    }
+    setPhoneError('');
   };
 
   // Trigger simulated push
   const handleInitiatePayment = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!mobileNumber || mobileNumber.length < 8) {
+    const clean = mobileNumber.replace(/[^0-9]/g, '');
+    let digits = clean;
+    if (digits.startsWith('241')) digits = digits.slice(3);
+    if (digits.startsWith('0')) digits = digits.slice(1);
+
+    if (!digits || digits.length < 8) {
+      setPhoneError('Veuillez entrer un numéro de téléphone gabonais valide (8 chiffres).');
       return;
     }
+    setPhoneError('');
     setStep('PUSH_SENT');
 
     // Simulate phone receiving the USSD push after 1.5 seconds
@@ -134,6 +161,17 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
 
       {step === 'FORM' && (
         <form onSubmit={handleInitiatePayment} className="space-y-4">
+          {/* Information box: Explicitly informing the user that this number will be charged */}
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3.5 text-xs text-amber-200 flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-bold text-amber-300">Numéro de prélèvement Mobile Money</p>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                Le numéro que vous entrerez ci-dessous est <strong>celui avec lequel le paiement s'effectuera</strong>. Assurez-vous d'avoir ce téléphone à portée de main pour valider l'invite de débit USSD.
+              </p>
+            </div>
+          </div>
+
           {/* Operator Selector: Airtel vs Moov */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-2">
@@ -144,7 +182,7 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
               <button
                 type="button"
                 onClick={() => handleOperatorChange('AIRTEL_MONEY')}
-                className={`p-3 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center ${
+                className={`p-3 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center cursor-pointer ${
                   operator === 'AIRTEL_MONEY'
                     ? 'bg-red-950/70 border-red-500 ring-2 ring-red-500/50 text-white'
                     : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-600'
@@ -154,14 +192,14 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
                   AM
                 </div>
                 <span className="font-bold text-xs">Airtel Money</span>
-                <span className="text-[10px] text-red-300">74 / 77 / 76</span>
+                <span className="text-[10px] text-red-300">074 / 077 / 076</span>
               </button>
 
               {/* Moov Money */}
               <button
                 type="button"
                 onClick={() => handleOperatorChange('MOOV_MONEY')}
-                className={`p-3 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center ${
+                className={`p-3 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center cursor-pointer ${
                   operator === 'MOOV_MONEY'
                     ? 'bg-blue-950/70 border-blue-500 ring-2 ring-blue-500/50 text-white'
                     : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-600'
@@ -171,7 +209,7 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
                   MM
                 </div>
                 <span className="font-bold text-xs">Moov Money</span>
-                <span className="text-[10px] text-blue-300">65 / 66 / 62</span>
+                <span className="text-[10px] text-blue-300">060 / 062 / 065 / 066</span>
               </button>
             </div>
           </div>
@@ -179,46 +217,26 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
           {/* Phone Input */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-              Numéro de téléphone Gabon ({operator === 'AIRTEL_MONEY' ? 'Airtel' : 'Moov'} • 8 chiffres)
+              Numéro de téléphone payeur ({operator === 'AIRTEL_MONEY' ? 'Airtel Money' : 'Moov Money'})
             </label>
             <div className="relative">
               <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
                 +241
               </span>
               <input
-                type="text"
+                type="tel"
                 value={mobileNumber}
-                onChange={(e) => setMobileNumber(e.target.value)}
-                placeholder={operator === 'AIRTEL_MONEY' ? '77 45 20 18' : '65 12 89 04'}
+                onChange={(e) => handlePhoneChange(e.target.value)}
+                placeholder={operator === 'AIRTEL_MONEY' ? 'Ex: 077 00 00 00 ou 77 00 00 00' : 'Ex: 066 00 00 00 ou 66 00 00 00'}
                 required
                 className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-14 pr-3.5 py-2.5 text-sm font-mono font-bold text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
               />
             </div>
-            <div className="flex flex-wrap items-center gap-2 mt-2">
-              <span className="text-[11px] text-slate-400">Numéros test (8 chiffres) :</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setOperator('AIRTEL_MONEY');
-                  setMobileNumber('77 45 20 18');
-                }}
-                className="text-[10px] font-bold bg-red-950/80 hover:bg-red-900 border border-red-500/50 text-red-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
-              >
-                Airtel : 77 45 20 18
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setOperator('MOOV_MONEY');
-                  setMobileNumber('65 12 89 04');
-                }}
-                className="text-[10px] font-bold bg-blue-950/80 hover:bg-blue-900 border border-blue-500/50 text-blue-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
-              >
-                Moov : 65 12 89 04
-              </button>
-            </div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Une notification USSD push sera envoyée sur ce téléphone pour confirmation.
+            {phoneError && (
+              <p className="text-xs text-red-400 font-medium mt-1.5">{phoneError}</p>
+            )}
+            <p className="text-[11px] text-slate-400 mt-1.5">
+              Entrez le numéro du compte avec lequel vous allez régler. Une notification push USSD sera envoyée sur ce téléphone.
             </p>
           </div>
 
@@ -227,13 +245,13 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
             <button
               type="button"
               onClick={onCancel}
-              className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-2.5 rounded-xl transition-colors"
+              className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-2.5 rounded-xl transition-colors cursor-pointer"
             >
               Annuler
             </button>
             <button
               type="submit"
-              className={`flex-2 flex items-center justify-center gap-2 text-white text-xs font-black py-2.5 rounded-xl shadow-lg transition-all ${
+              className={`flex-2 flex items-center justify-center gap-2 text-white text-xs font-black py-2.5 rounded-xl shadow-lg transition-all cursor-pointer ${
                 operator === 'AIRTEL_MONEY'
                   ? 'bg-red-600 hover:bg-red-700'
                   : 'bg-blue-600 hover:bg-blue-700'
@@ -284,7 +302,7 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
             </div>
 
             <div className="text-[11px] text-slate-400 mt-3">
-              Expire dans {countdown}s • Code de démo: tapez 4 chiffres quelconques (ex: 1234)
+              Expire dans {countdown}s • Saisissez votre code PIN secret à 4 chiffres pour confirmer le débit sécurisé.
             </div>
           </div>
 

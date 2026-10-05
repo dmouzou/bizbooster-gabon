@@ -36,6 +36,7 @@ import {
   Layers,
   AlertTriangle,
   PauseCircle,
+  Heart,
 } from 'lucide-react';
 import {
   RecaptchaVerifier,
@@ -52,6 +53,8 @@ import { GABON_PROVINCES } from '../data/gabonLocations';
 import { KycUploadModal } from './KycUploadModal';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
 import { SubscriptionUpgradeModal } from './SubscriptionUpgradeModal';
+import { AdCard } from './AdCard';
+import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
 
 const formatGabonPhone = (raw: string) => {
   let clean = raw.replace(/[^0-9]/g, '');
@@ -72,6 +75,7 @@ interface UserDashboardProps {
   onBoostAd?: (adId: string) => Promise<void>;
   onUpdateUser?: (updated: Partial<UserProfile>) => Promise<void>;
   onSwitchToAdmin?: () => void;
+  onToggleFavorite?: (adId: string) => void;
 }
 
 const TIER_ORDER: Record<SubscriptionTier, number> = {
@@ -178,8 +182,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onBoostAd,
   onUpdateUser,
   onSwitchToAdmin,
+  onToggleFavorite,
 }) => {
-  const [dashboardTab, setDashboardTab] = useState<'ADS' | 'SUBSCRIPTIONS' | 'PROFILE'>('ADS');
+  const [dashboardTab, setDashboardTab] = useState<'ADS' | 'FAVORITES' | 'SUBSCRIPTIONS' | 'PROFILE'>('ADS');
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'ACTIVE' | 'PENDING' | 'REJECTED' | 'SUSPENDED'>('ALL');
   const [isKycModalOpen, setIsKycModalOpen] = useState(false);
   const [previewDocModal, setPreviewDocModal] = useState<string | null>(null);
@@ -190,6 +195,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [showBoostPayment, setShowBoostPayment] = useState(false);
   const [boostOption, setBoostOption] = useState<'SINGLE' | 'PACK'>('SINGLE');
   const [selectedPackForBoost, setSelectedPackForBoost] = useState<(typeof BOOSTER_PACKS)[number] | null>(null);
+  const [showBoosterPacksModal, setShowBoosterPacksModal] = useState(false);
 
   // Profile update state (Requirement 3c)
   const [profileName, setProfileName] = useState(currentUser.name || '');
@@ -198,6 +204,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [profileNeighborhood, setProfileNeighborhood] = useState(currentUser.location?.neighborhood || '');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileSuccessMsg, setProfileSuccessMsg] = useState<string | null>(null);
+
+  // App Alert Modal State (Point 1: replaces native alert/confirm)
+  const [alertModalConfig, setAlertModalConfig] = useState<AlertModalConfig | null>(null);
+
+  const showAlert = (message: string, type: 'success' | 'error' | 'info' = 'info', title?: string) => {
+    setAlertModalConfig({
+      isOpen: true,
+      message,
+      type,
+      title,
+    });
+  };
 
   // Password reset flow state in Profile (Requirement 3c with OTP and 24h cooldown)
   const [pwdStep, setPwdStep] = useState<'IDLE' | 'OTP' | 'NEW_PWD'>('IDLE');
@@ -295,6 +313,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   // Filter ads strictly belonging to this user
   const myAds = ads.filter((ad) => isAdOwner(ad, currentUser));
+
+  // User favorite ads list
+  const favoriteAds = useMemo(() => {
+    const favIds = currentUser.favoriteAdIds || [];
+    return ads.filter((ad) => favIds.includes(ad.id));
+  }, [ads, currentUser.favoriteAdIds]);
 
   const activeCount = myAds.filter((a) => a.status === 'ACTIVE').length;
   const pendingCount = myAds.filter((a) => a.status === 'PENDING_REVIEW').length;
@@ -449,7 +473,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const handleBoostPurchaseSuccess = async () => {
     if (!adToBoost || !onBoostAd) return;
     if (!isAllowedToTransact) {
-      alert("Vérification d'identité obligatoire : Votre identité doit être vérifiée avant tout paiement ou activation de boost.");
+      showAlert("Vérification d'identité obligatoire : Votre identité doit être vérifiée avant tout paiement ou activation de boost.", 'error', "Identité requise");
       setIsKycModalOpen(true);
       return;
     }
@@ -457,7 +481,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     try {
       if (boostOption === 'SINGLE' || !selectedPackForBoost) {
         await onBoostAd(adToBoost.id);
-        alert(`Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours.`);
+        showAlert(`Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours.`, 'success', "Annonce Propulsée !");
       } else {
         // 1. Boost this ad immediately
         await onBoostAd(adToBoost.id);
@@ -471,8 +495,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             activeBoosterPack: selectedPackForBoost.type,
           });
         }
-        alert(
-          `Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours, et ${remainingToCredit} boosters supplémentaires ont été crédités sur votre compte (solde disponible) !`
+        showAlert(
+          `Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours, et ${remainingToCredit} boosters supplémentaires ont été crédités sur votre compte (solde disponible) !`,
+          'success',
+          "Pack Boosters Activé !"
         );
       }
       setAdToBoost(null);
@@ -480,7 +506,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       setSelectedPackForBoost(null);
     } catch (e: any) {
       console.error('Boost purchase error:', e);
-      alert("Erreur lors de l'activation du boost : " + (e?.message || 'Réessayez.'));
+      showAlert("Erreur lors de l'activation du boost : " + (e?.message || 'Réessayez.'), 'error');
     } finally {
       setIsBoostingAd(false);
     }
@@ -491,7 +517,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     e.preventDefault();
     if (!onUpdateUser) return;
     if (!profileName.trim()) {
-      alert('Veuillez renseigner votre nom complet.');
+      showAlert('Veuillez renseigner votre nom complet.', 'error');
       return;
     }
     setIsSavingProfile(true);
@@ -509,7 +535,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       setTimeout(() => setProfileSuccessMsg(null), 4000);
     } catch (err: any) {
       console.error('Error saving profile:', err);
-      alert('Erreur lors de la sauvegarde : ' + (err?.message || 'Réessayez.'));
+      showAlert('Erreur lors de la sauvegarde : ' + (err?.message || 'Réessayez.'), 'error');
     } finally {
       setIsSavingProfile(false);
     }
@@ -574,6 +600,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setPwdLoading(true);
     try {
       const nowIso = new Date().toISOString();
+      try {
+        const cleanDigits = (currentUser.contactPhone || '').replace(/\D/g, '').replace(/^241/, '').replace(/^0/, '');
+        if (cleanDigits) {
+          localStorage.setItem('bizbooster_last_pwd_change_' + cleanDigits, nowIso);
+        }
+      } catch {
+        // ignore
+      }
       if (onUpdateUser) {
         await onUpdateUser({
           password: newPassword.trim(),
@@ -604,7 +638,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const handleConfirmBoost = async (ad: Ad) => {
     if (!onBoostAd) return;
     if (!isAllowedToTransact) {
-      alert("Vérification d'identité obligatoire : Votre identité doit être vérifiée avant de pouvoir booster une annonce.");
+      showAlert("Vérification d'identité obligatoire : Votre identité doit être vérifiée avant de pouvoir booster une annonce.", 'error', "Identité requise");
       setIsKycModalOpen(true);
       return;
     }
@@ -615,7 +649,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       setShowBoostPayment(false);
     } catch (e) {
       console.error(e);
-      alert('Erreur lors de la mise en tête de votre annonce. Réessayez.');
+      showAlert('Erreur lors de la mise en tête de votre annonce. Réessayez.', 'error');
     } finally {
       setIsBoostingAd(false);
     }
@@ -637,7 +671,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         setUpgradedTierModal(tier.tier);
       } catch (err: any) {
         console.error('Error activating plan:', err);
-        alert(`Erreur lors de l'activation du forfait ${tier.name} : ${err?.message || 'Vérifiez votre connexion et réessayez.'}`);
+        showAlert(`Erreur lors de l'activation du forfait ${tier.name} : ${err?.message || 'Vérifiez votre connexion et réessayez.'}`, 'error');
       }
       return;
     }
@@ -669,10 +703,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         subscriptionTier: targetTier.tier,
       });
       setDowngradeConfirmationTier(null);
-      alert(`Votre abonnement a été rétrogradé avec succès vers le forfait ${targetTier.name}. Aucun frais supplémentaire n'a été appliqué.`);
+      showAlert(`Votre abonnement a été rétrogradé avec succès vers le forfait ${targetTier.name}. Aucun frais supplémentaire n'a été appliqué.`, 'info', "Abonnement modifié");
     } catch (err: any) {
       console.error('Error downgrading:', err);
-      alert("Erreur lors de la rétrogradation : " + (err?.message || 'Réessayez.'));
+      showAlert("Erreur lors de la rétrogradation : " + (err?.message || 'Réessayez.'), 'error');
     } finally {
       setIsDowngrading(false);
     }
@@ -688,10 +722,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           freeBoostsRemaining: newBoosts,
           activeBoosterPack: pack.type,
         });
-        alert(`${pack.name} activé avec succès ! Votre nouveau solde est de ${newBoosts} boosters disponibles (max 20).`);
+        showAlert(`${pack.name} activé avec succès ! Votre nouveau solde est de ${newBoosts} boosters disponibles (max 20).`, 'success', "Pack Boosters Activé !");
       } catch (err: any) {
         console.error('Error adding booster pack for VIP:', err);
-        alert(`Erreur lors de l'activation des boosters : ${err?.message || 'Vérifiez votre connexion et réessayez.'}`);
+        showAlert(`Erreur lors de l'activation des boosters : ${err?.message || 'Vérifiez votre connexion et réessayez.'}`, 'error');
       }
       return;
     }
@@ -728,11 +762,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           activeBoosterPack: itemToPurchase.packType,
         });
         setItemToPurchase(null);
-        alert(`Pack de boosters activé avec succès ! Votre nouveau solde est de ${newBoosts} boosters disponibles (max 20).`);
+        showAlert(`${itemToPurchase.boostCount} Boosters activés avec succès ! Votre nouveau solde est de ${newBoosts} boosters disponibles (max 20).`, 'success', "Pack Boosters Activé !");
       }
     } catch (e: any) {
       console.error('Purchase update error:', e);
-      alert("Erreur lors de l'activation de votre achat : " + (e?.message || 'Veuillez réessayer.'));
+      showAlert("Erreur lors de l'activation de votre achat : " + (e?.message || 'Veuillez réessayer.'), 'error');
     }
   };
 
@@ -859,7 +893,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 </div>
               </div>
               <button
-                onClick={() => setDashboardTab('SUBSCRIPTIONS')}
+                onClick={() => setShowBoosterPacksModal(true)}
                 className="text-[10px] font-black bg-white text-emerald-950 hover:bg-emerald-50 px-2.5 py-1.5 rounded-lg shadow-xs transition-all cursor-pointer flex items-center gap-1 shrink-0 ml-1.5"
                 title="Acheter ou recharger vos boosters"
               >
@@ -903,6 +937,19 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         >
           <Building2 className="w-4 h-4" />
           <span>Mes Annonces ({myAds.length})</span>
+        </button>
+
+        <button
+          onClick={() => setDashboardTab('FAVORITES')}
+          className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+            dashboardTab === 'FAVORITES'
+              ? 'bg-rose-600 text-white shadow-sm'
+              : 'bg-white text-slate-700 hover:bg-rose-50 border border-slate-200'
+          }`}
+          id="tab-user-favorites"
+        >
+          <Heart className={`w-4 h-4 ${dashboardTab === 'FAVORITES' ? 'fill-current text-white' : 'text-rose-500'}`} />
+          <span>Mes Favoris ({favoriteAds.length})</span>
         </button>
 
         <button
@@ -1359,6 +1406,54 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 <PlusCircle className="w-4 h-4" />
                 <span>Déposer ma première annonce</span>
               </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: FAVORITES */}
+      {dashboardTab === 'FAVORITES' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+                <Heart className="w-5 h-5 fill-rose-500" />
+              </div>
+              <div>
+                <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                  Mes Annonces Favorites
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Retrouvez et contactez facilement les annonceurs de vos biens sauvegardés.
+                </p>
+              </div>
+            </div>
+            <div className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg w-fit">
+              {favoriteAds.length} annonce{favoriteAds.length > 1 ? 's' : ''} sauvegardée{favoriteAds.length > 1 ? 's' : ''}
+            </div>
+          </div>
+
+          {favoriteAds.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+              {favoriteAds.map((ad) => (
+                <AdCard
+                  key={ad.id}
+                  ad={ad}
+                  onSelectAd={onSelectAdDetail}
+                  isFavorite={true}
+                  onToggleFavorite={onToggleFavorite}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 shadow-xs max-w-md mx-auto space-y-4">
+              <div className="w-16 h-16 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mx-auto">
+                <Heart className="w-8 h-8" />
+              </div>
+              <h4 className="text-base font-extrabold text-slate-900">Aucun favori pour le moment</h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Vous n'avez pas encore d'annonces enregistrées dans vos favoris. Parcourez les annonces du catalogue et cliquez sur le cœur ❤️ d'une vignette pour l'ajouter à vos favoris instantanément !
+              </p>
             </div>
           )}
         </div>
@@ -2052,6 +2147,131 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         </div>
       )}
 
+      {/* Booster Packs Dedicated Modal (Point 2) */}
+      {showBoosterPacksModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[92vh] overflow-y-auto shadow-2xl p-5 sm:p-7 border border-slate-200 space-y-5 my-auto">
+            <div className="flex justify-between items-start gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-amber-500/20 text-amber-600 flex items-center justify-center font-black shrink-0 border border-amber-500/30 shadow-inner">
+                  <Zap className="w-6 h-6 fill-amber-500 text-amber-500" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base sm:text-lg text-slate-900 tracking-tight">
+                    Recharger vos Boosters
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Propulsez vos annonces en première position pendant 7 jours
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowBoosterPacksModal(false)}
+                className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Current Balance Bar */}
+            <div className="bg-gradient-to-r from-emerald-600 to-teal-800 text-white rounded-2xl p-4 flex items-center justify-between shadow-sm">
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="w-5 h-5 text-amber-300" />
+                <div>
+                  <span className="text-[10px] font-bold text-emerald-200 uppercase tracking-wider block">
+                    Votre solde actuel
+                  </span>
+                  <span className="text-lg font-black text-white">
+                    {currentUser.freeBoostsRemaining || 0} booster{(currentUser.freeBoostsRemaining || 0) > 1 ? 's' : ''} disponible{(currentUser.freeBoostsRemaining || 0) > 1 ? 's' : ''}
+                  </span>
+                </div>
+              </div>
+              <span className="text-xs font-bold text-emerald-200 bg-white/10 px-2.5 py-1 rounded-lg">
+                Plafond : 20 max
+              </span>
+            </div>
+
+            {/* Explanatory text */}
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Choisissez un pack de rechargement. Les boosters acquis sont conservés sur votre compte et peuvent être activés à tout moment sur vos annonces depuis votre espace annonceur.
+            </p>
+
+            {/* Pack Cards */}
+            <div className="space-y-3.5">
+              {BOOSTER_PACKS.map((pack) => {
+                const isBoosterFull = (currentUser.freeBoostsRemaining || 0) >= 20;
+                return (
+                  <div
+                    key={pack.type}
+                    className="bg-slate-50 hover:bg-amber-50/60 border-2 border-slate-200 hover:border-amber-400 rounded-2xl p-4 sm:p-5 transition-all shadow-xs space-y-3"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-sm text-slate-900">{pack.name}</span>
+                        <span className="bg-amber-100 text-amber-900 font-extrabold text-[10px] px-2.5 py-0.5 rounded-full border border-amber-300">
+                          +{pack.boostsCount} Boosts
+                        </span>
+                      </div>
+                      <span className="text-base font-black text-emerald-700">
+                        {isExempt ? (
+                          <span className="text-amber-600 font-bold text-xs">Gratuit (Partenaire VIP)</span>
+                        ) : (
+                          formatFCFA(pack.price)
+                        )}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      {pack.description}
+                    </p>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[11px] font-bold text-slate-500">
+                        Soit {formatFCFA(Math.round(pack.price / pack.boostsCount))} par boost de 7 jours
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isBoosterFull}
+                        onClick={() => {
+                          setShowBoosterPacksModal(false);
+                          handleSelectBoosterPack(pack);
+                        }}
+                        className={`py-2 px-4 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                          isBoosterFull
+                            ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                            : isExempt
+                            ? 'bg-amber-500 hover:bg-amber-600 text-slate-950'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        }`}
+                      >
+                        <Zap className="w-3.5 h-3.5 fill-current" />
+                        <span>
+                          {isBoosterFull
+                            ? 'Plafond atteint (20 max)'
+                            : isExempt
+                            ? 'Activer gratuitement'
+                            : 'Recharger ce pack'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowBoosterPacksModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Subscription / Pack Purchase Modal */}
       {itemToPurchase && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150 overflow-y-auto">
@@ -2164,6 +2384,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           setUpgradedTierModal(null);
           handleSafeOpenPublish();
         }}
+      />
+
+      {/* App Alert / Confirmation Modal (Point 1) */}
+      <AppAlertModal
+        config={alertModalConfig}
+        onClose={() => setAlertModalConfig(null)}
       />
     </div>
   );

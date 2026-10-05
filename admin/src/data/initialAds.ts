@@ -4,6 +4,7 @@ export const INITIAL_ADS: Ad[] = [
   // 1. IMMOBILIER - LOCATION
   {
     id: 'ad-immo-1',
+    isTest: true,
     title: 'Superbe Villa 4 chambres avec piscine et groupe',
     mainCategory: 'IMMOBILIER',
     transactionType: 'LOCATION',
@@ -35,6 +36,7 @@ export const INITIAL_ADS: Ad[] = [
   // 2. IMMOBILIER - VENTE
   {
     id: 'ad-immo-2',
+    isTest: true,
     title: 'Parcelle clôturée 800 m² avec titre foncier',
     mainCategory: 'IMMOBILIER',
     transactionType: 'VENTE',
@@ -62,40 +64,10 @@ export const INITIAL_ADS: Ad[] = [
     transactionRef: 'MM-LBV-391028',
     viewsCount: 389
   },
-  // 3. IMMOBILIER - LOCATION
-  {
-    id: 'ad-immo-3',
-    title: 'Appartement F3 meublé haut standing',
-    mainCategory: 'IMMOBILIER',
-    transactionType: 'LOCATION',
-    propertyType: 'Appartement',
-    location: {
-      province: 'Ogooué-Maritime',
-      city: 'Port-Gentil',
-      neighborhood: 'Chic (Quartier Chic)'
-    },
-    price: 650000,
-    priceUnit: 'mois',
-    description: 'Appartement tout équipé 2 chambres avec placards, cuisine américaine, wifi fibre, idéal cadre expatrié ou mission professionnelle à Port-Gentil. Parking sécurisé.',
-    images: [
-      'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=1000&q=80',
-      'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1000&q=80'
-    ],
-    contactPhone: '+241 74 33 55 90',
-    hasWhatsapp: true,
-    contactName: 'Agence POG Habitat',
-    durationDays: 365,
-    publishedAt: new Date(Date.now() - 8 * 86400000).toISOString(),
-    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
-    status: 'ACTIVE',
-    paidAmount: 10000,
-    paymentMethod: 'AIRTEL_MONEY',
-    transactionRef: 'AM-POG-772911',
-    viewsCount: 198
-  },
-  // 4. MATÉRIEL ROULANT - VOITURE - VENTE
+  // 3. MATÉRIEL ROULANT - VOITURE - VENTE
   {
     id: 'ad-auto-1',
+    isTest: true,
     title: 'Toyota Hilux Double Cabine 4x4 D4D climatisé',
     mainCategory: 'MATERIEL_ROULANT',
     transactionType: 'VENTE',
@@ -128,9 +100,10 @@ export const INITIAL_ADS: Ad[] = [
     transactionRef: 'AM-AUT-992140',
     viewsCount: 512
   },
-  // 5. MATÉRIEL ROULANT - VOITURE - LOCATION
+  // 4. MATÉRIEL ROULANT - VOITURE - LOCATION
   {
     id: 'ad-auto-2',
+    isTest: true,
     title: 'Hyundai Santa Fe 2022 Tout Confort pour location',
     mainCategory: 'MATERIEL_ROULANT',
     transactionType: 'LOCATION',
@@ -162,9 +135,10 @@ export const INITIAL_ADS: Ad[] = [
     transactionRef: 'MM-AUT-110482',
     viewsCount: 310
   },
-  // 6. MATÉRIEL ROULANT - CAMIONS BENNES
+  // 5. MATÉRIEL ROULANT - CAMIONS BENNES
   {
     id: 'ad-truck-1',
+    isTest: true,
     title: 'Camion Benne HOWO Sinotruk 10 roues 20m³',
     mainCategory: 'MATERIEL_ROULANT',
     transactionType: 'VENTE',
@@ -196,9 +170,10 @@ export const INITIAL_ADS: Ad[] = [
     transactionRef: 'AM-TRK-449102',
     viewsCount: 420
   },
-  // 7. MATÉRIEL ROULANT - ENGINS DE CHANTIER
+  // 6. MATÉRIEL ROULANT - ENGINS DE CHANTIER
   {
     id: 'ad-machinery-1',
+    isTest: true,
     title: 'Pelleteuse CAT 320D sur chenilles disponible',
     mainCategory: 'MATERIEL_ROULANT',
     transactionType: 'LOCATION',
@@ -229,9 +204,10 @@ export const INITIAL_ADS: Ad[] = [
     transactionRef: 'MM-TP-830219',
     viewsCount: 160
   },
-  // 8. BRIC-À-BRAC
+  // 7. BRIC-À-BRAC - SMARTPHONE
   {
     id: 'ad-bric-1',
+    isTest: true,
     title: 'iPhone 14 Pro Max 256Go Gold état neuf',
     mainCategory: 'BRIC_A_BRAC',
     transactionType: 'VENTE',
@@ -259,9 +235,10 @@ export const INITIAL_ADS: Ad[] = [
     transactionRef: 'AM-TEL-552199',
     viewsCount: 275
   },
-  // 9. BRIC-À-BRAC - MEUBLE
+  // 8. BRIC-À-BRAC - MEUBLE
   {
     id: 'ad-bric-2',
+    isTest: true,
     title: 'Salon d\'angle en cuir beige 6 places avec table',
     mainCategory: 'BRIC_A_BRAC',
     transactionType: 'VENTE',
@@ -289,11 +266,14 @@ export const INITIAL_ADS: Ad[] = [
     transactionRef: 'MM-MEU-741289',
     viewsCount: 188
   },
-  // 10. EMPLOI - NOUNOU
+  // 9. EMPLOI - NOUNOU (DEMANDE D'EMPLOI)
   {
     id: 'ad-emp-1',
+    isTest: true,
     title: 'Nounou expérimentée et attentionnée (garde-bébé)',
     mainCategory: 'EMPLOI',
+    jobKind: 'DEMANDE_EMPLOI',
+    transactionType: 'CHERCHE_EMPLOI',
     domesticJobType: 'Nounous (garde-bébé)',
     location: {
       province: 'Estuaire',
@@ -316,189 +296,81 @@ export const INITIAL_ADS: Ad[] = [
     paidAmount: 9500,
     paymentMethod: 'AIRTEL_MONEY',
     transactionRef: 'AM-EMP-102938',
-    viewsCount: 312
+    viewsCount: 312,
+    isOwnerVerified: true
   },
-  // 11. EMPLOI - CUISINIER
+  // 10. COURS À DOMICILE - OFFRE MATHS & PC
   {
-    id: 'ad-emp-2',
-    title: 'Chef cuisinier spécialités africaines et européennes',
-    mainCategory: 'EMPLOI',
-    domesticJobType: 'Cuisiniers',
+    id: 'ad-cours-1',
+    isTest: true,
+    title: 'Cours de soutien en Mathématiques et Physique-Chimie (Collège & Lycée)',
+    mainCategory: 'COURS_A_DOMICILE',
+    transactionType: 'VENTE',
+    tutoringData: {
+      kind: 'OFFRE',
+      subject: 'Mathématiques',
+      level: 'Lycée'
+    },
     location: {
       province: 'Estuaire',
       city: 'Libreville',
-      neighborhood: 'Louis'
+      neighborhood: 'Angondjé'
     },
-    price: 180000,
+    price: 35000,
     priceUnit: 'mois',
-    description: 'Cuisinier professionnel diplômé hôtellerie. Maîtrise cuisine locale (Nyembwé, Odika, Poissons braisés) et cuisine internationale. Propre, discret et ponctuel.',
+    description: 'Enseignant certifié avec 8 ans d\'expérience propose suivi personnalisé et remise à niveau en Mathématiques et Sciences Physiques. Préparation intensive aux épreuves du BAC C et D. Déplacements à domicile sur Akanda et Libreville nord.',
     images: [
-      'https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=1000&q=80'
+      'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&w=1000&q=80'
     ],
-    contactPhone: '+241 74 11 00 29',
+    contactPhone: '+241 66 12 34 56',
     hasWhatsapp: true,
-    contactName: 'Chef Patrick M.',
+    contactName: 'Prof. Jean-Marc M.',
     durationDays: 365,
-    publishedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+    publishedAt: new Date(Date.now() - 86400000).toISOString(),
     expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
     status: 'ACTIVE',
-    paidAmount: 9500,
-    paymentMethod: 'MOOV_MONEY',
-    transactionRef: 'MM-EMP-992011',
-    viewsCount: 220
-  },
-  // 12. EMPLOI - GARDIEN
-  {
-    id: 'ad-emp-3',
-    title: 'Gardien de nuit vigilant et rigoureux pour villa ou dépôt',
-    mainCategory: 'EMPLOI',
-    domesticJobType: 'Gardiens de nuit / de jour',
-    location: {
-      province: 'Estuaire',
-      city: 'Owendo',
-      neighborhood: 'Alénakiri'
-    },
-    price: 110000,
-    priceUnit: 'mois',
-    description: 'Homme 40 ans, ancien agent de sécurité, excellente acuité nocturne. Disponible immédiatement pour surveillance villa privée, entrepôt ou chantier.',
-    images: [
-      'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=1000&q=80'
-    ],
-    contactPhone: '+241 65 33 21 80',
-    hasWhatsapp: true,
-    contactName: 'Samuel O.',
-    durationDays: 365,
-    publishedAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
-    status: 'ACTIVE',
-    paidAmount: 5500,
-    paymentMethod: 'AIRTEL_MONEY',
-    transactionRef: 'AM-GAR-661029',
-    viewsCount: 145
-  },
-  // 13. IMMOBILIER - VENTE
-  {
-    id: 'ad-immo-4',
-    title: 'Villa moderne neuve 5 pièces finitions soignées',
-    mainCategory: 'IMMOBILIER',
-    transactionType: 'VENTE',
-    propertyType: 'Villa',
-    location: {
-      province: 'Haut-Ogooué',
-      city: 'Franceville',
-      neighborhood: 'Ondimba'
-    },
-    price: 45000000,
-    priceUnit: 'total',
-    description: 'Belle villa neuve à Ondimba Franceville. 3 chambres avec douches attenantes, grand séjour, cuisine équipée, garage 2 véhicules, clôture avec portail coulissant.',
-    images: [
-      'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?auto=format&fit=crop&w=1000&q=80'
-    ],
-    contactPhone: '+241 77 88 12 34',
-    hasWhatsapp: true,
-    contactName: 'Promoteur Franceville Immo',
-    durationDays: 365,
-    publishedAt: new Date(Date.now() - 7 * 86400000).toISOString(),
-    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
-    status: 'ACTIVE',
-    paidAmount: 9500,
-    paymentMethod: 'AIRTEL_MONEY',
-    transactionRef: 'AM-FCV-401923',
-    viewsCount: 290
-  },
-  // 14. EXEMPLE EN ATTENTE DE MODÉRATION (PENDING_REVIEW)
-  {
-    id: 'ad-pending-1',
-    title: 'Appartement meublé 2 chambres - Port-Gentil Bord de Mer',
-    mainCategory: 'IMMOBILIER',
-    transactionType: 'LOCATION',
-    propertyType: 'Appartement',
-    location: {
-      province: 'Ogooué-Maritime',
-      city: 'Port-Gentil',
-      neighborhood: 'Grand Village'
-    },
-    price: 450000,
-    priceUnit: 'mois',
-    description: 'Appartement T3 entièrement meublé et équipé. Climatisation dans toutes les pièces, terrasse avec vue dégagée, citerne d\'eau et groupe de secours. Idéal expatriés ou cadres pétroliers.',
-    images: [
-      'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=1000&q=80'
-    ],
-    contactPhone: '+241 66 33 22 11',
-    hasWhatsapp: true,
-    contactName: 'Mme NGOUELE Sylvie',
-    durationDays: 365,
-    publishedAt: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
-    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
-    status: 'PENDING_REVIEW',
-    paidAmount: 9000,
-    paymentMethod: 'MOOV_MONEY',
-    transactionRef: 'MM-POG-992314',
-    viewsCount: 0,
-    userId: 'user-sylvie-pog'
-  },
-  // 15. EXEMPLE EN ATTENTE DE MODÉRATION (MATÉRIEL ROULANT)
-  {
-    id: 'ad-pending-2',
-    title: 'Toyota Hilux Double Cabine 4x4 D4D Diesel 2021',
-    mainCategory: 'MATERIEL_ROULANT',
-    transactionType: 'VENTE',
-    vehicleData: {
-      category: 'Voitures',
-      brand: 'Toyota',
-      model: 'Hilux',
-      subType: 'Pick-up 4x4'
-    },
-    price: 19500000,
-    priceUnit: 'total',
-    description: 'Toyota Hilux 2.8 D4D boîte manuelle 6 rapports, 65 000 km d\'origine, carnet d\'entretien CFAO Gabon à jour. Pneus tout-terrain neufs, pare-buffle et arceau inox.',
-    images: [
-      'https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1000&q=80'
-    ],
-    contactPhone: '+241 77 14 55 90',
-    hasWhatsapp: true,
-    contactName: 'ETS Gabon Auto Import',
-    durationDays: 365,
-    publishedAt: new Date(Date.now() - 7200000).toISOString(), // 2 hours ago
-    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
-    status: 'PENDING_REVIEW',
-    paidAmount: 5000,
-    paymentMethod: 'AIRTEL_MONEY',
-    transactionRef: 'AM-LBV-551290',
-    viewsCount: 0,
-    userId: 'user-gabon-auto'
-  },
-  // 16. EXEMPLE D'ANNONCE REJETÉE AVEC MOTIF
-  {
-    id: 'ad-rejected-1',
-    title: 'Terrain 1000m2 Sabliere pas cher urgent',
-    mainCategory: 'IMMOBILIER',
-    transactionType: 'VENTE',
-    propertyType: 'Terrain / Parcelle',
-    location: {
-      province: 'Estuaire',
-      city: 'Libreville',
-      neighborhood: 'La Sablière'
-    },
-    price: 3000000,
-    priceUnit: 'total',
-    description: 'Vend terrain 1000 m2 sablière prix sacrifié urgent besoin argent.',
-    images: [
-      'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1000&q=80'
-    ],
-    contactPhone: '+241 62 00 11 22',
-    hasWhatsapp: false,
-    contactName: 'Particulier',
-    durationDays: 365,
-    publishedAt: new Date(Date.now() - 24 * 3600000).toISOString(),
-    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
-    status: 'REJECTED',
-    moderationReason: 'Prix suspect et absence de référence de titre foncier certifié à La Sablière. Risque avéré de litige foncier.',
-    moderatedAt: new Date(Date.now() - 12 * 3600000).toISOString(),
     paidAmount: 3000,
     paymentMethod: 'AIRTEL_MONEY',
-    transactionRef: 'AM-LBV-102938',
-    viewsCount: 0,
-    userId: 'user-particulier-sb'
+    transactionRef: 'AM-EDU-881290',
+    viewsCount: 142,
+    isOwnerVerified: true
+  },
+  // 11. NÉCROLOGIE - ÉDUCATION NATIONALE
+  {
+    id: 'ad-necro-1',
+    isTest: true,
+    title: 'Avis d\'obsèques et hommage - M. Paul-Émile MVE (Inspecteur Pédagogique retraité)',
+    mainCategory: 'NECROLOGIE',
+    necrologieData: {
+      ministry: 'Éducation nationale',
+      deceasedName: 'Paul-Émile MVE',
+      ceremonyDate: 'Samedi 10 Octobre 2026',
+      ceremonyLocation: 'Église Sainte-Marie de Libreville',
+      funeralProgram: 'Veillée mortuaire au domicile familial de Glass le vendredi soir, messe de requiem à Sainte-Marie le samedi à 10h, suivie de l\'inhumation au cimetière de Lalala.',
+      familyContact: '+241 62 44 55 66'
+    },
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'Glass'
+    },
+    price: 0,
+    priceUnit: 'total',
+    description: 'La grande famille MVE et alliés ont la profonde douleur d\'annoncer le rappel à Dieu de leur père, grand-père et collègue Paul-Émile MVE, survenu dans sa 74e année. Le programme des obsèques est communiqué à l\'attention de la communauté éducative nationale.',
+    images: [
+      'https://images.unsplash.com/photo-1518895949257-7621c3c786d7?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 62 44 55 66',
+    hasWhatsapp: true,
+    contactName: 'Famille MVE',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 43200000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 3000,
+    paymentMethod: 'AIRTEL_MONEY',
+    transactionRef: 'AM-NEC-102931',
+    viewsCount: 450,
+    isOwnerVerified: true
   }
 ];

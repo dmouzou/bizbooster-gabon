@@ -58,7 +58,7 @@ export const CGU_SECTIONS: CguSection[] = [
     title: 'Article 4 : Durée des Annonces, Forfaits & Paiements Mobiles',
     content: [
       "4.1. Durée de validité : Toute annonce est active pour la durée choisie lors de sa publication (de 3 jours à 60 jours renouvelables). Conformément aux règles de sécurité de BIZBOOSTER, le plafond cumulé maximal de validité continue est de 365 jours. Aucune annonce ne peut rester en ligne plus de 365 jours consécutifs sans actualisation.",
-      "4.2. Quota gratuit & Abonnements : Tout utilisateur bénéficie de 3 annonces simultanées gratuites (formule Standard). Pour diffuser plus de 3 annonces simultanées, l'annonceur peut souscrire à un forfait professionnel mensuel (Pro : jusqu'à 8 annonces, Élite : jusqu'à 15 annonces, Business : jusqu'à 25 annonces simultanées).",
+      "4.2. Quota gratuit & Abonnements : Tout utilisateur bénéficie de 3 annonces simultanées gratuites (formule Standard). Pour diffuser plus de 3 annonces simultanées, l'annonceur peut souscrire à un forfait professionnel mensuel (Pro : jusqu'à 8 annonces, Élite : jusqu'à 14 annonces, Business : jusqu'à 20 annonces simultanées, plafond maximal absolu de la plateforme).",
       "4.3. Moyens de paiement acceptés : Les options payantes (durée prolongée, photos additionnelles au-delà de 5, vidéo descriptive, boosts En Tête de Liste, forfaits d'abonnement) sont réglées via les solutions de Mobile Money nationales gabonaises : Airtel Money Gabon et Moov Money Gabon.",
       "4.4. Tout achat de boost ou d'option de parution est ferme et non remboursable dès lors que la prestation technique de diffusion a été amorcée."
     ]

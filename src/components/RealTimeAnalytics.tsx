@@ -33,6 +33,7 @@ import {
 import { Ad, UserProfile } from '../types';
 import { formatFCFA } from '../utils/formatters';
 import { GABON_PROVINCES } from '../data/gabonLocations';
+import { isTestAd } from './AdminPanel';
 
 interface RealTimeAnalyticsProps {
   ads: Ad[];
@@ -75,7 +76,6 @@ export const RealTimeAnalytics: React.FC<RealTimeAnalyticsProps> = ({ ads, users
     ads.forEach((ad) => {
       if (ad.status === 'ACTIVE') {
         active++;
-        totalCatalogValue += Number(ad.price) || 0;
       } else if (ad.status === 'PENDING_REVIEW' || !!ad.pendingExtension) {
         pending++;
       } else if (ad.status === 'REJECTED') {
@@ -85,8 +85,14 @@ export const RealTimeAnalytics: React.FC<RealTimeAnalyticsProps> = ({ ads, users
       if (ad.transactionType === 'VENTE') totalVente++;
       else if (ad.transactionType === 'LOCATION') totalLocation++;
 
-      totalRevenue += Number(ad.paidAmount) || 0;
-      totalViews += Number(ad.viewsCount) || 0;
+      // Point 2: Audience (totalViews) & Recettes (totalRevenue) strictly exclude test ads!
+      if (!isTestAd(ad)) {
+        totalRevenue += Number(ad.paidAmount) || 0;
+        totalViews += Number(ad.viewsCount) || 0;
+        if (ad.status === 'ACTIVE') {
+          totalCatalogValue += Number(ad.price) || 0;
+        }
+      }
     });
 
     const advertisersCount = users.length > 0

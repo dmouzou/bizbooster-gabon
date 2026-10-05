@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -31,11 +31,13 @@ import {
   FlaskConical,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
-import { auth } from '../services/firebase';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '../services/firebase';
 import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime } from '../utils/formatters';
 import { RealTimeAnalytics } from './RealTimeAnalytics';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
+import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
 
 interface AdminPanelProps {
   currentUser?: UserProfile | null;
@@ -72,10 +74,15 @@ export function isTestAd(ad: Ad): boolean {
   if (
     id.startsWith('ad-immo-') ||
     id.startsWith('ad-auto-') ||
+    id.startsWith('ad-truck-') ||
+    id.startsWith('ad-machinery-') ||
     id.startsWith('ad-bric-') ||
     id.startsWith('ad-emp-') ||
+    id.startsWith('ad-cours-') ||
     id.startsWith('ad-tut-') ||
-    id.startsWith('ad-necro-')
+    id.startsWith('ad-necro-') ||
+    id.startsWith('ad-pending-') ||
+    id.startsWith('ad-rejected-')
   ) {
     return true;
   }
@@ -107,9 +114,92 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 }) => {
   const isSuper = isUserSuperAdmin(currentUser);
 
-  // Point 3: SUPER ADMIN one-click option to show or hide all test ads
-  const [showTestAds, setShowTestAds] = useState<boolean>(true);
-  const testAdsCount = useMemo(() => ads.filter(isTestAd).length, [ads]);
+  // Point 3: SUPER ADMIN one-click option to show or hide all test ads (defaults to false / OFF)
+  const [showTestAds, setShowTestAds] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('bizbooster_show_test_ads');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return false;
+  });
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'settings', 'system_config'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (typeof data.showTestAds === 'boolean') {
+            setShowTestAds(data.showTestAds);
+            try {
+              localStorage.setItem('bizbooster_show_test_ads', String(data.showTestAds));
+            } catch {}
+          }
+        }
+      },
+      (err) => console.warn('AdminPanel system_config listener error:', err)
+    );
+    return () => unsub();
+  }, []);
+
+  // Sync registered advertisers list into system_config so frontend can verify directory membership
+  useEffect(() => {
+    if (users && users.length > 0) {
+      const userIds = users.map((u) => u.id).filter(Boolean);
+      const userPhones = users
+        .map((u) => (u.contactPhone || u.phoneNumber || '').replace(/\D/g, ''))
+        .filter(Boolean);
+      setDoc(
+        doc(db, 'settings', 'system_config'),
+        {
+          registeredUserIds: userIds,
+          registeredPhones: userPhones,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      ).catch((e) => console.warn('Could not sync registered advertisers to Firestore:', e));
+    }
+  }, [users]);
+
+  const registeredUserIdsSet = useMemo(() => new Set((users || []).map((u) => u.id)), [users]);
+  const registeredPhonesList = useMemo(
+    () => (users || []).map((u) => (u.contactPhone || u.phoneNumber || '').replace(/\D/g, '')).filter(Boolean),
+    [users]
+  );
+
+  // An ad is a test ad if it does not originate from a registered advertiser in the directory
+  const isAdFromNonRegistered = (ad: Ad): boolean => {
+    if (isTestAd(ad)) return true;
+    if (!ad.userId || ad.userId.startsWith('demo-') || ad.userId.startsWith('test-')) return true;
+    if (registeredUserIdsSet.size > 0) {
+      if (registeredUserIdsSet.has(ad.userId)) return false;
+      const cleanPhone = (ad.contactPhone || '').replace(/\D/g, '');
+      if (cleanPhone && registeredPhonesList.some((p) => p.includes(cleanPhone) || cleanPhone.includes(p))) {
+        return false;
+      }
+      return true;
+    }
+    return false;
+  };
+
+  const testAdsCount = useMemo(
+    () => ads.filter(isAdFromNonRegistered).length,
+    [ads, registeredUserIdsSet, registeredPhonesList]
+  );
+  const [alertModalConfig, setAlertModalConfig] = useState<AlertModalConfig | null>(null);
+
+  const handleToggleTestAds = async () => {
+    const nextVal = !showTestAds;
+    setShowTestAds(nextVal);
+    try {
+      localStorage.setItem('bizbooster_show_test_ads', String(nextVal));
+      window.dispatchEvent(new CustomEvent('bizbooster_test_ads_toggled', { detail: { showTestAds: nextVal } }));
+      await setDoc(doc(db, 'settings', 'system_config'), { showTestAds: nextVal, updatedAt: new Date().toISOString() }, { merge: true });
+    } catch (e) {
+      console.warn('Could not persist test ads toggle to Firestore:', e);
+    }
+  };
+
   // Active Admin Tab: 'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY'
   const [activeTab, setActiveTab] = useState<'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY'>('MODERATION');
 
@@ -123,7 +213,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   type ModerationSortOption = 'DATE_DESC' | 'DATE_ASC' | 'PRIORITY_TIER' | 'PRICE_DESC' | 'PRICE_ASC' | 'REPORTS_DESC';
   const [moderationSortBy, setModerationSortBy] = useState<ModerationSortOption>('DATE_DESC');
 
-  // Advertisers Directory filters
+  // Point 4: Advertisers Directory filters & Sort
+  type AdvertiserSortOption = 'DATE_DESC' | 'DATE_ASC' | 'NAME_ASC' | 'TIER_DESC' | 'ADS_DESC' | 'REVENUE_DESC';
+  const [advSortBy, setAdvSortBy] = useState<AdvertiserSortOption>('DATE_DESC');
   const [advSearchQuery, setAdvSearchQuery] = useState('');
   const [advKycFilter, setAdvKycFilter] = useState<'ALL' | 'EXEMPT' | 'VERIFIED' | 'PENDING' | 'NOT_SUBMITTED'>('ALL');
 
@@ -187,8 +279,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       } else if (ad.status === 'REJECTED') {
         rejected++;
       }
-      totalRevenue += Number(ad.paidAmount) || 0;
-      totalViews += Number(ad.viewsCount) || 0;
+
+      // Point 2: Audience (totalViews) & Recettes (totalRevenue) strictly exclude test ads!
+      if (!isTestAd(ad)) {
+        totalRevenue += Number(ad.paidAmount) || 0;
+        totalViews += Number(ad.viewsCount) || 0;
+      }
     });
 
     return {
@@ -231,8 +327,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       if (statusFilter === 'ACTIVE' && ad.status !== 'ACTIVE') return false;
       if (statusFilter === 'REJECTED' && ad.status !== 'REJECTED') return false;
 
-      // Point 3: Super Admin filter to hide test ads
-      if (isSuper && !showTestAds && isTestAd(ad)) return false;
+      // Point 3: Super Admin filter to hide test ads (ads not from registered advertisers)
+      if (isSuper && !showTestAds && isAdFromNonRegistered(ad)) return false;
 
       if (categoryFilter !== 'ALL' && ad.mainCategory !== categoryFilter) return false;
 
@@ -275,9 +371,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     });
   }, [ads, users, statusFilter, categoryFilter, searchQuery, moderationSortBy, isSuper, showTestAds]);
 
-  // Registered Advertisers List (grounded in users collection)
+  // Registered Advertisers List (grounded in users collection with Point 4 sorting)
   const filteredUsers = useMemo(() => {
-    return users.filter((u) => {
+    const list = users.filter((u) => {
       const isExempt = Boolean(u.exemptFromPaymentAndKyc || u.isExempt);
       const kycStatus = u.idVerificationStatus || 'NOT_SUBMITTED';
 
@@ -295,7 +391,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       return true;
     });
-  }, [users, advKycFilter, advSearchQuery]);
+
+    return list.sort((a, b) => {
+      if (advSortBy === 'DATE_DESC') {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      }
+      if (advSortBy === 'DATE_ASC') {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeA - timeB;
+      }
+      if (advSortBy === 'NAME_ASC') {
+        return (a.name || '').localeCompare(b.name || '', 'fr-FR');
+      }
+      if (advSortBy === 'TIER_DESC') {
+        const tierRank = (t?: string) => (t === 'BUSINESS' ? 4 : t === 'ELITE' ? 3 : t === 'PRO' ? 2 : 1);
+        return tierRank(b.subscriptionTier) - tierRank(a.subscriptionTier);
+      }
+      if (advSortBy === 'ADS_DESC') {
+        const countA = ads.filter((ad) => ad.userId === a.id || (ad.contactPhone && (ad.contactPhone === a.contactPhone || ad.contactPhone === a.phoneNumber))).length;
+        const countB = ads.filter((ad) => ad.userId === b.id || (ad.contactPhone && (ad.contactPhone === b.contactPhone || ad.contactPhone === b.phoneNumber))).length;
+        return countB - countA;
+      }
+      if (advSortBy === 'REVENUE_DESC') {
+        const revA = ads.filter((ad) => ad.userId === a.id || (ad.contactPhone && (ad.contactPhone === a.contactPhone || ad.contactPhone === a.phoneNumber))).reduce((acc, x) => acc + (Number(x.paidAmount) || 0), 0);
+        const revB = ads.filter((ad) => ad.userId === b.id || (ad.contactPhone && (ad.contactPhone === b.contactPhone || ad.contactPhone === b.phoneNumber))).reduce((acc, x) => acc + (Number(x.paidAmount) || 0), 0);
+        return revB - revA;
+      }
+      return 0;
+    });
+  }, [users, advKycFilter, advSearchQuery, advSortBy, ads]);
 
   // Filtered Reports
   const filteredReports = useMemo(() => {
@@ -696,7 +823,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               {isSuper && (
                 <button
                   type="button"
-                  onClick={() => setShowTestAds((prev) => !prev)}
+                  onClick={handleToggleTestAds}
                   className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-xs border ${
                     showTestAds
                       ? 'bg-purple-100 text-purple-900 border-purple-300 hover:bg-purple-200'
@@ -1044,15 +1171,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </button>
             </div>
 
-            <div className="relative w-full md:w-64">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={advSearchQuery}
-                onChange={(e) => setAdvSearchQuery(e.target.value)}
-                placeholder="Rechercher nom, téléphone..."
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-              />
+            {/* Point 4: Controls for Advertisers: Option Trier par & Search */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Trier par :</span>
+                <select
+                  value={advSortBy}
+                  onChange={(e) => setAdvSortBy(e.target.value as AdvertiserSortOption)}
+                  className="text-xs font-bold bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden cursor-pointer"
+                >
+                  <option value="DATE_DESC">Date (Plus récents inscrits)</option>
+                  <option value="DATE_ASC">Date (Plus anciens inscrits)</option>
+                  <option value="NAME_ASC">Nom (A → Z)</option>
+                  <option value="TIER_DESC">⚡ Forfait (Business &gt; Élite &gt; Pro)</option>
+                  <option value="ADS_DESC">Volume d'annonces (Actives)</option>
+                  <option value="REVENUE_DESC">Dépenses (Total payé)</option>
+                </select>
+              </div>
+
+              <div className="relative w-full sm:w-60">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={advSearchQuery}
+                  onChange={(e) => setAdvSearchQuery(e.target.value)}
+                  placeholder="Rechercher nom, téléphone..."
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                />
+              </div>
             </div>
           </div>
 
@@ -1314,13 +1460,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     <button
                                       type="button"
                                       onClick={() => {
-                                        if (
-                                          window.confirm(
-                                            `Êtes-vous certain de vouloir promouvoir le modérateur "${u.name || u.contactPhone}" en SUPER ADMINISTRATEUR ?\n\nConformément à la règle de gouvernance, un Super Administrateur ne peut plus être rétrogradé depuis cette interface web (toute révocation future devra obligatoirement être réalisée manuellement dans la base de données Firestore).`
-                                          )
-                                        ) {
-                                          onUpdateUserRole(u.id, 'SUPER_ADMIN');
-                                        }
+                                        setAlertModalConfig({
+                                          isOpen: true,
+                                          type: 'confirm',
+                                          title: 'Promouvoir Super Administrateur ?',
+                                          message: `Êtes-vous certain de vouloir promouvoir le modérateur "${u.name || u.contactPhone}" en SUPER ADMINISTRATEUR ?\n\nConformément à la règle de gouvernance, un Super Administrateur ne peut plus être rétrogradé depuis cette interface web (toute révocation future devra obligatoirement être réalisée manuellement dans la base de données Firestore).`,
+                                          confirmLabel: 'Confirmer la promotion',
+                                          cancelLabel: 'Annuler',
+                                          onConfirm: () => {
+                                            onUpdateUserRole(u.id, 'SUPER_ADMIN');
+                                          },
+                                        });
                                       }}
                                       className="text-[10px] font-black bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 px-2 py-1 rounded-lg shadow-xs flex items-center gap-1 cursor-pointer transition-all"
                                       title="Promouvoir ce modérateur en Super Administrateur"
@@ -1980,6 +2130,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         message="Êtes-vous certain de vouloir fermer votre session d'administration BizBooster Gabon ?"
         confirmText="Déconnexion"
         cancelText="Annuler"
+      />
+
+      {/* Reusable App Alert / Confirm Modal (Point 1) */}
+      <AppAlertModal
+        config={alertModalConfig}
+        onClose={() => setAlertModalConfig(null)}
       />
     </div>
   );

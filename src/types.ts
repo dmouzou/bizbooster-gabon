@@ -207,6 +207,7 @@ export interface UserProfile {
     city?: string;
     neighborhood?: string;
   };
+  favoriteAdIds?: string[];
 }
 
 export const isUserSuperAdmin = (user?: { role?: string; isSuperAdmin?: boolean } | null): boolean => {

@@ -1,8 +1,9 @@
-import React from 'react';
-import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw, Edit3, Sparkles, CheckCircle2, ShieldCheck } from 'lucide-react';
+import React, { useState } from 'react';
+import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw, Edit3, Sparkles, CheckCircle2, ShieldCheck, Heart } from 'lucide-react';
 import { Ad } from '../types';
 import { formatFCFA, formatRemainingTime, getWhatsAppUrl } from '../utils/formatters';
 import { isAdBoostFeatured, recordAdInteraction } from '../utils/personalization';
+import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
 
 interface AdCardProps {
   ad: Ad;
@@ -10,9 +11,20 @@ interface AdCardProps {
   onOpenExtendModal?: (ad: Ad) => void;
   onEditAd?: (ad: Ad) => void;
   isOwner?: boolean;
+  isFavorite?: boolean;
+  onToggleFavorite?: (adId: string) => void;
 }
 
-export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModal, onEditAd, isOwner = false }) => {
+export const AdCard: React.FC<AdCardProps> = ({
+  ad,
+  onSelectAd,
+  onOpenExtendModal,
+  onEditAd,
+  isOwner = false,
+  isFavorite = false,
+  onToggleFavorite,
+}) => {
+  const [showVerifiedModal, setShowVerifiedModal] = useState(false);
   const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
   const isBoosted = isAdBoostFeatured(ad);
   const isVerified = Boolean(ad.isOwnerVerified || ad.isOwnerVip);
@@ -123,8 +135,8 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
             )}
           </div>
 
-          {/* Right badges: Expiration Countdown */}
-          <div className="flex flex-col items-end gap-1">
+          {/* Right badges: Expiration Countdown and Favorite button */}
+          <div className="flex flex-col items-end gap-1.5 pointer-events-auto">
             <div
               className={`text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1 shadow-sm backdrop-blur-xs ${
                 isExpired
@@ -135,6 +147,26 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
               <Clock className="w-3 h-3 text-amber-300" />
               <span>{remainingTimeLabel}</span>
             </div>
+
+            {onToggleFavorite && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleFavorite(ad.id);
+                }}
+                className={`p-2 rounded-full backdrop-blur-md transition-all duration-200 shadow-md cursor-pointer ${
+                  isFavorite
+                    ? 'bg-rose-500 text-white hover:bg-rose-600 scale-105 ring-2 ring-white/60'
+                    : 'bg-slate-950/60 hover:bg-slate-950/85 text-white hover:text-rose-400 border border-white/20'
+                }`}
+                title={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+                aria-label={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+                id={`favorite-btn-${ad.id}`}
+              >
+                <Heart className={`w-3.5 h-3.5 transition-transform duration-200 ${isFavorite ? 'fill-current scale-110' : ''}`} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -162,7 +194,7 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
       {/* Card Body */}
       <div className="p-4 flex-1 flex flex-col justify-between">
         <div>
-          {/* Spatial breadcrumb + Vendeur Vérifié in card content */}
+          {/* Spatial breadcrumb + Annonceur Vérifié in card content */}
           <div className="flex items-center justify-between gap-1 mb-2 flex-wrap">
             {ad.location && (
               <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-800 bg-emerald-50 px-2 py-1 rounded-md w-fit">
@@ -173,10 +205,18 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
               </div>
             )}
             {isVerified && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-2 py-0.5 rounded-md shrink-0">
-                <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
-                <span>Vendeur Vérifié</span>
-              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowVerifiedModal(true);
+                }}
+                className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-800 bg-emerald-100/90 hover:bg-emerald-200 border border-emerald-300 px-2 py-0.5 rounded-md shrink-0 transition-colors cursor-pointer group/badge"
+                title="En savoir plus sur la vérification KYC de l'annonceur"
+              >
+                <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0 group-hover/badge:scale-110 transition-transform" />
+                <span>Annonceur Vérifié</span>
+              </button>
             )}
           </div>
 
@@ -205,21 +245,32 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
         <div>
           {/* Price Tag */}
           <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between gap-2 mb-3">
-            <div>
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                {ad.mainCategory === 'EMPLOI' ? 'Salaire proposé' : 'Prix demandé'}
-              </span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-base sm:text-lg font-black tracking-tight text-emerald-700">
-                  {formatFCFA(ad.price)}
+            {ad.mainCategory !== 'NECROLOGIE' ? (
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                  {ad.mainCategory === 'EMPLOI' ? 'Salaire proposé' : 'Prix demandé'}
                 </span>
-                {ad.priceUnit && ad.priceUnit !== 'total' && (
-                  <span className="text-xs font-semibold text-slate-500">
-                    /{ad.priceUnit}
+                <div className="flex items-baseline gap-1">
+                  <span className="text-base sm:text-lg font-black tracking-tight text-emerald-700">
+                    {formatFCFA(ad.price)}
                   </span>
-                )}
+                  {ad.priceUnit && ad.priceUnit !== 'total' && (
+                    <span className="text-xs font-semibold text-slate-500">
+                      /{ad.priceUnit}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                  Rubrique
+                </span>
+                <span className="text-xs font-extrabold text-slate-800">
+                  Nécrologie & Obsèques
+                </span>
+              </div>
+            )}
 
             {/* Owner action buttons */}
             {isOwner && (
@@ -283,6 +334,14 @@ export const AdCard: React.FC<AdCardProps> = ({ ad, onSelectAd, onOpenExtendModa
           </div>
         </div>
       </div>
+
+      {showVerifiedModal && (
+        <VerifiedAdvertiserModal
+          isOpen={showVerifiedModal}
+          onClose={() => setShowVerifiedModal(false)}
+          advertiserName={ad.contactName}
+        />
+      )}
     </div>
   );
 };

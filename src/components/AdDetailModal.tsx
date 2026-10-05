@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3, ShieldCheck } from 'lucide-react';
+import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3, ShieldCheck, Heart } from 'lucide-react';
 import { Ad, UserProfile } from '../types';
 import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner } from '../utils/formatters';
 import { ReportAdModal } from './ReportAdModal';
 import { ShareAdModal } from './ShareAdModal';
+import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
 
 interface AdDetailModalProps {
   ad: Ad | null;
@@ -11,16 +12,28 @@ interface AdDetailModalProps {
   onOpenExtendModal: (ad: Ad) => void;
   onEditAd?: (ad: Ad) => void;
   currentUser?: UserProfile | null;
+  isFavorite?: boolean;
+  onToggleFavorite?: (adId: string) => void;
 }
 
-export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpenExtendModal, onEditAd, currentUser }) => {
+export const AdDetailModal: React.FC<AdDetailModalProps> = ({
+  ad,
+  onClose,
+  onOpenExtendModal,
+  onEditAd,
+  currentUser,
+  isFavorite = false,
+  onToggleFavorite,
+}) => {
   if (!ad) return null;
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isReportOpen, setIsReportOpen] = useState(false);
+  const [showVerifiedModal, setShowVerifiedModal] = useState(false);
   const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
   const isOwner = isAdOwner(ad, currentUser ?? null);
+  const isVerified = Boolean(ad.isOwnerVerified || ad.isOwnerVip);
 
   return (
     <div className="app-modal-overlay">
@@ -40,6 +53,23 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
           </div>
 
           <div className="flex items-center gap-2">
+            {onToggleFavorite && (
+              <button
+                type="button"
+                onClick={() => onToggleFavorite(ad.id)}
+                className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  isFavorite
+                    ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-sm'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                }`}
+                title={isFavorite ? 'Retirer des favoris' : 'Sauvegarder dans vos favoris'}
+                id="toggle-detail-favorite"
+              >
+                <Heart className={`w-3.5 h-3.5 ${isFavorite ? 'fill-current text-white' : 'text-rose-400'}`} />
+                <span className="hidden sm:inline">{isFavorite ? 'Favori' : 'Sauvegarder'}</span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsShareModalOpen(true)}
               className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -100,11 +130,16 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
                 </span>
               ) : null}
 
-              {(ad.isOwnerVerified || ad.isOwnerVip) && (
-                <span className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-800 text-xs font-black px-2.5 py-1 rounded-lg border border-emerald-300 shadow-xs">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Vendeur Vérifié</span>
-                </span>
+              {isVerified && (
+                <button
+                  type="button"
+                  onClick={() => setShowVerifiedModal(true)}
+                  className="inline-flex items-center gap-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-xs font-black px-2.5 py-1 rounded-lg border border-emerald-300 shadow-xs transition-colors cursor-pointer group/badge"
+                  title="En savoir plus sur la vérification KYC de l'annonceur"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 group-hover/badge:scale-110 transition-transform" />
+                  <span>Annonceur Vérifié</span>
+                </button>
               )}
 
               {ad.propertyType && (
@@ -199,21 +234,32 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
 
           {/* Pricing & Expiration Panel */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <span className="text-xs font-bold uppercase text-slate-500 tracking-wider">
-                {ad.mainCategory === 'EMPLOI' ? "Salaire proposé par l'employeur" : "Prix fixé par l'annonceur"}
-              </span>
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl sm:text-3xl font-black text-emerald-700">
-                  {formatFCFA(ad.price)}
+            {ad.mainCategory !== 'NECROLOGIE' ? (
+              <div>
+                <span className="text-xs font-bold uppercase text-slate-500 tracking-wider">
+                  {ad.mainCategory === 'EMPLOI' ? "Salaire proposé par l'employeur" : "Prix fixé par l'annonceur"}
                 </span>
-                {ad.priceUnit && ad.priceUnit !== 'total' && (
-                  <span className="text-sm font-bold text-slate-600">
-                    /{ad.priceUnit}
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-2xl sm:text-3xl font-black text-emerald-700">
+                    {formatFCFA(ad.price)}
                   </span>
-                )}
+                  {ad.priceUnit && ad.priceUnit !== 'total' && (
+                    <span className="text-sm font-bold text-slate-600">
+                      /{ad.priceUnit}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div>
+                <span className="text-xs font-bold uppercase text-slate-500 tracking-wider">
+                  Rubrique
+                </span>
+                <div className="text-xl font-black text-slate-800">
+                  Nécrologie & Obsèques
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center gap-3">
               <div className="text-right">
@@ -310,12 +356,26 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
               </div>
             )}
 
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <span className="font-bold text-slate-500 block mb-1">Garantie BIZBOOSTER</span>
-              <p className="text-slate-700 flex items-center gap-1.5">
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
+              <span className="font-bold text-xs uppercase text-slate-500 tracking-wider block">Garantie BIZBOOSTER</span>
+              <p className="text-slate-700 text-xs sm:text-sm flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>Paiement certifié {ad.paymentMethod === 'AIRTEL_MONEY' ? 'Airtel Money' : 'Moov Money'}</span>
               </p>
+              {isVerified && (
+                <button
+                  type="button"
+                  onClick={() => setShowVerifiedModal(true)}
+                  className="w-full text-left flex items-center justify-between gap-2 p-2 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 rounded-lg text-emerald-900 transition-colors group/garantie cursor-pointer"
+                  title="En savoir plus sur la certification de l'annonceur"
+                >
+                  <span className="flex items-center gap-1.5 text-xs font-bold">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 group-hover/garantie:scale-110 transition-transform" />
+                    <span>Annonceur Vérifié (Identité & Contact certifiés KYC)</span>
+                  </span>
+                  <span className="text-[11px] font-semibold text-emerald-700 underline shrink-0">Détails</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -379,6 +439,15 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
         onClose={() => setIsShareModalOpen(false)}
         ad={ad}
       />
+
+      {/* Verified Advertiser Info Modal */}
+      {showVerifiedModal && (
+        <VerifiedAdvertiserModal
+          isOpen={showVerifiedModal}
+          onClose={() => setShowVerifiedModal(false)}
+          advertiserName={ad.contactName}
+        />
+      )}
     </div>
   );
 };
