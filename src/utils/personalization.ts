@@ -76,6 +76,36 @@ export function isAdBoostFeatured(ad: Ad): boolean {
   return new Date(ad.featuredUntil).getTime() > Date.now();
 }
 
+export function getUserSelectedPreferences(): { preferredCategories: string[]; preferredProvinces: string[] } {
+  try {
+    const raw = localStorage.getItem('bizbooster_user_preferences');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        preferredCategories: parsed.preferredCategories || [],
+        preferredProvinces: parsed.preferredProvinces || [],
+      };
+    }
+  } catch (_) {}
+  return { preferredCategories: [], preferredProvinces: [] };
+}
+
+export function getUserFavoriteCategories(allAds?: Ad[]): Set<string> {
+  try {
+    const favRaw = localStorage.getItem('bizbooster_guest_favorites');
+    if (favRaw && allAds) {
+      const favIds: string[] = JSON.parse(favRaw);
+      const catSet = new Set<string>();
+      for (const id of favIds) {
+        const found = allAds.find((a) => a.id === id);
+        if (found?.mainCategory) catSet.add(found.mainCategory);
+      }
+      return catSet;
+    }
+  } catch (_) {}
+  return new Set();
+}
+
 /**
  * Computes a personalization & relevance score for an ad:
  * 1. Boosted/Featured ads are strictly ranked by tier level:
@@ -86,9 +116,10 @@ export function isAdBoostFeatured(ad: Ad): boolean {
  *    - Standard:    11,000,000 pts
  * 2. Within the same tier, boost recency & fresh publication add up to 100,000 pts.
  * 3. User category & location affinities add up to 65,000 pts.
- * 4. Regular non-boosted ads score below 1,000,000 pts.
+ * 4. First-visit preferences and favorites categories add up to 140,000 pts (Point 3).
+ * 5. Regular non-boosted ads score below 1,000,000 pts.
  */
-export function computeAdScore(ad: Ad, prefs: UserPreferences): number {
+export function computeAdScore(ad: Ad, prefs: UserPreferences, favoriteCats?: Set<string>): number {
   let score = 0;
   const now = Date.now();
 
@@ -110,7 +141,7 @@ export function computeAdScore(ad: Ad, prefs: UserPreferences): number {
   const recencyBoost = Math.max(0, 50_000 - hoursOld * 150);
   score += recencyBoost;
 
-  // 3. User Category Affinity
+  // 3. User Category Affinity (historique de consultation)
   const catViews = prefs.categories[ad.mainCategory] || 0;
   score += Math.min(catViews * 8_000, 40_000);
 
@@ -124,18 +155,34 @@ export function computeAdScore(ad: Ad, prefs: UserPreferences): number {
     score += Math.min(cityViews * 5_000, 25_000);
   }
 
+  // 5. Préférences sélectionnées à la 1ère visite (Point 3)
+  const explicitPrefs = getUserSelectedPreferences();
+  if (explicitPrefs.preferredCategories.includes(ad.mainCategory)) {
+    score += 60_000;
+  }
+  if (ad.location?.province && explicitPrefs.preferredProvinces.includes(ad.location.province)) {
+    score += 30_000;
+  }
+
+  // 6. Prise en compte des favoris (Point 3)
+  if (favoriteCats && favoriteCats.has(ad.mainCategory)) {
+    score += 50_000;
+  }
+
   return score;
 }
 
 /**
- * Sorts ads personalized according to the user's past actions and preferences,
+ * Sorts ads personalized according to the user's past actions, explicit preferences and favorites,
  * while strictly honoring the "En Tête" tier hierarchy (VIP > Business > Elite > Pro > Standard).
  */
 export function sortAdsPersonalized(ads: Ad[]): Ad[] {
   const prefs = getUserPreferences();
+  const favoriteCats = getUserFavoriteCategories(ads);
+
   return [...ads].sort((a, b) => {
-    const scoreA = computeAdScore(a, prefs);
-    const scoreB = computeAdScore(b, prefs);
+    const scoreA = computeAdScore(a, prefs, favoriteCats);
+    const scoreB = computeAdScore(b, prefs, favoriteCats);
     if (scoreB !== scoreA) {
       return scoreB - scoreA;
     }

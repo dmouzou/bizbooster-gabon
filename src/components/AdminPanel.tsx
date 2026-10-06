@@ -219,9 +219,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [advSearchQuery, setAdvSearchQuery] = useState('');
   const [advKycFilter, setAdvKycFilter] = useState<'ALL' | 'EXEMPT' | 'VERIFIED' | 'PENDING' | 'NOT_SUBMITTED'>('ALL');
 
-  // Reports filters
+  // Reports filters (Point 4: Trier par)
   const [reportStatusFilter, setReportStatusFilter] = useState<'ALL' | 'PENDING' | 'RESOLVED' | 'DISMISSED'>('PENDING');
   const [reportSearchQuery, setReportSearchQuery] = useState('');
+  const [reportSortBy, setReportSortBy] = useState<'DATE_DESC' | 'DATE_ASC' | 'REPORTS_COUNT' | 'REASON'>('DATE_DESC');
 
   // Modal states
   const [rejectingAd, setRejectingAd] = useState<Ad | null>(null);
@@ -233,14 +234,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [rejectingKycUser, setRejectingKycUser] = useState<UserProfile | null>(null);
   const [kycRejectionReason, setKycRejectionReason] = useState('Document illisible ou tronqué.');
 
-  // Quick preset rejection reasons for Gabon market
+  // Quick preset rejection reasons conforming to CGU & BizBooster Gabon context (Point 2)
   const PRESET_REASONS = [
-    'Absence de titre foncier ou suspicion de litige sur la parcelle / le bien immobilier.',
-    'Photos non conformes, floues ou téléchargées depuis Internet sans rapport avec le bien réel.',
-    'Prix irréaliste ou manifestement erroné par rapport au marché gabonais.',
-    'Numéro de téléphone inactif ou non joignable lors du test de contact.',
-    'Non-respect de la catégorie ou description trompeuse.',
-    'Numéro de châssis / carte grise non renseigné pour le véhicule.',
+    'Photos non conformes, floues, avec filigranes ou sans rapport avec le bien réel (CGU Art. 2.2).',
+    'Prix irréaliste, fictif ou manifestement erroné (ex: 0 FCFA ou 1 FCFA pour tromper les filtres - CGU Art. 2.1).',
+    'Non-respect de la catégorie ou description trompeuse / incohérente (CGU Art. 2).',
+    'Contenu prohibé ou illicite : bien ou service interdit par la loi gabonaise (armes, stupéfiants, contrefaçons, faune protégée - CGU Art. 2.3).',
+    'Propos injurieux, diffamatoires, indécents ou portant atteinte aux bonnes mœurs et à la dignité (CGU Art. 2.2 & 2.6).',
+    'Annonce en double ou publication répétée (spam) d’un même bien ou service.',
+    'Coordonnées de contact, liens externes ou publicités incrustés directement dans le titre ou les visuels.',
+    'Avis d’obsèques ou Avis de recherche : signalement frauduleux, informations invérifiables ou atteinte à la dignité (CGU Art. 2.6).',
   ];
 
   const KYC_PRESET_REASONS = [
@@ -424,9 +427,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     });
   }, [users, advKycFilter, advSearchQuery, advSortBy, ads]);
 
-  // Filtered Reports
+  // Filtered & Sorted Reports (Point 4: Trier par)
   const filteredReports = useMemo(() => {
-    return reports.filter((r) => {
+    const list = reports.filter((r) => {
       if (reportStatusFilter !== 'ALL' && r.status !== reportStatusFilter) return false;
       if (reportSearchQuery.trim()) {
         const q = reportSearchQuery.toLowerCase();
@@ -438,7 +441,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       }
       return true;
     });
-  }, [reports, reportStatusFilter, reportSearchQuery]);
+
+    return list.sort((a, b) => {
+      if (reportSortBy === 'DATE_DESC') {
+        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      }
+      if (reportSortBy === 'DATE_ASC') {
+        return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      }
+      if (reportSortBy === 'REPORTS_COUNT') {
+        const adA = ads.find((ad) => ad.id === a.adId);
+        const adB = ads.find((ad) => ad.id === b.adId);
+        const countA = adA?.reportsCount || 1;
+        const countB = adB?.reportsCount || 1;
+        return countB - countA;
+      }
+      if (reportSortBy === 'REASON') {
+        return (a.reason || '').localeCompare(b.reason || '');
+      }
+      return 0;
+    });
+  }, [reports, reportStatusFilter, reportSearchQuery, reportSortBy, ads]);
 
   const pendingKycCount = useMemo(
     () => users.filter((u) => u.idVerificationStatus === 'PENDING').length,
@@ -1676,15 +1699,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </button>
             </div>
 
-            <div className="relative w-full md:w-72">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={reportSearchQuery}
-                onChange={(e) => setReportSearchQuery(e.target.value)}
-                placeholder="Chercher par annonce, motif, tél..."
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500 focus:outline-hidden"
-              />
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full md:w-auto">
+              {/* Point 4: Trier par dans Signalement et Fraudes */}
+              <div className="flex items-center gap-1.5 w-full sm:w-auto">
+                <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Trier par :</span>
+                <select
+                  value={reportSortBy}
+                  onChange={(e) => setReportSortBy(e.target.value as any)}
+                  className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-red-500 focus:outline-hidden cursor-pointer"
+                  id="admin-reports-sort-select"
+                >
+                  <option value="DATE_DESC">Date (Plus récent)</option>
+                  <option value="DATE_ASC">Date (Plus ancien)</option>
+                  <option value="REPORTS_COUNT">Les plus signalés (Annonce)</option>
+                  <option value="REASON">Motif (A-Z)</option>
+                </select>
+              </div>
+
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={reportSearchQuery}
+                  onChange={(e) => setReportSearchQuery(e.target.value)}
+                  placeholder="Chercher par annonce, motif, tél..."
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-red-500 focus:outline-hidden"
+                />
+              </div>
             </div>
           </div>
 
@@ -1955,7 +1996,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   value={customRejectText}
                   onChange={(e) => setCustomRejectText(e.target.value)}
                   rows={3}
-                  placeholder="Ex: Titre foncier non visible, documents illisibles..."
+                  placeholder="Ex: Photos non conformes, prix erroné, contenu contraire aux CGU..."
                   className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-800 focus:bg-white focus:ring-2 focus:ring-red-500 focus:outline-hidden"
                 />
               </div>

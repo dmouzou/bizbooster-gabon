@@ -372,5 +372,232 @@ export const INITIAL_ADS: Ad[] = [
     transactionRef: 'AM-NEC-102931',
     viewsCount: 450,
     isOwnerVerified: true
+  },
+  // 12. IMMOBILIER - CORNER VIP (VENTE PRESTIGE)
+  {
+    id: 'ad-immo-vip-1',
+    isTest: true,
+    isVipCorner: true,
+    title: 'Propriété de Maître - Villa Prestige vue océan avec piscine à débordement',
+    mainCategory: 'IMMOBILIER',
+    transactionType: 'VENTE',
+    propertyType: 'Villa',
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'La Sablière'
+    },
+    price: 195000000,
+    priceUnit: 'total',
+    description: 'Propriété d\'exception située à La Sablière. 6 suites de maître climatisées, vaste salon cathédrale, cuisine italienne équipée, piscine à débordement avec vue sur l\'océan, guérite de sécurité avec caméras, groupe électrogène 100 kVA automatique et bâche à eau 10 000L. Titre foncier individuel disponible.',
+    images: [
+      'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=1000&q=80',
+      'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 77 10 20 30',
+    hasWhatsapp: true,
+    contactName: 'Agence Immobilière Prestige Gabon',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 16000,
+    paymentMethod: 'AIRTEL_MONEY',
+    transactionRef: 'AM-VIP-994821',
+    viewsCount: 520,
+    isOwnerVerified: true
+  },
+  // 13. MATÉRIEL ROULANT - CORNER VIP (VENTE VÉHICULE DE LUXE)
+  {
+    id: 'ad-auto-vip-1',
+    isTest: true,
+    isVipCorner: true,
+    title: 'Toyota Land Cruiser 300 ZX V6 Twin-Turbo 2024 - Neuf 0 km',
+    mainCategory: 'MATERIEL_ROULANT',
+    transactionType: 'VENTE',
+    vehicleData: {
+      category: 'Voitures',
+      brand: 'TOYOTA',
+      model: 'Land Cruiser 300 ZX'
+    },
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'Batterie IV'
+    },
+    price: 88000000,
+    priceUnit: 'total',
+    description: 'Toyota Land Cruiser Série 300 ZX, moteur V6 Bi-Turbo essence 415 ch, boîte automatique 10 rapports, intérieur cuir beige ventilé, écran multimédia 12.3 pouces, système audio JBL 14 haut-parleurs, suspension adaptative AVS, toit ouvrant. Véhicule dédouané, carte grise gabonaise immédiate.',
+    images: [
+      'https://images.unsplash.com/photo-1594502184342-2e12f877aa73?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 65 33 22 11',
+    hasWhatsapp: true,
+    contactName: 'Prestige Motors Libreville',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 16000,
+    paymentMethod: 'MOOV_MONEY',
+    transactionRef: 'MM-VIP-338210',
+    viewsCount: 680,
+    isOwnerVerified: true
+  },
+  // 14. MATÉRIEL ROULANT - CORNER VIP (LOCATION HAUT DE GAMME)
+  {
+    id: 'ad-auto-vip-2',
+    isTest: true,
+    isVipCorner: true,
+    title: 'Range Rover V8 Autobiography avec chauffeur de sécurité - Mise à disposition',
+    mainCategory: 'MATERIEL_ROULANT',
+    transactionType: 'LOCATION',
+    vehicleData: {
+      category: 'Voitures',
+      brand: 'LAND ROVER',
+      model: 'Range Rover Autobiography'
+    },
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'Centre-ville'
+    },
+    price: 150000,
+    priceUnit: 'jour',
+    description: 'Location exclusive Range Rover Autobiography pour personnalités d\'affaires, délégations diplomatiques et événements officiels. Chauffeur professionnel bilingue formé à la conduite sécurisée, climatisation quadrizone, vitres teintées sécurisées, confort d\'exception.',
+    images: [
+      'https://images.unsplash.com/photo-1563720223185-11003d516935?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 74 88 99 00',
+    hasWhatsapp: true,
+    contactName: 'VIP Executive Transport Gabon',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 9500,
+    paymentMethod: 'AIRTEL_MONEY',
+    transactionRef: 'AM-VIP-773120',
+    viewsCount: 310,
+    isOwnerVerified: true
+  },
+  // 15. AVIS DE RECHERCHE - TITRE FONCIER ET DOCUMENTS ÉGARÉS
+  {
+    id: 'ad-avis-1',
+    isTest: true,
+    title: 'Avis de recherche urgent - Pochette avec Titre Foncier et Passeports égarés',
+    mainCategory: 'AVIS_DE_RECHERCHE',
+    transactionType: 'VENTE',
+    avisRechercheData: {
+      category: 'Document ou Titre officiel perdu',
+      targetName: 'Titre Foncier N° 5812 & 2 Passeports gabonais',
+      lastSeenLocation: 'Zone PK8 / Gare routière de Libreville',
+      lastSeenDate: 'Lundi 5 Octobre 2026 vers 16h',
+      hasReward: true,
+      rewardAmount: 250000,
+      contactEmergency: '+241 77 90 12 34'
+    },
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'PK8'
+    },
+    price: 0,
+    priceUnit: 'total',
+    description: 'Une sacoche noire en cuir contenant le dossier original d\'un Titre Foncier ainsi que deux passeports gabonais au nom de la famille OBIANG a été oubliée dans un taxi collectif vers le rond-point du PK8. Forte récompense de 250 000 FCFA promise à toute personne rapportant le dossier intact.',
+    images: [
+      'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 77 90 12 34',
+    hasWhatsapp: true,
+    contactName: 'M. OBIANG Marc',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 86400000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 3000,
+    paymentMethod: 'AIRTEL_MONEY',
+    transactionRef: 'AM-AVIS-194021',
+    viewsCount: 420,
+    isOwnerVerified: true
+  },
+  // 16. AUTRES EMPLOIS - DEMANDEUR D'EMPLOI AVEC CV ATTACHÉ (SANS PHOTO OBLIGATOIRE)
+  {
+    id: 'ad-emploi-cv-1',
+    isTest: true,
+    title: 'Comptable Senior & Contrôleur de Gestion (10 ans d\'expérience) - CV disponible',
+    mainCategory: 'AUTRES_EMPLOIS',
+    transactionType: 'LOCATION',
+    autresEmploisData: {
+      subCategory: "Demandeur d'emploi",
+      profession: 'Comptable Senior / Chef Comptable',
+      experienceYears: 'Plus de 8 ans',
+      contractType: 'CDI',
+      cvFileName: 'CV_Serge_Ndong_Chef_Comptable_2026.pdf',
+      cvFileType: 'pdf',
+      cvFileSize: 145000
+    },
+    cvUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+    cvFileName: 'CV_Serge_Ndong_Chef_Comptable_2026.pdf',
+    cvFileType: 'pdf',
+    cvFileSize: 145000,
+    location: {
+      province: 'Estuaire',
+      city: 'Libreville',
+      neighborhood: 'Mont-Bouët'
+    },
+    price: 0,
+    priceUnit: 'mois',
+    description: 'Cadre comptable diplômé Bac+5 en audit et contrôle de gestion. Maîtrise avancée de Sage 100 Cloud, SYSCOHADA révisé, déclarations fiscales DGI/CNSS et reporting financier. Disponible immédiatement pour poste de Responsable Administratif et Financier ou Chef Comptable. CV ci-joint.',
+    images: [],
+    contactPhone: '+241 66 78 90 12',
+    hasWhatsapp: true,
+    contactName: 'Serge-Arsène NDONG',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 3000,
+    paymentMethod: 'AIRTEL_MONEY',
+    transactionRef: 'AM-EMP-849201',
+    viewsCount: 290,
+    isOwnerVerified: true
+  },
+  // 17. AUTRES EMPLOIS - OFFRE D'EMPLOI
+  {
+    id: 'ad-emploi-offre-1',
+    isTest: true,
+    title: 'Recrutement : Responsable Logistique et Opérations Flotte (H/F)',
+    mainCategory: 'AUTRES_EMPLOIS',
+    transactionType: 'VENTE',
+    autresEmploisData: {
+      subCategory: "Offre d'emploi",
+      profession: 'Responsable Logistique & Flotte',
+      experienceYears: '5 à 7 ans',
+      contractType: 'CDI'
+    },
+    location: {
+      province: 'Estuaire',
+      city: 'Owendo',
+      neighborhood: 'Port d\'Owendo'
+    },
+    price: 750000,
+    priceUnit: 'mois',
+    description: 'Société de transport et logistique basée à Owendo recherche son Responsable Logistique et Flotte. Missions : supervision de la flotte poids lourds, optimisation des tournées, gestion des stocks et maintenance préventive. Salaire motivant selon profil.',
+    images: [
+      'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=1000&q=80'
+    ],
+    contactPhone: '+241 74 15 26 37',
+    hasWhatsapp: true,
+    contactName: 'Direction des Ressources Humaines',
+    durationDays: 365,
+    publishedAt: new Date(Date.now() - 86400000).toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    status: 'ACTIVE',
+    paidAmount: 5500,
+    paymentMethod: 'MOOV_MONEY',
+    transactionRef: 'MM-EMP-991204',
+    viewsCount: 512,
+    isOwnerVerified: true
   }
 ];

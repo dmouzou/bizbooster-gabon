@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Building2, Car, Package, Briefcase, Layers, ChevronLeft, ChevronRight, GraduationCap, Heart } from 'lucide-react';
+import { Building2, Car, Package, Briefcase, Layers, ChevronLeft, ChevronRight, GraduationCap, Heart, Search, UserCheck } from 'lucide-react';
 import { MainCategory } from '../types';
 
 interface CategoryBarProps {
@@ -177,12 +177,74 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
       subtitle: 'Éducation, Police, Armée, Santé...',
       icon: <Heart className="w-5 h-5" />,
     },
+    {
+      id: 'AVIS_DE_RECHERCHE',
+      label: '7. AVIS DE RECHERCHE',
+      subtitle: 'Personnes, Objets, Animaux perdus',
+      icon: <Search className="w-5 h-5" />,
+    },
+    {
+      id: 'AUTRES_EMPLOIS',
+      label: '8. AUTRES EMPLOIS',
+      subtitle: 'Demandeurs avec CV, Offres, Stages',
+      icon: <UserCheck className="w-5 h-5" />,
+    },
   ];
 
   return (
     <div className="bg-white border-b border-slate-200">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5">
-        {/* Categories container: scrollbar-none to prevent browser duplicate scrollbar */}
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5">
+        {/* Point 2 Desktop: Toutes les catégories sont visibles SIMULTANÉMENT sans avoir à scroller */}
+        <div className="hidden md:grid md:grid-cols-5 lg:grid-cols-9 gap-1.5 select-none">
+          {categories.map((cat) => {
+            const isSelected = activeCategory === cat.id;
+            const count = categoryCounts[cat.id] || 0;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => handleSelect(cat.id)}
+                className={`flex flex-col items-center justify-between p-2 rounded-xl border transition-all text-center cursor-pointer group ${
+                  isSelected
+                    ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-xs ring-1 ring-emerald-400/50'
+                    : 'bg-white border-slate-200 text-slate-700 hover:border-emerald-300 hover:bg-slate-50'
+                }`}
+                id={`cat-button-desktop-${cat.id.toLowerCase()}`}
+                title={`${cat.label} • ${cat.subtitle}`}
+              >
+                <div
+                  className={`p-1.5 rounded-lg transition-transform group-hover:scale-105 ${
+                    isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {cat.icon}
+                </div>
+                <span className="font-extrabold text-[11px] leading-tight mt-1.5 text-slate-900 line-clamp-1">
+                  {cat.id === 'ALL'
+                    ? 'Toutes'
+                    : cat.id === 'MATERIEL_ROULANT'
+                    ? 'Véhicules'
+                    : cat.id === 'COURS_A_DOMICILE'
+                    ? 'Cours'
+                    : cat.id === 'AVIS_DE_RECHERCHE'
+                    ? 'Recherche'
+                    : cat.label.replace(/^\d+\.\s*/, '')}
+                </span>
+                <span
+                  className={`text-[9px] font-bold px-1.5 py-0.2 mt-1 rounded-full ${
+                    isSelected
+                      ? 'bg-emerald-200 text-emerald-900'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Mobile horizontal scroll with smooth indicators */}
         <div
           ref={scrollContainerRef}
           onScroll={updateScrollState}
@@ -191,7 +253,7 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUpOrLeave}
           onMouseLeave={handleMouseUpOrLeave}
-          className="flex items-center gap-2.5 overflow-x-auto pb-1 scrollbar-none select-none cursor-grab active:cursor-grabbing scroll-smooth"
+          className="md:hidden flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none select-none cursor-grab active:cursor-grabbing scroll-smooth"
         >
           {categories.map((cat) => {
             const isSelected = activeCategory === cat.id;
@@ -200,7 +262,7 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
                 key={cat.id}
                 type="button"
                 onClick={() => handleSelect(cat.id)}
-                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border transition-all text-left whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all text-left whitespace-nowrap shrink-0 cursor-pointer ${
                   isSelected
                     ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-xs ring-1 ring-emerald-400/40'
                     : 'bg-white border-slate-200/80 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
@@ -208,17 +270,17 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
                 id={`cat-button-${cat.id.toLowerCase()}`}
               >
                 <div
-                  className={`p-2 rounded-lg ${
+                  className={`p-1.5 rounded-lg ${
                     isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
                   }`}
                 >
                   {cat.icon}
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm tracking-tight">{cat.label}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-xs tracking-tight">{cat.label}</span>
                     <span
-                      className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${
+                      className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
                         isSelected
                           ? 'bg-emerald-200/80 text-emerald-900'
                           : 'bg-slate-100 text-slate-600'
@@ -227,16 +289,15 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
                       {categoryCounts[cat.id] || 0}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-500 font-medium">{cat.subtitle}</p>
                 </div>
               </button>
             );
           })}
         </div>
 
-        {/* Unified Navigation: Left & Right arrows associated with a SINGLE cursor slider */}
+        {/* Unified Navigation on Mobile when overflow */}
         {hasOverflow && (
-          <div className="flex items-center justify-center gap-2.5 pt-2">
+          <div className="md:hidden flex items-center justify-center gap-2.5 pt-1.5">
             {/* Left arrow */}
             <button
               type="button"

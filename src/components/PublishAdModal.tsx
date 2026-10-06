@@ -32,6 +32,10 @@ import {
   Heart,
   RotateCcw,
   Tag,
+  Search,
+  UserCheck,
+  Crown,
+  Download,
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -39,6 +43,10 @@ import { storage, auth, db } from '../services/firebase';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
 import {
   Ad,
+  AvisRechercheCategory,
+  AvisRechercheData,
+  AutresEmploisSubCategory,
+  AutresEmploisData,
   BricABracCategory,
   DomesticJobType,
   JobAdKind,
@@ -67,11 +75,14 @@ import {
   BRIC_A_BRAC_CATEGORIES,
   DOMESTIC_JOB_TYPES,
   NECROLOGIE_MINISTRIES,
+  AVIS_RECHERCHE_CATEGORIES,
+  AUTRES_EMPLOIS_SUBCATEGORIES,
   PRICING_CONFIG,
   TUTORING_LEVELS,
   TUTORING_SUBJECTS,
 } from '../data/categoriesData';
-import { calculateBill, formatFCFA } from '../utils/formatters';
+import { calculateBill, formatFCFA, formatPriceDisplay, formatPriceUnit } from '../utils/formatters';
+import { isAdVipCornerEligible, getVipThresholdDescription, VIP_CORNER_INFO } from '../utils/vipCorner';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
 import { CguModal } from './CguModal';
 
@@ -120,6 +131,14 @@ const SAMPLE_IMAGE_PRESETS: Record<MainCategory, string[]> = {
   NECROLOGIE: [
     'https://images.unsplash.com/photo-1518895949257-7621c3c786d7?auto=format&fit=crop&w=1000&q=80',
     'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=1000&q=80',
+  ],
+  AVIS_DE_RECHERCHE: [
+    'https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?auto=format&fit=crop&w=1000&q=80',
+    'https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&w=1000&q=80',
+  ],
+  AUTRES_EMPLOIS: [
+    'https://images.unsplash.com/photo-1521791136064-7986c2920216?auto=format&fit=crop&w=1000&q=80',
+    'https://images.unsplash.com/photo-1586281380349-632531db7ed4?auto=format&fit=crop&w=1000&q=80',
   ],
 };
 
@@ -204,6 +223,28 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   const [necroFuneralProgram, setNecroFuneralProgram] = useState<string>('');
   const [necroFamilyContact, setNecroFamilyContact] = useState<string>('');
 
+  // Avis de recherche specifics (Point 2)
+  const [avisCategory, setAvisCategory] = useState<AvisRechercheCategory>('Personne disparue');
+  const [avisTargetName, setAvisTargetName] = useState<string>('');
+  const [avisLastSeenDate, setAvisLastSeenDate] = useState<string>('');
+  const [avisLastSeenLocation, setAvisLastSeenLocation] = useState<string>('');
+  const [avisHasReward, setAvisHasReward] = useState<boolean>(false);
+  const [avisRewardAmount, setAvisRewardAmount] = useState<number | ''>('');
+  const [avisEmergencyContact, setAvisEmergencyContact] = useState<string>('');
+
+  // Autres Emplois specifics (Point 2)
+  const [autresEmploisSubCategory, setAutresEmploisSubCategory] = useState<AutresEmploisSubCategory>("Demandeur d'emploi");
+  const [autresEmploisProfession, setAutresEmploisProfession] = useState<string>('');
+  const [autresEmploisContractType, setAutresEmploisContractType] = useState<string>('CDI');
+  const [autresEmploisExperience, setAutresEmploisExperience] = useState<string>('');
+
+  // CV attachment specifics (Point 2: CV obligatoire pour Demandeur d'emploi - .pdf, .docx, .md)
+  const [cvFile, setCvFile] = useState<File | null>(null);
+  const [cvDataUrl, setCvDataUrl] = useState<string>('');
+  const [cvFileName, setCvFileName] = useState<string>('');
+  const [cvFileType, setCvFileType] = useState<string>('');
+  const [cvFileSize, setCvFileSize] = useState<number>(0);
+
   // Point 4: Format category and subcategory at the top of Step 2
   const getCategoryHeaderSummary = () => {
     switch (mainCategory) {
@@ -239,6 +280,16 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
           ? `Nécrologie - Avis d'Obsèques (${necroMinistry})`
           : "Nécrologie - Avis d'Obsèques";
       }
+      case 'AVIS_DE_RECHERCHE': {
+        return avisCategory
+          ? `Avis de Recherche - ${avisCategory}`
+          : 'Avis de Recherche';
+      }
+      case 'AUTRES_EMPLOIS': {
+        return autresEmploisSubCategory
+          ? `Autres Emplois - ${autresEmploisSubCategory}${autresEmploisProfession ? ` (${autresEmploisProfession})` : ''}`
+          : 'Autres Emplois';
+      }
       default:
         return 'Détails de votre annonce';
     }
@@ -247,6 +298,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   // Step 2 Fields
   const [title, setTitle] = useState('');
   const [price, setPrice] = useState<number | ''>(350000);
+  const [priceMax, setPriceMax] = useState<number | ''>('');
   const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour' | 'trimestre' | 'an' | 'heure'>('mois');
   const [description, setDescription] = useState('');
 
@@ -291,6 +343,55 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
   // Newly created ad for verification view
   const [createdAd, setCreatedAd] = useState<Ad | null>(null);
+
+  // Point 4: Corner VIP Eligibility check for Real Estate & Rolling Stock
+  const isVipEligible = useMemo(() => {
+    return isAdVipCornerEligible({
+      mainCategory,
+      transactionType,
+      price: Number(price) || 0,
+      priceUnit,
+    });
+  }, [mainCategory, transactionType, price, priceUnit]);
+
+  const handleCvFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    e.target.value = '';
+
+    const lowerName = file.name.toLowerCase();
+    const isAllowedExt = lowerName.endsWith('.pdf') || lowerName.endsWith('.docx') || lowerName.endsWith('.md');
+    if (!isAllowedExt) {
+      setMediaError('Format de CV non valide. Veuillez choisir un document au format .pdf, .docx ou .md.');
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      setMediaError('Le document CV ne doit pas dépasser 15 Mo.');
+      return;
+    }
+
+    setMediaError(null);
+    setCvFile(file);
+    setCvFileName(file.name);
+    setCvFileSize(file.size);
+    setCvFileType(lowerName.endsWith('.pdf') ? 'pdf' : lowerName.endsWith('.docx') ? 'docx' : 'md');
+
+    const reader = new FileReader();
+    reader.onload = (loadEvt) => {
+      setCvDataUrl((loadEvt.target?.result as string) || '');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveCv = () => {
+    setCvFile(null);
+    setCvDataUrl('');
+    setCvFileName('');
+    setCvFileType('');
+    setCvFileSize(0);
+  };
 
   // Point 3: Draft ("Brouillon") management
   const DRAFT_STORAGE_KEY = `bizbooster_publish_draft_${currentUser?.id || 'guest'}`;
@@ -769,6 +870,14 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
       setPriceUnit('total');
       setPrice(0);
       setTransactionType('VENTE');
+    } else if (cat === 'AVIS_DE_RECHERCHE') {
+      setPriceUnit('total');
+      setPrice(0);
+      setTransactionType('VENTE');
+    } else if (cat === 'AUTRES_EMPLOIS') {
+      setPriceUnit('mois');
+      if (price === 0 || price === '') setPrice(250000);
+      setTransactionType(autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? 'CHERCHE_EMPLOI' : 'EMPLOYER');
     } else {
       setPriceUnit('total');
     }
@@ -808,6 +917,20 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         }
       }
 
+      // 3. Upload CV file to Firebase Storage if attached (for Demandeur d'emploi)
+      let finalCvUrl: string | undefined = undefined;
+      if (cvFile) {
+        setUploadProgressText('Téléversement sécurisé de votre CV (.pdf, .docx, .md)...');
+        try {
+          finalCvUrl = await uploadAdImage(cvFile);
+        } catch (cvErr) {
+          console.warn('Could not upload CV to storage, falling back to local data URL:', cvErr);
+          finalCvUrl = cvDataUrl;
+        }
+      } else if (cvDataUrl) {
+        finalCvUrl = cvDataUrl;
+      }
+
       setUploadProgressText("Finalisation et enregistrement de l'annonce...");
 
       const now = new Date();
@@ -822,6 +945,8 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
             ? transactionType
             : mainCategory === 'EMPLOI'
             ? (jobKind === 'DEMANDE_EMPLOI' ? 'CHERCHE_EMPLOI' : 'EMPLOYER')
+            : mainCategory === 'AUTRES_EMPLOIS'
+            ? (autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? 'CHERCHE_EMPLOI' : 'EMPLOYER')
             : 'VENTE',
         jobKind: mainCategory === 'EMPLOI' ? jobKind : undefined,
         propertyType: mainCategory === 'IMMOBILIER' ? propertyType : undefined,
@@ -859,7 +984,33 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 familyContact: necroFamilyContact,
               }
             : undefined,
-        price: mainCategory === 'NECROLOGIE' ? 0 : (Number(price) || 0),
+        avisRechercheData:
+          mainCategory === 'AVIS_DE_RECHERCHE'
+            ? {
+                category: avisCategory,
+                targetName: avisTargetName,
+                lastSeenDate: avisLastSeenDate,
+                lastSeenLocation: avisLastSeenLocation,
+                contactEmergency: avisEmergencyContact,
+                rewardAmount: Number(avisRewardAmount) || undefined,
+              }
+            : undefined,
+        autresEmploisData:
+          mainCategory === 'AUTRES_EMPLOIS'
+            ? {
+                subCategory: autresEmploisSubCategory,
+                profession: autresEmploisProfession,
+                contractType: autresEmploisContractType as any,
+                experienceYears: autresEmploisExperience,
+              }
+            : undefined,
+        cvUrl: finalCvUrl,
+        cvFileName: cvFileName || undefined,
+        cvFileType: cvFileType || undefined,
+        cvFileSize: cvFileSize || undefined,
+        isVipCorner: isVipEligible,
+        price: (mainCategory === 'NECROLOGIE' || mainCategory === 'AVIS_DE_RECHERCHE') ? 0 : (Number(price) || 0),
+        priceMax: (mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS') && priceMax !== '' && Number(priceMax) > (Number(price) || 0) ? Number(priceMax) : undefined,
         priceUnit,
         isFeatured: isBoostFeatured,
         featuredUntil: isBoostFeatured ? new Date(now.getTime() + 7 * 86400000).toISOString() : undefined,
@@ -1071,7 +1222,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
                   Choisissez la catégorie principale (Section B)
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   <button
                     type="button"
                     onClick={() => handleMainCategoryChange('IMMOBILIER')}
@@ -1148,6 +1299,32 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   >
                     <Heart className="w-5 h-5 mx-auto mb-1 text-rose-500" />
                     <span className="text-xs block">NÉCROLOGIE</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMainCategoryChange('AVIS_DE_RECHERCHE')}
+                    className={`p-3 rounded-2xl border text-center transition-all ${
+                      mainCategory === 'AVIS_DE_RECHERCHE'
+                        ? 'bg-red-50 border-red-600 ring-2 ring-red-400 text-red-950 font-black'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-bold'
+                    }`}
+                  >
+                    <Search className="w-5 h-5 mx-auto mb-1 text-red-600" />
+                    <span className="text-xs block">AVIS DE RECHERCHE</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMainCategoryChange('AUTRES_EMPLOIS')}
+                    className={`p-3 rounded-2xl border text-center transition-all ${
+                      mainCategory === 'AUTRES_EMPLOIS'
+                        ? 'bg-teal-50 border-teal-600 ring-2 ring-teal-400 text-teal-950 font-black'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-bold'
+                    }`}
+                  >
+                    <UserCheck className="w-5 h-5 mx-auto mb-1 text-teal-600" />
+                    <span className="text-xs block">AUTRES EMPLOIS</span>
                   </button>
                 </div>
               </div>
@@ -1610,6 +1787,210 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* SPECIFIC FIELDS: AVIS DE RECHERCHE (Point 2) */}
+              {mainCategory === 'AVIS_DE_RECHERCHE' && (
+                <div className="bg-red-50/60 border border-red-300 rounded-2xl p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Search className="w-5 h-5 text-red-600" />
+                    <span className="font-black text-xs text-red-900 uppercase tracking-wide">
+                      Avis de Recherche & Signalements Publics
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Catégorie de la recherche *
+                    </label>
+                    <select
+                      value={avisCategory}
+                      onChange={(e) => setAvisCategory(e.target.value as AvisRechercheCategory)}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-red-600"
+                    >
+                      {AVIS_RECHERCHE_CATEGORIES.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Nom / Désignation de la cible recherchée *
+                      </label>
+                      <input
+                        type="text"
+                        value={avisTargetName}
+                        onChange={(e) => setAvisTargetName(e.target.value)}
+                        placeholder="Ex: Titre foncier N° 4589 / Chien Husky / M. Eyeghe..."
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-red-600"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Récompense financière promise (en FCFA, facultatif)
+                      </label>
+                      <input
+                        type="number"
+                        value={avisRewardAmount}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setAvisRewardAmount(val === '' ? '' : Number(val));
+                          if (val !== '') {
+                            setPrice(Number(val));
+                          }
+                        }}
+                        placeholder="Ex: 100000 (0 si aucune)"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-red-600"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Dernier lieu / endroit vu
+                      </label>
+                      <input
+                        type="text"
+                        value={avisLastSeenLocation}
+                        onChange={(e) => setAvisLastSeenLocation(e.target.value)}
+                        placeholder="Ex: Carrefour Charbonnages, Libreville"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-red-600"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Date de perte / disparition
+                      </label>
+                      <input
+                        type="text"
+                        value={avisLastSeenDate}
+                        onChange={(e) => setAvisLastSeenDate(e.target.value)}
+                        placeholder="Ex: 02 Octobre 2026 vers 14h"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-red-600"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Contact d'urgence / Numéro direct pour signalement
+                    </label>
+                    <input
+                      type="text"
+                      value={avisEmergencyContact}
+                      onChange={(e) => setAvisEmergencyContact(e.target.value)}
+                      placeholder="Ex: 077 00 11 22 ou Brigade la plus proche"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-red-600"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* SPECIFIC FIELDS: AUTRES EMPLOIS (Point 2) */}
+              {mainCategory === 'AUTRES_EMPLOIS' && (
+                <div className="bg-teal-50/70 border border-teal-300 rounded-2xl p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Briefcase className="w-5 h-5 text-teal-700" />
+                    <span className="font-black text-xs text-teal-950 uppercase tracking-wide">
+                      Autres Emplois, Métiers & Recrutement
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">
+                      Type d'annonce d'emploi *
+                    </label>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAutresEmploisSubCategory('DEMANDE_EMPLOI');
+                          setTransactionType('CHERCHE_EMPLOI');
+                        }}
+                        className={`p-3 rounded-xl border-2 text-center text-xs font-black transition-all cursor-pointer ${
+                          autresEmploisSubCategory === 'DEMANDE_EMPLOI'
+                            ? 'bg-teal-700 border-teal-800 text-white shadow-sm'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-teal-50/50'
+                        }`}
+                      >
+                        💼 DEMANDEUR D'EMPLOI
+                        <span className="block text-[10px] font-normal opacity-90 mt-0.5">
+                          (CV obligatoire à l'étape 2)
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAutresEmploisSubCategory('OFFRE_EMPLOI');
+                          setTransactionType('EMPLOYER');
+                        }}
+                        className={`p-3 rounded-xl border-2 text-center text-xs font-black transition-all cursor-pointer ${
+                          autresEmploisSubCategory === 'OFFRE_EMPLOI'
+                            ? 'bg-teal-700 border-teal-800 text-white shadow-sm'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-teal-50/50'
+                        }`}
+                      >
+                        🏢 OFFRE D'EMPLOI
+                        <span className="block text-[10px] font-normal opacity-90 mt-0.5">
+                          (Entreprise ou recruteur)
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Métier / Spécialité / Poste *
+                      </label>
+                      <input
+                        type="text"
+                        value={autresEmploisProfession}
+                        onChange={(e) => setAutresEmploisProfession(e.target.value)}
+                        placeholder="Ex: Comptable, Ingénieur Réseau..."
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-teal-600"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Type de contrat
+                      </label>
+                      <select
+                        value={autresEmploisContractType}
+                        onChange={(e) => setAutresEmploisContractType(e.target.value as any)}
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-teal-600"
+                      >
+                        <option value="CDI">CDI</option>
+                        <option value="CDD">CDD</option>
+                        <option value="Stage">Stage</option>
+                        <option value="Prestation / Freelance">Prestation / Freelance</option>
+                        <option value="Intérim">Intérim</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Expérience requise / acquise
+                      </label>
+                      <input
+                        type="text"
+                        value={autresEmploisExperience}
+                        onChange={(e) => setAutresEmploisExperience(e.target.value)}
+                        placeholder="Ex: 3 à 5 ans"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-teal-600"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* LOCALISATION GÉOGRAPHIQUE AU GABON (Accessible à toutes les catégories - Point 2) */}
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
@@ -1811,102 +2192,261 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 />
               </div>
 
-              {/* Price & Unit (Customized for EMPLOI / Métiers Domestiques, excluded for NECROLOGIE - Point 4) */}
-              {mainCategory !== 'NECROLOGIE' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                      {mainCategory === 'EMPLOI' ? 'Salaire proposé / souhaité (en FCFA) *' : 'Prix (en FCFA) *'}
-                    </label>
-                    <input
-                      type="number"
-                      value={price === '' ? '' : price}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === '') {
-                          setPrice('');
-                        } else {
-                          const parsed = Number(val);
-                          setPrice(isNaN(parsed) ? '' : parsed);
-                        }
-                      }}
-                      placeholder={mainCategory === 'EMPLOI' ? 'Ex: 150000' : 'Ex: 250000'}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                      id="publish-price-input"
-                    />
-                  </div>
+              {/* Price & Unit (Customized for EMPLOI / Métiers Domestiques, excluded for NECROLOGIE & AVIS_DE_RECHERCHE - Point 3) */}
+              {/* Price & Salary Unit (Point 1: Salaire proposé vs Salaire demandé, tranche de salaire, unités adaptées) */}
+              {mainCategory !== 'NECROLOGIE' && mainCategory !== 'AVIS_DE_RECHERCHE' && (() => {
+                const isJob = mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS';
+                const isSeeker = (mainCategory === 'EMPLOI' && (jobKind === 'DEMANDE_EMPLOI' || transactionType === 'CHERCHE_EMPLOI')) ||
+                  (mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === "Demandeur d'emploi");
+                const isEmployerOffer = isJob && !isSeeker;
 
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                      {mainCategory === 'EMPLOI' ? 'Périodicité du salaire *' : 'Unité de prix'}
-                    </label>
-                    <select
-                      value={priceUnit}
-                      onChange={(e) => setPriceUnit(e.target.value as any)}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                    >
-                      {mainCategory === 'EMPLOI' ? (
-                        <>
-                          <option value="mois">Mensuelle (par mois)</option>
-                          <option value="jour">Journalière (par jour)</option>
-                          <option value="trimestre">Trimestrielle (par trimestre)</option>
-                          <option value="an">Annuelle (par an)</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="total">Prix total (Achat définitif)</option>
-                          <option value="mois">Par mois (Location mensuelle)</option>
-                          <option value="jour">Par jour (Location journalière)</option>
-                        </>
-                      )}
-                    </select>
+                return (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
+                          {isSeeker
+                            ? 'Salaire demandé (en FCFA) *'
+                            : isEmployerOffer
+                            ? 'Salaire proposé (en FCFA) *'
+                            : 'Prix (en FCFA) *'}
+                        </label>
+                        <input
+                          type="number"
+                          value={price === '' ? '' : price}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '') {
+                              setPrice('');
+                            } else {
+                              const parsed = Number(val);
+                              setPrice(isNaN(parsed) ? '' : parsed);
+                            }
+                          }}
+                          placeholder={isJob ? 'Ex: 150000' : 'Ex: 250000'}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                          id="publish-price-input"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
+                          {isJob ? 'Périodicité du salaire *' : 'Unité de prix'}
+                        </label>
+                        <select
+                          value={priceUnit}
+                          onChange={(e) => setPriceUnit(e.target.value as any)}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                        >
+                          {isJob ? (
+                            <>
+                              <option value="mois">Salaire mensuel</option>
+                              <option value="jour">Salaire journalier</option>
+                              <option value="trimestre">Salaire trimestriel</option>
+                              <option value="an">Salaire annuel</option>
+                            </>
+                          ) : (
+                            <>
+                              <option value="total">Prix total (Achat définitif)</option>
+                              <option value="mois">Par mois (Location mensuelle)</option>
+                              <option value="jour">Par jour (Location journalière)</option>
+                            </>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Tranche de prix pour le donneur d'emploi (Point 1) */}
+                    {isEmployerOffer && (
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-800">
+                          Fourchette / Tranche de salaire (Optionnel) :
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500 font-semibold shrink-0">De {price ? `${Number(price).toLocaleString('fr-FR')} FCFA` : '—'} à</span>
+                          <input
+                            type="number"
+                            value={priceMax === '' ? '' : priceMax}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '') {
+                                setPriceMax('');
+                              } else {
+                                const parsed = Number(val);
+                                setPriceMax(isNaN(parsed) ? '' : parsed);
+                              }
+                            }}
+                            placeholder="Salaire maximum (ex: 250000)"
+                            className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                          />
+                          <span className="text-xs text-slate-500 font-bold shrink-0">FCFA</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          Laissez vide si le salaire proposé est fixe. Si renseigné, votre annonce affichera une fourchette (ex : 150 000 - 250 000 FCFA).
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Notification Corner VIP (Point 4) */}
+              {isVipEligible && (
+                <div className="bg-gradient-to-r from-amber-500/15 via-amber-400/25 to-yellow-500/15 border-2 border-amber-400 rounded-2xl p-4 text-amber-950 flex items-start gap-3 shadow-xs animate-in fade-in">
+                  <div className="p-2 bg-gradient-to-br from-amber-500 to-yellow-600 text-slate-950 rounded-xl font-black text-base shrink-0 shadow-xs">
+                    👑
+                  </div>
+                  <div className="text-xs space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-black text-amber-950 text-sm tracking-wide">
+                        Félicitations ! Votre annonce intègre le Corner VIP
+                      </span>
+                      <span className="bg-emerald-600 text-white font-black text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        100% Inclus sans aucun frais
+                      </span>
+                    </div>
+                    <p className="text-amber-900 leading-relaxed">
+                      Compte tenu de la valeur de votre bien ({Number(price).toLocaleString('fr-FR')} FCFA), votre annonce est classée bien de prestige et sera mise en avant dans le <strong>Corner VIP</strong> du catalogue.
+                    </p>
+                    <p className="text-[11px] text-amber-800 font-semibold">
+                      ✨ <em>Avantage exclusif : Visibilité prioritaire auprès des acquéreurs et investisseurs haut de gamme, sans aucun frais supplémentaire.</em>
+                    </p>
                   </div>
                 </div>
               )}
 
               {/* Section C: Mandatory detailed description with min 50 and max chars */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
-                    Description détaillée du bien / produit / offre * (Min 50, Max {PRICING_CONFIG.maxCharLength} car.)
-                  </label>
-                  <span
-                    className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                      description.trim().length < 50
-                        ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                        : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                    }`}
-                  >
-                    {description.trim().length < 50
-                      ? `${description.trim().length} / 50 min (${50 - description.trim().length} restant${50 - description.trim().length > 1 ? 's' : ''})`
-                      : `${description.trim().length} / ${PRICING_CONFIG.maxCharLength} (Conforme ✓)`}
-                  </span>
-                </div>
-                <textarea
-                  value={description}
-                  onChange={(e) => {
-                    if (e.target.value.length <= PRICING_CONFIG.maxCharLength) {
-                      setDescription(e.target.value);
-                      if (mediaError && e.target.value.trim().length >= 50) {
-                        setMediaError(null);
+              {/* Section C: Mandatory detailed description with min 50 and max chars (1000 for Nécrologie - Point 3) */}
+              {(() => {
+                const maxDescChars = mainCategory === 'NECROLOGIE' ? 1000 : PRICING_CONFIG.maxCharLength;
+                return (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                        Description détaillée {mainCategory === 'NECROLOGIE' ? "de l'hommage / obsèques" : "du bien / produit / offre"} * (Min 50, Max {maxDescChars} car.)
+                      </label>
+                      <span
+                        className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                          description.trim().length < 50
+                            ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                            : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                        }`}
+                      >
+                        {description.trim().length < 50
+                          ? `${description.trim().length} / 50 min (${50 - description.trim().length} restant${50 - description.trim().length > 1 ? 's' : ''})`
+                          : `${description.trim().length} / ${maxDescChars} (Conforme ✓)`}
+                      </span>
+                    </div>
+                    <textarea
+                      value={description}
+                      onChange={(e) => {
+                        if (e.target.value.length <= maxDescChars) {
+                          setDescription(e.target.value);
+                          if (mediaError && e.target.value.trim().length >= 50) {
+                            setMediaError(null);
+                          }
+                        }
+                      }}
+                      rows={mainCategory === 'NECROLOGIE' ? 6 : 4}
+                      placeholder={
+                        mainCategory === 'NECROLOGIE'
+                          ? "Rédigez l'avis d'obsèques, l'hommage de la famille, le parcours du défunt et les modalités de recueillement (jusqu'à 1000 caractères)..."
+                          : "Description détaillée obligatoire (au moins 50 caractères) : décrivez précisément l'article, ses caractéristiques techniques, dimensions, commodités (climatiseur, bâche d'eau, groupe...), situation géographique exacte, conditions de vente ou de location."
                       }
-                    }
-                  }}
-                  rows={4}
-                  placeholder="Description détaillée obligatoire (au moins 50 caractères) : décrivez précisément l'article, ses caractéristiques techniques, dimensions, commodités (climatiseur, bâche d'eau, groupe...), situation géographique exacte, conditions de vente ou de location."
-                  className={`w-full bg-slate-50 border rounded-xl p-3 text-xs text-slate-800 focus:bg-white focus:ring-2 transition-all ${
-                    description.trim().length > 0 && description.trim().length < 50
-                      ? 'border-amber-400 focus:ring-amber-400'
-                      : description.trim().length >= 50
-                      ? 'border-emerald-400 focus:ring-emerald-500'
-                      : 'border-slate-300 focus:ring-emerald-500'
-                  }`}
-                  id="publish-desc-input"
-                />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  * La description est obligatoire et doit comporter au moins 50 caractères afin d'offrir des informations fiables et précises aux acquéreurs.
-                </p>
-              </div>
+                      className={`w-full bg-slate-50 border rounded-xl p-3 text-xs text-slate-800 focus:bg-white focus:ring-2 transition-all ${
+                        description.trim().length > 0 && description.trim().length < 50
+                          ? 'border-amber-400 focus:ring-amber-400'
+                          : description.trim().length >= 50
+                          ? 'border-emerald-400 focus:ring-emerald-500'
+                          : 'border-slate-300 focus:ring-emerald-500'
+                      }`}
+                      id="publish-desc-input"
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      * La description est obligatoire et doit comporter au moins 50 caractères afin d'offrir des informations fiables et précises aux acquéreurs.
+                    </p>
+                  </div>
+                );
+              })()}
+
+              {/* OBLIGATION CV POUR DEMANDEUR D'EMPLOI (Point 2) */}
+              {mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === 'DEMANDE_EMPLOI' && (
+                <div className="bg-teal-50/90 border-2 border-teal-500 rounded-2xl p-4 space-y-3 shadow-xs animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-teal-700" />
+                      <div>
+                        <span className="font-black text-xs text-teal-950 uppercase tracking-wide block">
+                          Curriculum Vitae (CV) Obligatoire *
+                        </span>
+                        <span className="text-[11px] text-teal-800">
+                          Formats acceptés : <strong>.pdf</strong>, <strong>.docx</strong> ou <strong>.md</strong> (≤ 15 Mo)
+                        </span>
+                      </div>
+                    </div>
+                    <span className="bg-teal-700 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
+                      Obligatoire
+                    </span>
+                  </div>
+
+                  {cvFile || cvDataUrl ? (
+                    <div className="bg-white border border-teal-300 rounded-xl p-3 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-teal-100 text-teal-800 flex items-center justify-center shrink-0 font-bold text-xs uppercase">
+                          {cvFileType || 'DOC'}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">
+                            {cvFileName || 'Curriculum_Vitae_attache'}
+                          </p>
+                          <p className="text-[10px] text-slate-500">
+                            {cvFileSize ? `${(cvFileSize / 1024).toFixed(0)} Ko` : 'Document prêt'} • {cvFileType ? `.${cvFileType}` : 'Fichier joint'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <label className="cursor-pointer text-xs font-bold text-teal-700 hover:text-teal-800 bg-teal-50 px-2.5 py-1.5 rounded-lg border border-teal-200">
+                          Remplacer
+                          <input
+                            type="file"
+                            accept=".pdf,.docx,.md"
+                            onChange={handleCvFileSelect}
+                            className="hidden"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleRemoveCv}
+                          className="text-red-600 hover:text-red-700 p-1.5 rounded-lg hover:bg-red-50 cursor-pointer"
+                          title="Supprimer le CV"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="cursor-pointer border-2 border-dashed border-teal-400 bg-white hover:bg-teal-50/50 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-all">
+                        <Upload className="w-6 h-6 text-teal-600" />
+                        <div>
+                          <span className="text-xs font-extrabold text-teal-950 block">
+                            Cliquez pour joindre votre CV (.pdf, .docx, .md)
+                          </span>
+                          <span className="text-[11px] text-slate-500">
+                            L'attachement du CV est obligatoire pour cette catégorie. Les photos sont optionnelles.
+                          </span>
+                        </div>
+                        <input
+                          type="file"
+                          accept=".pdf,.docx,.md"
+                          onChange={handleCvFileSelect}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Section C-a: Choix de joindre des images (max 5) ou courte vidéo (max 30s) */}
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
@@ -1915,6 +2455,11 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     <Camera className="w-4 h-4 text-emerald-600" />
                     <span className="font-bold text-xs text-slate-800 uppercase tracking-wide">
                       Photos descriptives ({photos.length}/{PRICING_CONFIG.maxImages || 10})
+                      {mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === 'DEMANDE_EMPLOI' && (
+                        <span className="ml-1.5 text-teal-700 font-extrabold lowercase text-[11px]">
+                          (optionnelles pour demandeur d'emploi)
+                        </span>
+                      )}
                     </span>
                   </div>
                   <span className="text-[11px] text-slate-500">
@@ -2282,7 +2827,9 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                          mainCategory === 'BRIC_A_BRAC' ? 'Bric-à-Brac' :
                          mainCategory === 'EMPLOI' ? (jobKind === 'DEMANDE_EMPLOI' ? "Demande d'Emploi" : "Offre d'Emploi") :
                          mainCategory === 'COURS_A_DOMICILE' ? (tutoringKind === 'OFFRE' ? 'Offre Cours' : 'Demande Cours') :
-                         'Nécrologie'}
+                         mainCategory === 'NECROLOGIE' ? 'Nécrologie' :
+                         mainCategory === 'AVIS_DE_RECHERCHE' ? 'Avis de Recherche' :
+                         'Autres Emplois'}
                       </span>
                       {mainCategory === 'IMMOBILIER' && (
                         <span className="text-[10px] font-bold bg-slate-700 text-slate-200 px-2 py-0.5 rounded-md">
@@ -2299,6 +2846,28 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                           {domesticJobType}
                         </span>
                       )}
+                      {mainCategory === 'AVIS_DE_RECHERCHE' && (
+                        <span className="text-[10px] font-bold bg-red-900/80 text-red-100 px-2 py-0.5 rounded-md">
+                          {avisCategory}
+                        </span>
+                      )}
+                      {mainCategory === 'AUTRES_EMPLOIS' && (
+                        <span className="text-[10px] font-bold bg-teal-800 text-teal-100 px-2 py-0.5 rounded-md">
+                          {autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? "Demandeur d'emploi" : "Offre d'emploi"}
+                          {autresEmploisProfession ? ` • ${autresEmploisProfession}` : ''}
+                        </span>
+                      )}
+                      {(cvFileName || cvDataUrl) && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-black bg-teal-600 text-white px-2 py-0.5 rounded-md shadow-xs">
+                          <FileText className="w-3 h-3 text-teal-200" />
+                          <span>CV Joint ({cvFileType.toUpperCase() || 'DOCUMENT'})</span>
+                        </span>
+                      )}
+                      {isVipEligible && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-black bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 px-2 py-0.5 rounded-md shadow-xs">
+                          👑 Corner VIP (Inclus sans frais)
+                        </span>
+                      )}
                       {(isOwnerVerified || isExempt) && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-black bg-emerald-600/90 text-white px-2 py-0.5 rounded-md border border-emerald-400/50 shadow-xs">
                           <ShieldCheck className="w-3 h-3 text-emerald-200" />
@@ -2312,16 +2881,34 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     </h4>
 
                     <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300">
-                      {mainCategory !== 'NECROLOGIE' ? (
-                        <div className="flex items-center gap-1 text-emerald-400 font-black">
-                          <span>{formatFCFA(Number(price) || 0)}</span>
-                          {priceUnit !== 'total' && (
-                            <span className="text-[11px] font-normal text-emerald-200">/ {priceUnit}</span>
+                      {mainCategory !== 'NECROLOGIE' && mainCategory !== 'AVIS_DE_RECHERCHE' ? (() => {
+                        const isJobCategory = mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS';
+                        const isSeekerAd = (mainCategory === 'EMPLOI' && (jobKind === 'DEMANDE_EMPLOI' || transactionType === 'CHERCHE_EMPLOI')) ||
+                          (mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === "Demandeur d'emploi");
+                        const isEmployer = isJobCategory && !isSeekerAd;
+
+                        return (
+                          <div className="flex items-center gap-1 text-emerald-400 font-black">
+                            <span>{formatPriceDisplay(Number(price) || 0, isEmployer && priceMax ? Number(priceMax) : undefined)}</span>
+                            {priceUnit && (
+                              <span className="text-[11px] font-normal text-emerald-200">/ {formatPriceUnit(priceUnit, isJobCategory)}</span>
+                            )}
+                          </div>
+                        );
+                      })() : mainCategory === 'AVIS_DE_RECHERCHE' ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-red-300 font-bold text-xs bg-red-950/80 px-2 py-0.5 rounded border border-red-700">
+                            🚨 Avis de Recherche (Sans prix)
+                          </span>
+                          {Number(avisRewardAmount) > 0 && (
+                            <span className="text-amber-300 font-bold text-xs bg-amber-950/80 px-2 py-0.5 rounded border border-amber-700">
+                              💰 Récompense : {Number(avisRewardAmount).toLocaleString('fr-FR')} FCFA
+                            </span>
                           )}
                         </div>
                       ) : (
                         <div className="text-slate-300 font-bold text-xs bg-slate-800 px-2 py-0.5 rounded">
-                          Nécrologie • Avis d'obsèques
+                          🕊️ Nécrologie • Hommage & Obsèques
                         </div>
                       )}
                       <div className="flex items-center gap-1 text-slate-300 text-[11px]">
@@ -2646,7 +3233,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       itemDescription={`Publication ${title || mainCategory} (${durationDays} jours)`}
                       onSuccess={handlePaymentSuccess}
                       onCancel={() => setStep(2)}
-                      initialPhone={contactPhone || currentUser?.contactPhone}
+                      initialPhone=""
                     />
                   </div>
                 </div>
@@ -2767,11 +3354,11 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   setMediaError(null);
                   setStep(2);
                 } else if (step === 2) {
-                  // Price validation (Point 4: cannot be empty or 0, except for NECROLOGIE)
-                  if (mainCategory !== 'NECROLOGIE') {
+                  // Price validation (Point 4: cannot be empty or 0, except for NECROLOGIE & AVIS_DE_RECHERCHE)
+                  if (mainCategory !== 'NECROLOGIE' && mainCategory !== 'AVIS_DE_RECHERCHE') {
                     if (price === '' || price === null || price === undefined || String(price).trim() === '') {
                       setMediaError(
-                        mainCategory === 'EMPLOI'
+                        mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS'
                           ? 'Veuillez renseigner le montant du salaire proposé ou souhaité.'
                           : 'Le prix de votre annonce est obligatoire. Veuillez renseigner le montant en FCFA.'
                       );
@@ -2783,7 +3370,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     const numPrice = Number(price);
                     if (isNaN(numPrice) || numPrice <= 0) {
                       setMediaError(
-                        mainCategory === 'EMPLOI'
+                        mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS'
                           ? 'Le salaire proposé ou souhaité ne peut pas être égal à 0 FCFA. Veuillez indiquer un montant supérieur à 0.'
                           : 'Le prix de votre annonce ne peut pas être égal à 0 FCFA. Veuillez indiquer un montant supérieur à 0.'
                       );
@@ -2803,7 +3390,15 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     return;
                   }
 
-                  if (photos.length === 0) {
+                  // Point 2: CV obligatoire pour Demandeur d'emploi à l'étape 2
+                  const isDemandeurEmploi = mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === 'DEMANDE_EMPLOI';
+                  if (isDemandeurEmploi && !cvFile && !cvDataUrl) {
+                    setMediaError("L'attachement d'un CV (.pdf, .docx ou .md) est obligatoire pour les demandeurs d'emploi à l'étape 2.");
+                    return;
+                  }
+
+                  // Photos obligatoires (sauf pour Demandeur d'emploi où le CV fait foi)
+                  if (!isDemandeurEmploi && photos.length === 0) {
                     setMediaError('Veuillez ajouter au moins une photo pour votre annonce.');
                     return;
                   }
@@ -2832,6 +3427,10 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       genTitle = `${tutoringKind === 'OFFRE' ? 'Cours à domicile' : 'Recherche cours'} - ${tutoringSubject} (${tutoringLevel})`;
                     } else if (mainCategory === 'NECROLOGIE') {
                       genTitle = `Nécrologie - ${necroDeceasedName || 'Avis de décès'} (${necroMinistry})`;
+                    } else if (mainCategory === 'AVIS_DE_RECHERCHE') {
+                      genTitle = `Avis de Recherche - ${avisCategory}: ${avisTargetName || 'Signalement'}`;
+                    } else if (mainCategory === 'AUTRES_EMPLOIS') {
+                      genTitle = `${autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? "Demandeur d'emploi" : "Offre d'emploi"} - ${autresEmploisProfession || 'Poste à pourvoir'}`;
                     }
                     setTitle(genTitle || mainCategory);
                   }

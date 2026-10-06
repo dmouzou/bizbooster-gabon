@@ -128,7 +128,15 @@ export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => onEditAd(ad)}
+                    onClick={() => {
+                      const isExpired = ad.status === 'EXPIRED' || (ad.expiresAt && new Date(ad.expiresAt).getTime() <= Date.now());
+                      if (isExpired) {
+                        alert("Cette annonce est expirée. Vous devez d'abord la prolonger pour pouvoir la modifier.");
+                        onOpenExtendModal(ad);
+                        return;
+                      }
+                      onEditAd(ad);
+                    }}
                     className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 border border-slate-200"
                     title="Modifier cette annonce"
                   >

@@ -110,3 +110,50 @@ export function isAdOwner(
   }
   return false;
 }
+
+// Point 1: Utilitaires pour les offres et demandes d'emploi (EMPLOI & AUTRES_EMPLOIS)
+export function isJobAd(ad: { mainCategory: string }): boolean {
+  return ad.mainCategory === 'EMPLOI' || ad.mainCategory === 'AUTRES_EMPLOIS';
+}
+
+export function isJobSeekerAd(ad: {
+  mainCategory?: string;
+  jobKind?: string;
+  transactionType?: string;
+  autresEmploisData?: { subCategory?: string };
+}): boolean {
+  if (ad.autresEmploisData?.subCategory === "Demandeur d'emploi" || (ad.autresEmploisData?.subCategory as any) === 'DEMANDE_EMPLOI') return true;
+  if (ad.jobKind === 'DEMANDE' || (ad.jobKind as any) === 'DEMANDE_EMPLOI') return true;
+  if (ad.transactionType === 'CHERCHE_EMPLOI' || (ad.transactionType as any) === 'DEMANDE') return true;
+  return false;
+}
+
+export function formatPriceDisplay(price: number, priceMax?: number): string {
+  if (priceMax && priceMax > price) {
+    return `${new Intl.NumberFormat('fr-FR').format(price)} - ${new Intl.NumberFormat('fr-FR').format(priceMax)} FCFA`;
+  }
+  return formatFCFA(price);
+}
+
+export function getPriceOrSalaryLabel(ad: {
+  mainCategory: string;
+  jobKind?: string;
+  transactionType?: string;
+  autresEmploisData?: { subCategory?: string };
+}): string {
+  if (isJobAd(ad)) {
+    return isJobSeekerAd(ad) ? 'Salaire demandé' : 'Salaire proposé';
+  }
+  return 'Prix demandé';
+}
+
+export function formatPriceUnit(priceUnit?: string, isJob?: boolean): string {
+  if (!priceUnit || priceUnit === 'total') return '';
+  if (isJob) {
+    if (priceUnit === 'mois') return '/ mois';
+    if (priceUnit === 'jour') return '/ jour';
+  }
+  if (priceUnit === 'mois') return '/ mois';
+  if (priceUnit === 'jour') return '/ jour';
+  return `/${priceUnit}`;
+}

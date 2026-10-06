@@ -40,7 +40,8 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
       : 'AIRTEL_MONEY';
 
   const [operator, setOperator] = useState<PaymentOperator>(initialOperator);
-  const [mobileNumber, setMobileNumber] = useState(formattedInitial || '');
+  // Point 7: Le champ de texte pour le numéro Airtel/Moov money est initialement vide
+  const [mobileNumber, setMobileNumber] = useState('');
   const [phoneError, setPhoneError] = useState('');
   const [step, setStep] = useState<'FORM' | 'PUSH_SENT' | 'PIN_ENTRY' | 'PROCESSING' | 'SUCCESS'>('FORM');
   const [pin, setPin] = useState('');

@@ -35,6 +35,7 @@ import {
 import { UserProfile } from '../types';
 import { GABON_PROVINCES } from '../data/gabonLocations';
 import { CguModal } from './CguModal';
+import { checkPasswordCooldown, recordPasswordCooldown } from '../utils/passwordCooldown';
 
 interface PhoneAuthModalProps {
   isOpen: boolean;
@@ -141,6 +142,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       // ignore
     }
     container.innerHTML = '';
+    auth.languageCode = 'fr';
 
     recaptchaRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
       size: 'invisible',
@@ -275,47 +277,19 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       return;
     }
 
-    const cleanDigits = getPhoneClean(e164);
-    // 1. Local storage check for instant feedback
-    try {
-      const localLastChange = localStorage.getItem('bizbooster_last_pwd_change_' + cleanDigits);
-      if (localLastChange) {
-        const lastTime = new Date(localLastChange).getTime();
-        const diffHours = (Date.now() - lastTime) / (1000 * 60 * 60);
-        if (diffHours < 24) {
-          const remainingHours = Math.ceil(24 - diffHours);
-          setErrorMessage(
-            `Votre mot de passe a été récemment modifié dans les dernières 24 heures. Pour prévenir les abus d'envoi de SMS et sécuriser votre compte, vous pourrez réinitialiser votre mot de passe dans ${remainingHours} heure${remainingHours > 1 ? 's' : ''}.`
-          );
-          return;
-        }
-      }
-    } catch {
-      // ignore localstorage errors
-    }
-
-    // 2. Cloud Function / Firestore verification
+    // Point 4: Vérification stricte du délai de 24h avant renouvellement de mot de passe
     setIsLoading(true);
     try {
-      const checkFn = httpsCallable(functions, 'checkPasswordResetEligibility');
-      const res = await checkFn({ phoneNumber: e164 });
-      const data = res.data as { allowed: boolean; remainingHours: number; lastPasswordChangeDate?: string };
-      if (!data.allowed) {
-        if (data.lastPasswordChangeDate) {
-          try {
-            localStorage.setItem('bizbooster_last_pwd_change_' + cleanDigits, data.lastPasswordChangeDate);
-          } catch {
-            // ignore
-          }
-        }
+      const cooldownCheck = await checkPasswordCooldown(e164);
+      if (cooldownCheck.isBlocked) {
         setErrorMessage(
-          `Votre mot de passe a été récemment modifié dans les dernières 24 heures. Pour prévenir les abus d'envoi de SMS et sécuriser votre compte, vous pourrez réinitialiser votre mot de passe dans ${data.remainingHours} heure${data.remainingHours > 1 ? 's' : ''}.`
+          `Votre mot de passe a été récemment modifié dans les dernières 24 heures. Pour prévenir les abus d'envoi de SMS et sécuriser votre compte, vous pourrez réinitialiser votre mot de passe dans ${cooldownCheck.remainingHours} heure${cooldownCheck.remainingHours > 1 ? 's' : ''}.`
         );
         setIsLoading(false);
         return;
       }
     } catch (checkErr) {
-      console.warn('checkPasswordResetEligibility error/skipped:', checkErr);
+      console.warn('checkPasswordCooldown error:', checkErr);
     }
 
     setIsForgotPasswordFlow(true);
@@ -591,14 +565,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         }
       }
 
-      // 2. Update Firestore user document
+      // 2. Update Firestore user document & record cooldown across all storage tiers (Point 4)
       const nowIso = new Date().toISOString();
-      try {
-        const cleanDigits = getPhoneClean(contactPhone);
-        localStorage.setItem('bizbooster_last_pwd_change_' + cleanDigits, nowIso);
-      } catch {
-        // ignore
-      }
+      await recordPasswordCooldown(phone || contactPhone, nowIso);
       await updateDoc(doc(db, 'users', uid), {
         password: password.trim(),
         lastPasswordChangeDate: nowIso,

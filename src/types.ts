@@ -4,7 +4,9 @@ export type MainCategory =
   | 'BRIC_A_BRAC' 
   | 'EMPLOI' 
   | 'COURS_A_DOMICILE' 
-  | 'NECROLOGIE';
+  | 'NECROLOGIE'
+  | 'AVIS_DE_RECHERCHE'
+  | 'AUTRES_EMPLOIS';
 
 export type TransactionType = 'VENTE' | 'LOCATION' | 'EMPLOYER' | 'A_EMPLOYER' | 'CHERCHE_EMPLOI';
 export type JobAdKind = 'OFFRE_EMPLOI' | 'DEMANDE_EMPLOI'; // Point 8: Offre (Recruteur cherche un employé) vs Demande (Candidat cherche à travailler)
@@ -83,6 +85,44 @@ export interface TutoringData {
   level?: TutoringLevel;
 }
 
+// Point 2: Avis de Recherche
+export type AvisRechercheCategory = 
+  | 'Personne disparue'
+  | 'Objet ou bien égaré'
+  | 'Animal perdu'
+  | 'Document ou Titre officiel perdu'
+  | 'Témoin recherché'
+  | 'Autre avis';
+
+export interface AvisRechercheData {
+  category: AvisRechercheCategory;
+  targetName?: string;
+  lastSeenDate?: string;
+  lastSeenLocation?: string;
+  hasReward?: boolean;
+  rewardAmount?: number;
+  contactEmergency?: string;
+}
+
+// Point 2: Autres Emplois
+export type AutresEmploisSubCategory = 
+  | "Demandeur d'emploi"
+  | "Offre d'emploi"
+  | 'Stage / Alternance'
+  | 'Freelance & Prestations'
+  | 'Intérim & Saisonnier';
+
+export interface AutresEmploisData {
+  subCategory: AutresEmploisSubCategory;
+  profession?: string;
+  contractType?: 'CDI' | 'CDD' | 'Stage' | 'Freelance' | 'Temps partiel' | 'Autre';
+  experienceYears?: string;
+  cvUrl?: string;
+  cvFileName?: string;
+  cvFileType?: 'pdf' | 'docx' | 'md' | string;
+  cvFileSize?: number;
+}
+
 export type PaymentOperator = 'AIRTEL_MONEY' | 'MOOV_MONEY';
 
 export interface LocationHierarchy {
@@ -115,8 +155,20 @@ export interface Ad {
   jobKind?: JobAdKind; // Point 8: Offre (Recruteur cherche un employé) ou Demande (Candidat cherche du travail)
   tutoringData?: TutoringData; // For Cours à Domicile
   necrologieData?: NecrologieData; // For Nécrologie
+  avisRechercheData?: AvisRechercheData; // Point 2: Avis de Recherche
+  autresEmploisData?: AutresEmploisData; // Point 2: Autres Emplois
   
+  // Point 2: CV attaché (Demandeur d'emploi - .pdf, .docx, .md)
+  cvUrl?: string;
+  cvFileName?: string;
+  cvFileType?: 'pdf' | 'docx' | 'md' | string;
+  cvFileSize?: number;
+
+  // Point 4: Corner VIP
+  isVipCorner?: boolean; // Éligible et affiché dans le Corner VIP sans frais
+
   price: number; // in FCFA (XAF)
+  priceMax?: number; // Point 1: Tranche de salaire / prix (ex: 150 000 - 250 000 FCFA)
   priceUnit?: 'total' | 'mois' | 'jour' | 'heure' | 'trimestre' | 'an'; // ex: FCFA/mois, FCFA/trimestre, FCFA/an
   
   // Featured / Top-of-feed boost

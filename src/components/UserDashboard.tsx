@@ -37,6 +37,7 @@ import {
   AlertTriangle,
   PauseCircle,
   Heart,
+  ArrowUpDown,
 } from 'lucide-react';
 import {
   RecaptchaVerifier,
@@ -47,7 +48,7 @@ import {
 import { doc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 import { Ad, UserProfile, SubscriptionTier, BoosterPackType, AdPackType, PaymentOperator, isUserAdmin, isUserSuperAdmin } from '../types';
-import { formatFCFA, formatRemainingTime, isAdOwner } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, isAdOwner, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd } from '../utils/formatters';
 import { isAdBoostFeatured } from '../utils/personalization';
 import { GABON_PROVINCES } from '../data/gabonLocations';
 import { KycUploadModal } from './KycUploadModal';
@@ -55,6 +56,7 @@ import { MobilePaymentSimulator } from './MobilePaymentSimulator';
 import { SubscriptionUpgradeModal } from './SubscriptionUpgradeModal';
 import { AdCard } from './AdCard';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
+import { recordPasswordCooldown } from '../utils/passwordCooldown';
 
 const formatGabonPhone = (raw: string) => {
   let clean = raw.replace(/[^0-9]/g, '');
@@ -185,7 +187,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onToggleFavorite,
 }) => {
   const [dashboardTab, setDashboardTab] = useState<'ADS' | 'FAVORITES' | 'SUBSCRIPTIONS' | 'PROFILE'>('ADS');
-  const [filterStatus, setFilterStatus] = useState<'ALL' | 'ACTIVE' | 'PENDING' | 'REJECTED' | 'SUSPENDED'>('ALL');
+  // Point 5: Inclus la case 'Expirées' et la fonction 'Trier par'
+  type UserDashboardFilterStatus = 'ALL' | 'ACTIVE' | 'PENDING' | 'EXPIRED' | 'REJECTED' | 'SUSPENDED';
+  const [filterStatus, setFilterStatus] = useState<UserDashboardFilterStatus>('ALL');
+  type UserAdsSortOption = 'DATE_DESC' | 'DATE_ASC' | 'EXPIRY_ASC' | 'VIEWS_DESC' | 'PRICE_DESC' | 'PRICE_ASC';
+  const [adsSortBy, setAdsSortBy] = useState<UserAdsSortOption>('DATE_DESC');
   const [isKycModalOpen, setIsKycModalOpen] = useState(false);
   const [previewDocModal, setPreviewDocModal] = useState<string | null>(null);
 
@@ -276,6 +282,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       pwdRecaptchaRef.current = null;
     }
     container.innerHTML = '';
+    auth.languageCode = 'fr';
     pwdRecaptchaRef.current = new RecaptchaVerifier(auth, 'pwd-recaptcha-container', {
       size: 'invisible',
       callback: () => {},
@@ -461,13 +468,41 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     }
   }, [myAds, maxQuota, isExempt, isSuspendingExcess]);
 
-  const displayedAds = myAds.filter((ad) => {
-    if (filterStatus === 'ACTIVE') return ad.status === 'ACTIVE';
-    if (filterStatus === 'PENDING') return ad.status === 'PENDING_REVIEW';
-    if (filterStatus === 'REJECTED') return ad.status === 'REJECTED';
-    if (filterStatus === 'SUSPENDED') return ad.status === 'SUSPENDED';
-    return true;
-  });
+  const expiredCount = myAds.filter(
+    (ad) => ad.status === 'EXPIRED' || new Date(ad.expiresAt).getTime() <= Date.now()
+  ).length;
+
+  const displayedAds = myAds
+    .filter((ad) => {
+      const isExp = ad.status === 'EXPIRED' || new Date(ad.expiresAt).getTime() <= Date.now();
+      if (filterStatus === 'EXPIRED') return isExp;
+      if (filterStatus === 'ACTIVE') return ad.status === 'ACTIVE' && !isExp;
+      if (filterStatus === 'PENDING') return ad.status === 'PENDING_REVIEW';
+      if (filterStatus === 'REJECTED') return ad.status === 'REJECTED';
+      if (filterStatus === 'SUSPENDED') return ad.status === 'SUSPENDED';
+      return true;
+    })
+    .sort((a, b) => {
+      if (adsSortBy === 'DATE_DESC') {
+        return new Date(b.publishedAt || b.createdAt || 0).getTime() - new Date(a.publishedAt || a.createdAt || 0).getTime();
+      }
+      if (adsSortBy === 'DATE_ASC') {
+        return new Date(a.publishedAt || a.createdAt || 0).getTime() - new Date(b.publishedAt || b.createdAt || 0).getTime();
+      }
+      if (adsSortBy === 'EXPIRY_ASC') {
+        return new Date(a.expiresAt || 0).getTime() - new Date(b.expiresAt || 0).getTime();
+      }
+      if (adsSortBy === 'VIEWS_DESC') {
+        return (b.viewsCount || 0) - (a.viewsCount || 0);
+      }
+      if (adsSortBy === 'PRICE_DESC') {
+        return (b.price || 0) - (a.price || 0);
+      }
+      if (adsSortBy === 'PRICE_ASC') {
+        return (a.price || 0) - (b.price || 0);
+      }
+      return 0;
+    });
 
   // Requirement 4: Boost purchase success (Single Boost or Booster Pack)
   const handleBoostPurchaseSuccess = async () => {
@@ -600,14 +635,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setPwdLoading(true);
     try {
       const nowIso = new Date().toISOString();
-      try {
-        const cleanDigits = (currentUser.contactPhone || '').replace(/\D/g, '').replace(/^241/, '').replace(/^0/, '');
-        if (cleanDigits) {
-          localStorage.setItem('bizbooster_last_pwd_change_' + cleanDigits, nowIso);
-        }
-      } catch {
-        // ignore
-      }
+      await recordPasswordCooldown(currentUser.contactPhone || currentUser.phoneNumber || '', nowIso);
       if (onUpdateUser) {
         await onUpdateUser({
           password: newPassword.trim(),
@@ -1089,7 +1117,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           )}
 
           {/* KPI Cards for the User */}
-          <div className={`grid gap-3 sm:gap-4 ${suspendedQuotaAds.length > 0 ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}>
+          <div className={`grid gap-3 sm:gap-4 ${suspendedQuotaAds.length > 0 ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5'}`}>
             <div
               onClick={() => setFilterStatus('ALL')}
               className={`bg-white p-4 rounded-2xl border cursor-pointer transition-all ${
@@ -1127,6 +1155,20 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
               <div className="text-2xl font-black text-emerald-700">{activeCount}</div>
               <span className="text-[10px] text-emerald-700">Visibles par le public</span>
+            </div>
+
+            <div
+              onClick={() => setFilterStatus('EXPIRED')}
+              className={`bg-white p-4 rounded-2xl border cursor-pointer transition-all ${
+                filterStatus === 'EXPIRED' ? 'border-amber-500 ring-2 ring-amber-500/20 shadow-xs' : 'border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-700">Expirées</span>
+                <Clock className="w-3.5 h-3.5 text-amber-600" />
+              </div>
+              <div className="text-2xl font-black text-slate-700">{expiredCount}</div>
+              <span className="text-[10px] text-amber-700 font-bold">À prolonger</span>
             </div>
 
             {suspendedQuotaAds.length > 0 && (
@@ -1187,6 +1229,40 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </button>
             </div>
           )}
+
+          {/* Sorting and Filters Toolbar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-500">Filtré par :</span>
+              <span className="text-xs font-black text-slate-800 bg-slate-100 px-2.5 py-1 rounded-lg">
+                {filterStatus === 'ALL' && 'Toutes les annonces'}
+                {filterStatus === 'ACTIVE' && 'En ligne publiques'}
+                {filterStatus === 'PENDING' && 'En attente de modération'}
+                {filterStatus === 'EXPIRED' && 'Expirées'}
+                {filterStatus === 'SUSPENDED' && 'En pause (Forfait)'}
+                {filterStatus === 'REJECTED' && 'Rejetées'}
+              </span>
+              <span className="text-xs text-slate-400">({displayedAds.length})</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <ArrowUpDown className="w-4 h-4 text-slate-400" />
+              <label htmlFor="user-ads-sort" className="text-xs font-bold text-slate-600">Trier par :</label>
+              <select
+                id="user-ads-sort"
+                value={adsSortBy}
+                onChange={(e) => setAdsSortBy(e.target.value as any)}
+                className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3 py-1.5 focus:ring-2 focus:ring-emerald-500 outline-hidden cursor-pointer"
+              >
+                <option value="DATE_DESC">Plus récentes d'abord</option>
+                <option value="DATE_ASC">Plus anciennes d'abord</option>
+                <option value="EXPIRY_ASC">Date d'expiration proche</option>
+                <option value="VIEWS_DESC">Les plus consultées</option>
+                <option value="PRICE_DESC">Prix le plus élevé</option>
+                <option value="PRICE_ASC">Prix le plus bas</option>
+              </select>
+            </div>
+          </div>
 
           {/* Ads List */}
           {displayedAds.length > 0 ? (
@@ -1282,11 +1358,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
                       <div className="text-emerald-700 font-black text-sm mb-3">
                         <span className="text-[10px] text-slate-400 block font-normal">
-                          {ad.mainCategory === 'EMPLOI' ? 'Salaire proposé :' : 'Tarif :'}
+                          {getPriceOrSalaryLabel(ad)} :
                         </span>
-                        {formatFCFA(ad.price)}
-                        {ad.priceUnit && ad.priceUnit !== 'total' && (
-                          <span className="text-xs text-slate-500 font-medium">/{ad.priceUnit}</span>
+                        {formatPriceDisplay(ad.price, ad.priceMax)}
+                        {ad.priceUnit && (
+                          <span className="text-xs text-slate-500 font-medium">/{formatPriceUnit(ad.priceUnit, isJobAd(ad))}</span>
                         )}
                       </div>
 
@@ -1325,9 +1401,16 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         </button>
 
                         <button
-                          onClick={() => onEditAd(ad)}
-                          className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl transition-all flex items-center gap-1 border border-emerald-200"
-                          title="Modifier cette annonce"
+                          onClick={() => {
+                            if (isExpired) {
+                              showAlert("Cette annonce est expirée. Vous devez d'abord la prolonger pour pouvoir la modifier.", 'info', "Prolongation requise");
+                              onOpenExtendModal(ad);
+                              return;
+                            }
+                            onEditAd(ad);
+                          }}
+                          className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl transition-all flex items-center gap-1 border border-emerald-200 cursor-pointer"
+                          title={isExpired ? "Prolonger l'annonce avant de la modifier" : "Modifier cette annonce"}
                         >
                           <Edit3 className="w-3.5 h-3.5 text-emerald-700" />
                           <span>Modifier</span>
@@ -1362,7 +1445,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                           </button>
                         )}
 
-                        {isActive && (
+                        {(isActive || isExpired) && (
                           <button
                             onClick={() => onOpenExtendModal(ad)}
                             className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
@@ -2059,7 +2142,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     setShowBoostPayment(false);
                     setSelectedPackForBoost(null);
                   }}
-                  initialPhone={currentUser.contactPhone}
+                  initialPhone=""
                 />
               </div>
             ) : (
@@ -2291,7 +2374,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               itemDescription={itemToPurchase.title}
               onSuccess={handlePurchaseSuccess}
               onCancel={() => setItemToPurchase(null)}
-              initialPhone={currentUser.contactPhone}
+              initialPhone=""
             />
           </div>
         </div>

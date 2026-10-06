@@ -1,4 +1,6 @@
 import { 
+  AvisRechercheCategory,
+  AutresEmploisSubCategory,
   BricABracCategory, 
   DomesticJobType, 
   NecrologieMinistry, 
@@ -67,6 +69,23 @@ export const TUTORING_LEVELS: TutoringLevel[] = [
   'Collège',
   'Lycée',
   'Supérieur / Université'
+];
+
+export const AVIS_RECHERCHE_CATEGORIES: AvisRechercheCategory[] = [
+  'Personne disparue',
+  'Objet ou bien égaré',
+  'Animal perdu',
+  'Document ou Titre officiel perdu',
+  'Témoin recherché',
+  'Autre avis'
+];
+
+export const AUTRES_EMPLOIS_SUBCATEGORIES: AutresEmploisSubCategory[] = [
+  "Demandeur d'emploi",
+  "Offre d'emploi",
+  'Stage / Alternance',
+  'Freelance & Prestations',
+  'Intérim & Saisonnier'
 ];
 
 export const PRICING_CONFIG = {

@@ -15,4 +15,6 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const db = initializeFirestore(app, { ignoreUndefinedProperties: true });
 export const auth = getAuth(app);
+// Point 3: Force Firebase Auth and reCAPTCHA to French
+auth.languageCode = 'fr';
 export const storage = getStorage(app);

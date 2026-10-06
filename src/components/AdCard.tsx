@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw, Edit3, Sparkles, CheckCircle2, ShieldCheck, Heart } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw, Edit3, Sparkles, CheckCircle2, ShieldCheck, Heart, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Ad } from '../types';
-import { formatFCFA, formatRemainingTime, getWhatsAppUrl } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, getWhatsAppUrl, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd } from '../utils/formatters';
 import { isAdBoostFeatured, recordAdInteraction } from '../utils/personalization';
+import { isAdVipCornerEligible } from '../utils/vipCorner';
 import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
 
 interface AdCardProps {
@@ -25,9 +26,55 @@ export const AdCard: React.FC<AdCardProps> = ({
   onToggleFavorite,
 }) => {
   const [showVerifiedModal, setShowVerifiedModal] = useState(false);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const touchStartXRef = useRef<number | null>(null);
+  const touchEndXRef = useRef<number | null>(null);
+
+  const images = ad.images && ad.images.length > 0
+    ? ad.images
+    : ['https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=800&q=80'];
+  const hasMultipleImages = images.length > 1;
+
+  const handlePrevImage = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setActiveImageIndex((prev) => (prev > 0 ? prev - 1 : images.length - 1));
+  };
+
+  const handleNextImage = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setActiveImageIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0));
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    touchEndXRef.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartXRef.current !== null && touchEndXRef.current !== null) {
+      const diffX = touchStartXRef.current - touchEndXRef.current;
+      if (diffX > 35) {
+        e.stopPropagation();
+        handleNextImage();
+      } else if (diffX < -35) {
+        e.stopPropagation();
+        handlePrevImage();
+      }
+    }
+    touchStartXRef.current = null;
+    touchEndXRef.current = null;
+  };
+
   const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
   const isBoosted = isAdBoostFeatured(ad);
   const isVerified = Boolean(ad.isOwnerVerified || ad.isOwnerVip);
+  const isVip = isAdVipCornerEligible(ad) && (ad.mainCategory === 'IMMOBILIER' || ad.mainCategory === 'MATERIEL_ROULANT');
+
+  const isNecrologie = ad.mainCategory === 'NECROLOGIE';
+  const isAvisRecherche = ad.mainCategory === 'AVIS_DE_RECHERCHE';
 
   const handleCardClick = () => {
     recordAdInteraction(ad);
@@ -37,7 +84,11 @@ export const AdCard: React.FC<AdCardProps> = ({
   return (
     <div
       className={`group bg-white rounded-2xl border transition-all duration-200 overflow-hidden flex flex-col hover:shadow-xl hover:-translate-y-0.5 ${
-        isBoosted
+        isNecrologie
+          ? 'border-slate-800 ring-1 ring-slate-800/30 shadow-md bg-white hover:border-slate-900'
+          : isAvisRecherche
+          ? 'border-red-400 ring-2 ring-red-400/20 shadow-md bg-white hover:border-red-500'
+          : isBoosted
           ? 'border-amber-400 ring-2 ring-amber-400/20 shadow-md'
           : isExpired
           ? 'border-red-200 opacity-75 bg-slate-50/70'
@@ -45,23 +96,94 @@ export const AdCard: React.FC<AdCardProps> = ({
       }`}
       id={`ad-card-${ad.id}`}
     >
-      {/* Image container */}
+      {/* Ribbon distinctif Nécrologie (Point 3) */}
+      {isNecrologie && (
+        <div className="bg-slate-950 text-amber-300 text-[11px] font-black uppercase px-3 py-1.5 flex items-center justify-between tracking-wide border-b border-slate-800">
+          <span className="flex items-center gap-1.5">
+            <span>🕊️</span>
+            <span>Avis d'Obsèques & Hommage</span>
+          </span>
+          <span className="text-[10px] text-slate-300 font-semibold lowercase">diffusion nationale</span>
+        </div>
+      )}
+
+      {/* Ribbon distinctif Avis de Recherche (Point 3) */}
+      {isAvisRecherche && (
+        <div className="bg-gradient-to-r from-red-600 to-rose-700 text-white text-[11px] font-black uppercase px-3 py-1.5 flex items-center justify-between tracking-wide shadow-xs">
+          <span className="flex items-center gap-1.5">
+            <span>🚨</span>
+            <span>Avis de Recherche & Vigilance</span>
+          </span>
+          {ad.avisRechercheData?.hasReward && ad.avisRechercheData?.rewardAmount ? (
+            <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-1.5 py-0.2 rounded-sm">
+              💰 Récompense
+            </span>
+          ) : (
+            <span className="text-[10px] text-red-100 font-semibold">signalement actif</span>
+          )}
+        </div>
+      )}
+      {/* Image container with Point 6: PC arrows and mobile swipe */}
       <div
-        className="relative aspect-16/10 bg-slate-100 overflow-hidden cursor-pointer"
+        className="relative aspect-16/10 bg-slate-100 overflow-hidden cursor-pointer select-none group/img"
         onClick={handleCardClick}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
         <img
-          src={ad.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=800&q=80'}
-          alt={ad.title || 'Annonce'}
+          src={images[activeImageIndex]}
+          alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           referrerPolicy="no-referrer"
           loading="lazy"
         />
 
+        {/* PC Arrows: Left and Right (Point 6) */}
+        {hasMultipleImages && (
+          <>
+            <button
+              type="button"
+              onClick={handlePrevImage}
+              aria-label="Photo précédente"
+              title="Photo précédente"
+              className="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white items-center justify-center opacity-0 group-hover:opacity-100 group-hover/img:opacity-100 transition-all duration-200 shadow-md backdrop-blur-xs z-20 hover:scale-110 cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleNextImage}
+              aria-label="Photo suivante"
+              title="Photo suivante"
+              className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white items-center justify-center opacity-0 group-hover:opacity-100 group-hover/img:opacity-100 transition-all duration-200 shadow-md backdrop-blur-xs z-20 hover:scale-110 cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+
+            {/* Pagination Dots indicator */}
+            <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1 z-10 pointer-events-none">
+              {images.map((_, idx) => (
+                <span
+                  key={idx}
+                  className={`h-1.5 rounded-full transition-all ${
+                    idx === activeImageIndex ? 'bg-white w-3 shadow-xs' : 'bg-white/50 w-1.5'
+                  }`}
+                />
+              ))}
+            </div>
+          </>
+        )}
+
         {/* Top Badges overlay */}
         <div className="absolute top-2.5 left-2.5 right-2.5 flex items-start justify-between gap-1 pointer-events-none">
           {/* Transaction Type: VENTE, LOCATION or À EMPLOYER */}
           <div className="flex flex-col gap-1">
+            {isVip && (
+              <span className="text-[10px] font-black tracking-wide uppercase px-2 py-0.5 rounded-lg shadow-sm bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 flex items-center gap-1 border border-amber-300">
+                👑 VIP
+              </span>
+            )}
             {isBoosted && (
               <span className="text-[10px] font-black tracking-wide uppercase px-2 py-0.5 rounded-lg shadow-sm bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 flex items-center gap-1 border border-amber-300">
                 <Sparkles className="w-3 h-3 fill-slate-950" />
@@ -95,6 +217,16 @@ export const AdCard: React.FC<AdCardProps> = ({
             ) : ad.mainCategory === 'NECROLOGIE' ? (
               <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-slate-950 text-white ring-1 ring-slate-700">
                 Avis d'Obsèques
+              </span>
+            ) : ad.mainCategory === 'AVIS_DE_RECHERCHE' ? (
+              <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-red-600 text-white ring-1 ring-red-400">
+                Avis de Recherche
+              </span>
+            ) : ad.mainCategory === 'AUTRES_EMPLOIS' ? (
+              <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-teal-600 text-white ring-1 ring-teal-400">
+                {ad.autresEmploisData?.subCategory === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
+                  ? "Demandeur d'emploi"
+                  : "Offre d'emploi"}
               </span>
             ) : ad.transactionType ? (
               <span
@@ -131,6 +263,21 @@ export const AdCard: React.FC<AdCardProps> = ({
             {ad.necrologieData?.ministry && (
               <span className="text-[10px] font-bold bg-slate-900/90 text-amber-300 px-2 py-0.5 rounded-md shadow-xs">
                 {ad.necrologieData.ministry}
+              </span>
+            )}
+            {ad.avisRechercheData?.category && (
+              <span className="text-[10px] font-bold bg-red-950/90 text-red-100 px-2 py-0.5 rounded-md shadow-xs">
+                {ad.avisRechercheData.category}
+              </span>
+            )}
+            {ad.autresEmploisData?.profession && (
+              <span className="text-[10px] font-bold bg-teal-950/90 text-teal-100 px-2 py-0.5 rounded-md shadow-xs">
+                {ad.autresEmploisData.profession}
+              </span>
+            )}
+            {(ad.cvUrl || ad.cvFileName) && (
+              <span className="text-[10px] font-bold bg-indigo-700/90 text-white px-2 py-0.5 rounded-md shadow-xs flex items-center gap-1">
+                📄 CV {ad.cvFileType ? `.${ad.cvFileType.toLowerCase()}` : 'joint'}
               </span>
             )}
           </div>
@@ -171,10 +318,10 @@ export const AdCard: React.FC<AdCardProps> = ({
         </div>
 
         {/* Media indicators (Photo count / Video badge) */}
-        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 pointer-events-none">
-          {(ad.images?.length || 0) > 1 && (
-            <span className="bg-black/70 text-white text-[10px] font-semibold px-2 py-0.5 rounded-md backdrop-blur-xs">
-              📷 {ad.images?.length} photos
+        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 pointer-events-none z-10">
+          {hasMultipleImages && (
+            <span className="bg-black/75 text-white text-[10px] font-bold px-2 py-0.5 rounded-md backdrop-blur-xs shadow-xs">
+              📷 {activeImageIndex + 1}/{images.length}
             </span>
           )}
           {ad.videoUrl && (
@@ -240,35 +387,111 @@ export const AdCard: React.FC<AdCardProps> = ({
           <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed mb-3">
             {ad.description}
           </p>
+
+          {/* Point 3: Informations Nécrologie visibles sur l'annonce en ligne */}
+          {isNecrologie && (
+            <div className="bg-slate-900 text-white rounded-xl p-3 border border-slate-700 space-y-1.5 text-xs mb-3 shadow-xs">
+              {(ad.necrologieData?.deceasedName || ad.necroDeceasedName) && (
+                <div className="font-black text-amber-300 text-sm flex items-center gap-1.5">
+                  <span>🕊️</span>
+                  <span className="line-clamp-1">{ad.necrologieData?.deceasedName || ad.necroDeceasedName}</span>
+                </div>
+              )}
+              {(ad.necrologieData?.ministry || ad.necroMinistry) && (
+                <div className="text-[11px] text-slate-300 font-semibold flex items-center gap-1">
+                  <span>🏛️</span>
+                  <span>Corps / Ministère : <strong>{ad.necrologieData?.ministry || ad.necroMinistry}</strong></span>
+                </div>
+              )}
+              {(ad.necrologieData?.ceremonyLocation || ad.necroCeremonyLocation) && (
+                <div className="text-[11px] text-slate-300 flex items-start gap-1">
+                  <span className="shrink-0">📍</span>
+                  <span className="line-clamp-1"><strong>Lieu / Veillée :</strong> {ad.necrologieData?.ceremonyLocation || ad.necroCeremonyLocation}</span>
+                </div>
+              )}
+              {(ad.necrologieData?.ceremonyDate || ad.necroCeremonyDate) && (
+                <div className="text-[11px] text-slate-300 flex items-center gap-1">
+                  <span>📅</span>
+                  <span><strong>Date :</strong> {ad.necrologieData?.ceremonyDate || ad.necroCeremonyDate}</span>
+                </div>
+              )}
+              {(ad.necrologieData?.funeralProgram || ad.necroFuneralProgram) && (
+                <div className="text-[11px] text-slate-400 pt-1 border-t border-slate-800 line-clamp-2 leading-relaxed">
+                  <strong className="text-slate-200">Programme sommaire :</strong> {ad.necrologieData?.funeralProgram || ad.necroFuneralProgram}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Point 3: Informations Avis de recherche visibles sur l'annonce en ligne */}
+          {isAvisRecherche && (
+            <div className="bg-red-50 text-slate-900 rounded-xl p-3 border border-red-200 space-y-1.5 text-xs mb-3 shadow-xs">
+              {(ad.avisRechercheData?.targetName || ad.title) && (
+                <div className="font-black text-red-900 text-sm flex items-center gap-1.5">
+                  <span>🚨</span>
+                  <span className="line-clamp-1">{ad.avisRechercheData?.targetName || ad.title}</span>
+                </div>
+              )}
+              {ad.avisRechercheData?.category && (
+                <div className="text-[11px] font-bold text-red-800">
+                  📌 Type : {ad.avisRechercheData.category}
+                </div>
+              )}
+              {(ad.avisRechercheData?.lastSeenLocation || ad.avisRechercheData?.lastSeenDate) && (
+                <div className="text-[11px] text-slate-700 flex items-start gap-1">
+                  <span className="shrink-0">📍</span>
+                  <span className="line-clamp-1">
+                    <strong>Vu à :</strong> {ad.avisRechercheData?.lastSeenLocation || 'Non précisé'}
+                    {ad.avisRechercheData?.lastSeenDate ? ` (${ad.avisRechercheData.lastSeenDate})` : ''}
+                  </span>
+                </div>
+              )}
+              {ad.avisRechercheData?.rewardAmount ? (
+                <div className="text-emerald-800 font-extrabold text-[11px] bg-emerald-100/90 p-1.5 rounded-lg border border-emerald-300 flex items-center gap-1">
+                  <span>💰 Récompense promise :</span>
+                  <span>{ad.avisRechercheData.rewardAmount.toLocaleString('fr-FR')} FCFA</span>
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
 
         <div>
-          {/* Price Tag */}
+          {/* Price Tag or Rubrique Header (NO price for Avis de recherche & Nécrologie - Point 3) */}
           <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between gap-2 mb-3">
-            {ad.mainCategory !== 'NECROLOGIE' ? (
+            {isNecrologie ? (
               <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                  {ad.mainCategory === 'EMPLOI' ? 'Salaire proposé' : 'Prix demandé'}
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                  🕊️ Recueillement
                 </span>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-base sm:text-lg font-black tracking-tight text-emerald-700">
-                    {formatFCFA(ad.price)}
-                  </span>
-                  {ad.priceUnit && ad.priceUnit !== 'total' && (
-                    <span className="text-xs font-semibold text-slate-500">
-                      /{ad.priceUnit}
-                    </span>
-                  )}
-                </div>
+                <span className="text-xs font-black text-slate-900">
+                  Diffusion Nationale
+                </span>
+              </div>
+            ) : isAvisRecherche ? (
+              <div>
+                <span className="text-[10px] uppercase font-bold text-red-600 block">
+                  🚨 Signalement
+                </span>
+                <span className="text-xs font-black text-slate-900">
+                  {ad.avisRechercheData?.category || 'Avis Actif'}
+                </span>
               </div>
             ) : (
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                  Rubrique
+                  {getPriceOrSalaryLabel(ad)}
                 </span>
-                <span className="text-xs font-extrabold text-slate-800">
-                  Nécrologie & Obsèques
-                </span>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-base sm:text-lg font-black tracking-tight text-emerald-700">
+                    {formatPriceDisplay(ad.price, ad.priceMax)}
+                  </span>
+                  {ad.priceUnit && ad.priceUnit !== 'total' && (
+                    <span className="text-xs font-semibold text-slate-500">
+                      {formatPriceUnit(ad.priceUnit, isJobAd(ad))}
+                    </span>
+                  )}
+                </div>
               </div>
             )}
 
@@ -279,10 +502,19 @@ export const AdCard: React.FC<AdCardProps> = ({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (isExpired) {
+                        alert("Cette annonce est expirée. Conformément aux règles, vous devez la prolonger au préalable pour pouvoir la modifier.");
+                        if (onOpenExtendModal) onOpenExtendModal(ad);
+                        return;
+                      }
                       onEditAd(ad);
                     }}
-                    className="text-[11px] font-bold text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
-                    title="Modifier cette annonce"
+                    className={`text-[11px] font-bold px-2 py-1 rounded-lg flex items-center gap-1 transition-colors ${
+                      isExpired
+                        ? 'text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed'
+                        : 'text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
+                    }`}
+                    title={isExpired ? "Prolongez d'abord l'annonce pour la modifier" : "Modifier cette annonce"}
                     id={`edit-button-${ad.id}`}
                   >
                     <Edit3 className="w-3 h-3 text-emerald-700" />
@@ -308,18 +540,24 @@ export const AdCard: React.FC<AdCardProps> = ({
             )}
           </div>
 
-          {/* Action buttons: WhatsApp & Tel */}
+          {/* Action buttons: WhatsApp & Tel (Contextualized for Necrologie and Avis de recherche) */}
           <div className="grid grid-cols-2 gap-2">
             <a
               href={getWhatsAppUrl(ad.contactPhone, ad.title)}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-2.5 rounded-xl transition-colors shadow-xs"
+              className={`flex items-center justify-center gap-1.5 font-bold text-xs py-2 px-2.5 rounded-xl transition-colors shadow-xs ${
+                isNecrologie
+                  ? 'bg-slate-900 hover:bg-slate-800 text-amber-300'
+                  : isAvisRecherche
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              }`}
               id={`whatsapp-button-${ad.id}`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              <span>WhatsApp</span>
+              <span>{isNecrologie ? 'Condoléances' : isAvisRecherche ? 'Signaler' : 'WhatsApp'}</span>
             </a>
 
             <a
@@ -329,7 +567,7 @@ export const AdCard: React.FC<AdCardProps> = ({
               id={`call-button-${ad.id}`}
             >
               <Phone className="w-3.5 h-3.5 text-slate-600" />
-              <span>Appeler</span>
+              <span>{isNecrologie ? 'Famille' : isAvisRecherche ? 'Urgence' : 'Appeler'}</span>
             </a>
           </div>
         </div>

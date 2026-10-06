@@ -17,9 +17,13 @@ import {
   Clock,
   Grid,
   PlusCircle,
+  Crown,
+  ArrowUpDown,
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CategoryBar } from './components/CategoryBar';
+import { MobileArcCategoryMenu } from './components/MobileArcCategoryMenu';
+import { UserPreferencesModal, UserPreferences } from './components/UserPreferencesModal';
 import { ImmobilierFilterBar } from './components/ImmobilierFilterBar';
 import { VehiclesFilterBar } from './components/VehiclesFilterBar';
 import { TutoringFilterBar } from './components/TutoringFilterBar';
@@ -38,6 +42,8 @@ import { LogoutConfirmModal } from './components/LogoutConfirmModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { isAdOwner } from './utils/formatters';
 import { sortAdsPersonalized, sortAdsRecent, recordCategoryInterest } from './utils/personalization';
+import { isAdVipCornerEligible, VIP_CORNER_INFO } from './utils/vipCorner';
+import { AVIS_RECHERCHE_CATEGORIES, AUTRES_EMPLOIS_SUBCATEGORIES } from './data/categoriesData';
 import {
   Ad,
   JobAdKind,
@@ -58,6 +64,70 @@ import { auth, db } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
 import { isTestAd } from './components/AdminPanel';
 import AdminApp from './AdminApp';
+
+function normalizeSearchText(str: string): string {
+  return (str || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+const CATEGORY_NAMES_MAP: Record<string, string> = {
+  IMMOBILIER: 'immobilier logement habitat villa maison appartement studio terrain parcelle bureau entrepot vente location',
+  MATERIEL_ROULANT: 'materiel roulant vehicule voiture moto camion engin btp bateau pirogue automobile vente location',
+  BRIC_A_BRAC: 'bric a brac equipement occasion electronique smartphone electromenager informatique meubles decoration mode vetement bricolage',
+  EMPLOI: 'emploi emplois domestiques metiers de maison nounou garde bebe cuisinier gardien jardinier femme de menage repassage chauffeur particulier travail',
+  COURS_A_DOMICILE: 'cours a domicile soutien scolaire repetiteur tuteur enseignant mathematiques physique chimie francais anglais philosophie informatique',
+  NECROLOGIE: 'necrologie avis d obseques deces hommage disparition veillee mortuaire enterrement inhumation funerailles eglise cimetiere',
+  AVIS_DE_RECHERCHE: 'avis de recherche alerte disparition personne disparue objet egare animal perdu document officiel titre foncier temoin recherche recompense signalement urgence',
+  AUTRES_EMPLOIS: 'autres emplois offre d emploi demandeur d emploi stage alternance freelance prestations interim travail recrutement cv curriculum vitae'
+};
+
+function doesAdMatchSearchQuery(ad: Ad, rawQuery: string): boolean {
+  const query = normalizeSearchText(rawQuery.trim());
+  if (!query) return true;
+
+  const tokens = query.split(/\s+/).filter(Boolean);
+  const categoryKeywords = CATEGORY_NAMES_MAP[ad.mainCategory] || '';
+  const fields: string[] = [
+    ad.title,
+    ad.description,
+    ad.mainCategory,
+    categoryKeywords,
+    ad.contactName,
+    ad.location?.province || '',
+    ad.location?.city || '',
+    ad.location?.neighborhood || '',
+    ad.transactionType || '',
+    ad.propertyType || '',
+    ad.vehicleData?.category || '',
+    ad.vehicleData?.brand || '',
+    ad.vehicleData?.model || '',
+    ad.domesticJobType || '',
+    ad.bricCategory || '',
+    ad.tutoringData?.subject || '',
+    ad.tutoringData?.level || '',
+    ad.tutoringData?.kind || '',
+    ad.necrologieData?.ministry || '',
+    ad.necrologieData?.deceasedName || '',
+    ad.necrologieData?.ceremonyLocation || '',
+    ad.necrologieData?.ceremonyDate || '',
+    ad.necrologieData?.funeralProgram || '',
+    ad.avisRechercheData?.category || '',
+    ad.avisRechercheData?.targetName || '',
+    ad.avisRechercheData?.lastSeenLocation || '',
+    ad.avisRechercheData?.lastSeenDate || '',
+    ad.avisRechercheData?.contactEmergency || '',
+    ad.autresEmploisData?.subCategory || '',
+    ad.autresEmploisData?.profession || '',
+    ad.autresEmploisData?.contractType || '',
+    ad.cvFileName || '',
+    ad.cvFileType || ''
+  ];
+
+  const fullText = normalizeSearchText(fields.join(' '));
+  return tokens.every((token) => fullText.includes(token));
+}
 
 function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
@@ -303,11 +373,30 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
   const [emploiProvince, setEmploiProvince] = useState('');
   const [emploiCity, setEmploiCity] = useState('');
 
+  // Corner VIP (Point 4)
+  const [isVipCornerActive, setIsVipCornerActive] = useState(false);
+
+  // Avis de recherche specific filters (Point 2)
+  const [avisFilterCategory, setAvisFilterCategory] = useState<string>('ALL');
+
+  // Autres Emplois specific filters (Point 2)
+  const [autresEmploisFilterSub, setAutresEmploisFilterSub] = useState<string>('ALL');
+
   // Modals state
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [isCguModalOpen, setIsCguModalOpen] = useState(false);
   const [isPhoneAuthOpen, setIsPhoneAuthOpen] = useState(false);
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
+  const [isMobileArcMenuOpen, setIsMobileArcMenuOpen] = useState(false);
+  const [isPrefModalOpen, setIsPrefModalOpen] = useState<boolean>(() => {
+    try {
+      const prefs = localStorage.getItem('bizbooster_user_preferences');
+      const skipped = localStorage.getItem('bizbooster_user_preferences_skipped');
+      return !prefs && !skipped;
+    } catch {
+      return false;
+    }
+  });
   const [authTriggerPurpose, setAuthTriggerPurpose] = useState<'PUBLISH' | 'DASHBOARD'>('DASHBOARD');
   const [selectedAdForDetail, setSelectedAdForDetail] = useState<Ad | null>(null);
   const [selectedAdForExtend, setSelectedAdForExtend] = useState<Ad | null>(null);
@@ -447,6 +536,8 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       EMPLOI: 0,
       COURS_A_DOMICILE: 0,
       NECROLOGIE: 0,
+      AVIS_DE_RECHERCHE: 0,
+      AUTRES_EMPLOIS: 0,
     };
     ads.forEach((ad) => {
       if (
@@ -463,8 +554,22 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     return counts;
   }, [ads, showTestAds, registeredUserIds, registeredPhones]);
 
-  // Feed Sort Mode: 'RECOMMENDED' (personalisation selon historique & affinités) ou 'RECENT' (plus récentes en premier)
-  const [feedSortMode, setFeedSortMode] = useState<'RECOMMENDED' | 'RECENT'>('RECOMMENDED');
+  // VIP Corner Ads count (Point 4: restricted to Immobilier & Matériel Roulant)
+  const vipAdsCount = useMemo(() => {
+    const now = Date.now();
+    return ads.filter(
+      (ad) =>
+        ad.status === 'ACTIVE' &&
+        new Date(ad.expiresAt).getTime() > now &&
+        (showTestAds || isAdFromRegisteredAdvertiser(ad)) &&
+        isAdVipCornerEligible(ad) &&
+        (ad.mainCategory === 'IMMOBILIER' || ad.mainCategory === 'MATERIEL_ROULANT')
+    ).length;
+  }, [ads, showTestAds, registeredUserIds, registeredPhones]);
+
+  // Feed Sort Mode: 'RECOMMENDED' | 'RECENT' | 'PRICE_ASC' | 'PRICE_DESC' | 'POPULAR'
+  type CatalogSortOption = 'RECOMMENDED' | 'RECENT' | 'PRICE_ASC' | 'PRICE_DESC' | 'POPULAR';
+  const [feedSortMode, setFeedSortMode] = useState<CatalogSortOption>('RECOMMENDED');
 
   // Public Catalog Filtering engine (ONLY ACTIVE AND NON-EXPIRED APPROVED ADS)
   const filteredAds = useMemo(() => {
@@ -485,22 +590,22 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
         return false;
       }
 
+      // Point 4: Corner VIP filter (strictly Immobilier & Matériel Roulant)
+      if (isVipCornerActive) {
+        const isEligible = isAdVipCornerEligible(ad) && (ad.mainCategory === 'IMMOBILIER' || ad.mainCategory === 'MATERIEL_ROULANT');
+        if (!isEligible) {
+          return false;
+        }
+      }
+
       // 1. Main Category filter
       if (activeCategory !== 'ALL' && ad.mainCategory !== activeCategory) {
         return false;
       }
 
-      // 2. Global search query
+      // 2. Global search query (includes category and subcategory names - Point 1)
       if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase();
-        const matchesTitle = ad.title.toLowerCase().includes(query);
-        const matchesDesc = ad.description.toLowerCase().includes(query);
-        const matchesCity = ad.location?.city.toLowerCase().includes(query);
-        const matchesNeighborhood = ad.location?.neighborhood.toLowerCase().includes(query);
-        const matchesBrand = ad.vehicleData?.brand?.toLowerCase().includes(query);
-        const matchesModel = ad.vehicleData?.model?.toLowerCase().includes(query);
-
-        if (!matchesTitle && !matchesDesc && !matchesCity && !matchesNeighborhood && !matchesBrand && !matchesModel) {
+        if (!doesAdMatchSearchQuery(ad, searchQuery)) {
           return false;
         }
       }
@@ -587,7 +692,7 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
         }
       }
 
-      // 7. Specific Nécrologie filters (Point 8)
+      // 7. Specific Nécrologie filters (Point 1: Diffusion nationale sur tout le Gabon, pas de filtre province)
       if (activeCategory === 'NECROLOGIE') {
         const adMinistry = ad.necrologieData?.ministry || (ad as any).necroMinistry;
         if (necroMinistry !== 'ALL') {
@@ -597,12 +702,6 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
           if (normAdMin !== normFilterMin && !normAdMin.includes(normFilterMin) && !normFilterMin.includes(normAdMin)) {
             return false;
           }
-        }
-        if (necroProvince && ad.location?.province?.toLowerCase() !== necroProvince.toLowerCase()) {
-          return false;
-        }
-        if (necroCity && ad.location?.city?.toLowerCase() !== necroCity.toLowerCase()) {
-          return false;
         }
       }
 
@@ -634,19 +733,49 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
         }
       }
 
+      // 9. Specific Avis de Recherche filters (Point 2)
+      if (activeCategory === 'AVIS_DE_RECHERCHE') {
+        if (avisFilterCategory !== 'ALL') {
+          const adCat = ad.avisRechercheData?.category;
+          if (!adCat || adCat !== avisFilterCategory) {
+            return false;
+          }
+        }
+      }
+
+      // 10. Specific Autres Emplois filters (Point 2)
+      if (activeCategory === 'AUTRES_EMPLOIS') {
+        if (autresEmploisFilterSub !== 'ALL') {
+          const adSub = ad.autresEmploisData?.subCategory;
+          if (!adSub || adSub !== autresEmploisFilterSub) {
+            return false;
+          }
+        }
+      }
+
       return true;
     });
 
-    // Requirement 5: Personalization & recency sorting
+    // Requirement 5: Personalization, recency and sort options
     if (feedSortMode === 'RECOMMENDED') {
       return sortAdsPersonalized(list);
-    } else {
+    } else if (feedSortMode === 'RECENT') {
       return sortAdsRecent(list);
+    } else if (feedSortMode === 'PRICE_ASC') {
+      return [...list].sort((a, b) => (a.price || 0) - (b.price || 0));
+    } else if (feedSortMode === 'PRICE_DESC') {
+      return [...list].sort((a, b) => (b.price || 0) - (a.price || 0));
+    } else if (feedSortMode === 'POPULAR') {
+      return [...list].sort((a, b) => (b.viewsCount || 0) - (a.viewsCount || 0));
     }
+    return list;
   }, [
     ads,
     feedSortMode,
     activeCategory,
+    isVipCornerActive,
+    avisFilterCategory,
+    autresEmploisFilterSub,
     searchQuery,
     globalTransaction,
     immoTransaction,
@@ -664,8 +793,6 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     tutoringProvince,
     tutoringCity,
     necroMinistry,
-    necroProvince,
-    necroCity,
     emploiJobKind,
     emploiJobType,
     emploiProvince,
@@ -795,6 +922,14 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
     if (!isAdOwner(ad, currentUser)) {
       showToast("Accès refusé : Seul le détenteur de l'annonce est autorisé à la modifier.");
+      return;
+    }
+
+    // Point 5: Modifier une annonce expirée ne devrait être possible que si elle est au préalable prolongée.
+    const isExpired = ad.status === 'EXPIRED' || (ad.expiresAt && new Date(ad.expiresAt).getTime() <= Date.now());
+    if (isExpired) {
+      showToast("Cette annonce est expirée. Vous devez d'abord la prolonger pour pouvoir la modifier.");
+      setSelectedAdForExtend(ad);
       return;
     }
 
@@ -1186,6 +1321,43 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
                 </div>
               </div>
 
+              {/* Corner VIP Dedicated Bar & Toggle */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-gradient-to-r from-amber-500/10 via-yellow-400/15 to-amber-600/10 border border-amber-300/80 rounded-2xl px-4 py-2.5 shadow-2xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500 to-yellow-600 text-slate-950 flex items-center justify-center font-black text-sm shrink-0 shadow-2xs">
+                    👑
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                      <span>Corner VIP Gabon</span>
+                      <span className="text-[10px] bg-amber-500 text-slate-950 px-1.5 py-0.2 rounded font-extrabold uppercase">
+                        Haut Standing
+                      </span>
+                    </span>
+                    <p className="text-[11px] text-amber-900/80 truncate">
+                      Villas d'exception, résidences haut standing & véhicules de prestige (Immobilier & Roulant)
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsVipCornerActive(!isVipCornerActive)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0 shadow-xs ${
+                    isVipCornerActive
+                      ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 ring-2 ring-amber-400 scale-102'
+                      : 'bg-white hover:bg-amber-100/80 text-amber-950 border border-amber-300'
+                  }`}
+                >
+                  <Crown className="w-3.5 h-3.5 text-amber-700" />
+                  <span>{isVipCornerActive ? '✓ Mode VIP Actif' : 'Entrer dans le Corner VIP'}</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                    isVipCornerActive ? 'bg-slate-950 text-amber-400' : 'bg-amber-100 text-amber-900'
+                  }`}>
+                    {vipAdsCount}
+                  </span>
+                </button>
+              </div>
+
               {/* Main Categories Bar */}
               <CategoryBar
                 activeCategory={activeCategory}
@@ -1194,6 +1366,39 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
                 categoryCounts={categoryCounts}
               />
             </div>
+
+            {/* Explanatory Banner when user enters the VIP Corner (Point 4) */}
+            {isVipCornerActive && (
+              <div className="bg-gradient-to-r from-amber-500/15 via-yellow-400/20 to-amber-600/15 border-2 border-amber-400 rounded-3xl p-4 sm:p-5 text-amber-950 shadow-sm animate-in fade-in">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-500 to-yellow-600 text-slate-950 flex items-center justify-center font-black text-xl shadow-xs shrink-0">
+                      👑
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm sm:text-base font-black text-amber-950 tracking-tight">
+                          Corner VIP — Biens d'Exception au Gabon
+                        </h3>
+                        <span className="bg-amber-500 text-slate-950 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
+                          Placement 100% Gratuit
+                        </span>
+                      </div>
+                      <p className="text-xs text-amber-900 mt-1 max-w-2xl leading-relaxed">
+                        Le <strong>Corner VIP</strong> regroupe les annonces les plus prestigieuses du Gabon. Réservé pour le moment à l'<strong>Immobilier</strong> (villas, domaines dès 75M FCFA ou locations dès 1M FCFA/mois) et au <strong>Matériel Roulant</strong> (véhicules de luxe dès 25M FCFA ou locations dès 50k FCFA/jour). Les annonceurs dont le prix atteint ce seuil y sont automatiquement mis en avant <em>sans aucun frais</em>.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsVipCornerActive(false)}
+                    className="text-xs font-bold text-amber-900 hover:text-amber-950 bg-white/90 hover:bg-white border border-amber-300 px-3 py-1.5 rounded-xl transition-all shrink-0 cursor-pointer shadow-2xs"
+                  >
+                    Quitter le Corner VIP ✕
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Specialized Filters: IMMOBILIER */}
             {activeCategory === 'IMMOBILIER' && (
@@ -1250,19 +1455,13 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
               />
             )}
 
-            {/* Specialized Filters: NECROLOGIE (Point 8) */}
+            {/* Specialized Filters: NECROLOGIE (Point 1: Diffusion nationale, sans filtre province) */}
             {activeCategory === 'NECROLOGIE' && (
               <NecrologieFilterBar
                 selectedMinistry={necroMinistry}
                 onChangeMinistry={setNecroMinistry}
-                selectedProvince={necroProvince}
-                onChangeProvince={setNecroProvince}
-                selectedCity={necroCity}
-                onChangeCity={setNecroCity}
                 onResetFilters={() => {
                   setNecroMinistry('ALL');
-                  setNecroProvince('');
-                  setNecroCity('');
                 }}
               />
             )}
@@ -1284,12 +1483,128 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
               />
             )}
 
+            {/* Specialized Filters: AVIS DE RECHERCHE (Point 2) */}
+            {activeCategory === 'AVIS_DE_RECHERCHE' && (
+              <div className="bg-red-950/90 text-white rounded-2xl p-4 border border-red-800 shadow-md space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-red-800/80 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 bg-red-600 rounded-lg text-white">
+                      <Search className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h4 className="font-black text-sm text-white">
+                        Avis de Recherche & Signalements Publics
+                      </h4>
+                      <p className="text-[11px] text-red-200">
+                        Disparitions, objets ou documents officiels perdus, animaux et signalements urgents au Gabon
+                      </p>
+                    </div>
+                  </div>
+                  {avisFilterCategory !== 'ALL' && (
+                    <button
+                      type="button"
+                      onClick={() => setAvisFilterCategory('ALL')}
+                      className="text-xs font-bold text-red-300 hover:text-white cursor-pointer"
+                    >
+                      Réinitialiser le filtre ✕
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setAvisFilterCategory('ALL')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      avisFilterCategory === 'ALL'
+                        ? 'bg-red-600 text-white shadow-xs'
+                        : 'bg-red-900/50 hover:bg-red-900 text-red-200 border border-red-800'
+                    }`}
+                  >
+                    Tous les avis
+                  </button>
+                  {AVIS_RECHERCHE_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setAvisFilterCategory(cat)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        avisFilterCategory === cat
+                          ? 'bg-red-600 text-white shadow-xs'
+                          : 'bg-red-900/50 hover:bg-red-900 text-red-200 border border-red-800'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Specialized Filters: AUTRES EMPLOIS (Point 2) */}
+            {activeCategory === 'AUTRES_EMPLOIS' && (
+              <div className="bg-teal-950/90 text-white rounded-2xl p-4 border border-teal-800 shadow-md space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-teal-800/80 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 bg-teal-600 rounded-lg text-white">
+                      <Briefcase className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h4 className="font-black text-sm text-white">
+                        Autres Emplois, Métiers & Recrutement
+                      </h4>
+                      <p className="text-[11px] text-teal-200">
+                        Consultez les profils de demandeurs d'emploi (avec CV téléchargeable) et les offres de recrutement
+                      </p>
+                    </div>
+                  </div>
+                  {autresEmploisFilterSub !== 'ALL' && (
+                    <button
+                      type="button"
+                      onClick={() => setAutresEmploisFilterSub('ALL')}
+                      className="text-xs font-bold text-teal-300 hover:text-white cursor-pointer"
+                    >
+                      Réinitialiser le filtre ✕
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setAutresEmploisFilterSub('ALL')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      autresEmploisFilterSub === 'ALL'
+                        ? 'bg-teal-600 text-white shadow-xs'
+                        : 'bg-teal-900/50 hover:bg-teal-900 text-teal-200 border border-teal-800'
+                    }`}
+                  >
+                    Toutes les offres & profils
+                  </button>
+                  {AUTRES_EMPLOIS_SUBCATEGORIES.map((sub) => (
+                    <button
+                      key={sub}
+                      type="button"
+                      onClick={() => setAutresEmploisFilterSub(sub)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        autresEmploisFilterSub === sub
+                          ? 'bg-teal-600 text-white shadow-xs'
+                          : 'bg-teal-900/50 hover:bg-teal-900 text-teal-200 border border-teal-800'
+                      }`}
+                    >
+                      {sub === "Demandeur d'emploi" ? "📄 Demandeurs d'emploi (CVs)" : sub}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Ads Grid Section Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
               <div>
                 <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
                   <span>
-                    {activeCategory === 'ALL'
+                    {isVipCornerActive
+                      ? '👑 Sélection Prestige • Corner VIP Gabon'
+                      : activeCategory === 'ALL'
                       ? 'Toutes les annonces en ligne'
                       : activeCategory === 'IMMOBILIER'
                       ? 'Annonces Immobilières au Gabon'
@@ -1297,9 +1612,17 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
                       ? 'Matériel Roulant & Véhicules'
                       : activeCategory === 'BRIC_A_BRAC'
                       ? 'Bric-à-Brac & Équipements'
+                      : activeCategory === 'COURS_A_DOMICILE'
+                      ? 'Cours à Domicile'
+                      : activeCategory === 'NECROLOGIE'
+                      ? 'Avis d\'Obsèques & Nécrologie'
+                      : activeCategory === 'AVIS_DE_RECHERCHE'
+                      ? 'Avis de Recherche & Signalements'
+                      : activeCategory === 'AUTRES_EMPLOIS'
+                      ? 'Autres Emplois & Recrutement'
                       : 'Offres & Demandes d\'Emploi'}
                   </span>
-                  <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-2 py-0.5 rounded-full">
+                  <span className={`${isVipCornerActive ? 'bg-amber-100 text-amber-950 border border-amber-300' : 'bg-emerald-100 text-emerald-800'} text-xs font-bold px-2 py-0.5 rounded-full`}>
                     {filteredAds.length} active{filteredAds.length > 1 ? 's' : ''}
                   </span>
                 </h3>
@@ -1310,31 +1633,21 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
               <div className="flex items-center gap-2 flex-wrap">
                 {/* Sort Mode Switcher: Requirement 5 */}
-                <div className="inline-flex items-center bg-white p-1 rounded-xl border border-slate-200 shadow-xs text-xs font-bold">
-                  <button
-                    onClick={() => setFeedSortMode('RECOMMENDED')}
-                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-                      feedSortMode === 'RECOMMENDED'
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                    title="Annonces adaptées à vos préférences et recherches récentes"
+                <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-xs text-xs font-bold text-slate-700">
+                  <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <label htmlFor="catalog-feed-sort" className="text-[11px] text-slate-500 font-semibold hidden sm:inline shrink-0">Trier par :</label>
+                  <select
+                    id="catalog-feed-sort"
+                    value={feedSortMode}
+                    onChange={(e) => setFeedSortMode(e.target.value as any)}
+                    className="bg-transparent text-xs font-bold text-slate-800 outline-hidden cursor-pointer"
                   >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Pour vous</span>
-                  </button>
-                  <button
-                    onClick={() => setFeedSortMode('RECENT')}
-                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-                      feedSortMode === 'RECENT'
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                    title="Annonces triées par ordre chronologique de publication"
-                  >
-                    <Clock className="w-3.5 h-3.5" />
-                    <span>Plus récentes</span>
-                  </button>
+                    <option value="RECOMMENDED">✨ Pour vous (Recommandées)</option>
+                    <option value="RECENT">🕒 Plus récentes</option>
+                    <option value="PRICE_ASC">💰 Prix croissant</option>
+                    <option value="PRICE_DESC">💎 Prix décroissant</option>
+                    <option value="POPULAR">🔥 Plus consultées</option>
+                  </select>
                 </div>
 
                 {(searchQuery ||
@@ -1573,12 +1886,35 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
         cancelText="Annuler"
       />
 
+      {/* 8. Mobile Arc Category Menu (Point 2) */}
+      <MobileArcCategoryMenu
+        isOpen={isMobileArcMenuOpen}
+        onClose={() => setIsMobileArcMenuOpen(false)}
+        activeCategory={activeCategory}
+        onSelectCategory={(cat) => {
+          handleSelectCategory(cat);
+          setIsMobileArcMenuOpen(false);
+        }}
+        categoryCounts={categoryCounts}
+      />
+
+      {/* 9. User Preferences First Visit Modal (Point 3) */}
+      <UserPreferencesModal
+        isOpen={isPrefModalOpen}
+        onClose={() => setIsPrefModalOpen(false)}
+        onSavePreferences={(_prefs) => {
+          setFeedSortMode('RECOMMENDED');
+          showToast("Vos préférences d'annonces ont été enregistrées !");
+        }}
+      />
+
       {/* 6. Native Mobile Bottom Navigation Bar (Optimized for quick thumb reach) */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 px-4 py-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-2xl flex items-center justify-around">
         {/* Tab 1: Catalogue */}
         <button
           onClick={() => {
             setFrontendTab('catalog');
+            setIsMobileArcMenuOpen((prev) => !prev);
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${

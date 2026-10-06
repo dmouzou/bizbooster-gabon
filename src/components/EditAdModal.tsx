@@ -17,6 +17,13 @@ import {
   Film,
   Loader2,
   ShieldAlert,
+  Heart,
+  GraduationCap,
+  Search,
+  UserCheck,
+  Crown,
+  FileText,
+  Download,
 } from 'lucide-react';
 import {
   Ad,
@@ -27,8 +34,22 @@ import {
   BricABracCategory,
   DomesticJobType,
   JobAdKind,
+  NecrologieMinistry,
+  AvisRechercheCategory,
+  AutresEmploisSubCategory,
+  TutoringSubject,
+  TutoringLevel,
+  TutoringAdKind,
 } from '../types';
 import { GABON_PROVINCES } from '../data/gabonLocations';
+import {
+  NECROLOGIE_MINISTRIES,
+  AVIS_RECHERCHE_CATEGORIES,
+  AUTRES_EMPLOIS_SUBCATEGORIES,
+  TUTORING_SUBJECTS,
+  TUTORING_LEVELS,
+} from '../data/categoriesData';
+import { isAdVipCornerEligible } from '../utils/vipCorner';
 import { auth, storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
@@ -53,6 +74,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
   const [title, setTitle] = useState(ad.title || '');
   const [description, setDescription] = useState(ad.description || '');
   const [price, setPrice] = useState(ad.price ? String(ad.price) : '');
+  const [priceMax, setPriceMax] = useState(ad.priceMax ? String(ad.priceMax) : '');
   const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour' | 'heure'>(
     ad.priceUnit || 'total'
   );
@@ -83,6 +105,44 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
   const [jobKind, setJobKind] = useState<JobAdKind>(
     ad.jobKind || (ad.transactionType === 'CHERCHE_EMPLOI' ? 'DEMANDE_EMPLOI' : 'OFFRE_EMPLOI')
   );
+
+  // Nécrologie fields (Point 1: User can edit ministry)
+  const [necroMinistry, setNecroMinistry] = useState<NecrologieMinistry>(
+    ad.necrologieData?.ministry || 'Éducation nationale'
+  );
+  const [necroDeceasedName, setNecroDeceasedName] = useState(ad.necrologieData?.deceasedName || '');
+  const [necroCeremonyDate, setNecroCeremonyDate] = useState(ad.necrologieData?.ceremonyDate || '');
+  const [necroCeremonyLocation, setNecroCeremonyLocation] = useState(ad.necrologieData?.ceremonyLocation || '');
+  const [necroFuneralProgram, setNecroFuneralProgram] = useState(ad.necrologieData?.funeralProgram || '');
+  const [necroFamilyContact, setNecroFamilyContact] = useState(ad.necrologieData?.familyContact || '');
+
+  // Cours à Domicile fields
+  const [tutoringKind, setTutoringKind] = useState<TutoringAdKind>(ad.tutoringData?.kind || 'OFFRE');
+  const [tutoringSubject, setTutoringSubject] = useState<TutoringSubject>(ad.tutoringData?.subject || 'Mathématiques');
+  const [tutoringLevel, setTutoringLevel] = useState<TutoringLevel>(ad.tutoringData?.level || 'Tous niveaux');
+
+  // Avis de Recherche fields (Point 2)
+  const [avisCategory, setAvisCategory] = useState<AvisRechercheCategory>(
+    ad.avisRechercheData?.category || 'Personne disparue'
+  );
+  const [avisTargetName, setAvisTargetName] = useState(ad.avisRechercheData?.targetName || '');
+  const [avisLastSeenDate, setAvisLastSeenDate] = useState(ad.avisRechercheData?.lastSeenDate || '');
+  const [avisLastSeenLocation, setAvisLastSeenLocation] = useState(ad.avisRechercheData?.lastSeenLocation || '');
+  const [avisHasReward, setAvisHasReward] = useState(Boolean(ad.avisRechercheData?.hasReward || (ad.avisRechercheData?.rewardAmount && ad.avisRechercheData.rewardAmount > 0)));
+  const [avisRewardAmount, setAvisRewardAmount] = useState<number | ''>(ad.avisRechercheData?.rewardAmount || '');
+  const [avisEmergencyContact, setAvisEmergencyContact] = useState(ad.avisRechercheData?.contactEmergency || '');
+
+  // Autres Emplois fields (Point 2: Demandeur d'emploi + CV)
+  const [autresEmploisSubCategory, setAutresEmploisSubCategory] = useState<AutresEmploisSubCategory>(
+    ad.autresEmploisData?.subCategory || "Demandeur d'emploi"
+  );
+  const [autresEmploisProfession, setAutresEmploisProfession] = useState(ad.autresEmploisData?.profession || '');
+  const [autresEmploisContractType, setAutresEmploisContractType] = useState(ad.autresEmploisData?.contractType || 'CDI');
+  const [autresEmploisExperience, setAutresEmploisExperience] = useState(ad.autresEmploisData?.experienceYears || '');
+  const [cvUrl, setCvUrl] = useState(ad.cvUrl || ad.autresEmploisData?.cvUrl || '');
+  const [cvFileName, setCvFileName] = useState(ad.cvFileName || ad.autresEmploisData?.cvFileName || '');
+  const [cvFileType, setCvFileType] = useState(ad.cvFileType || ad.autresEmploisData?.cvFileType || '');
+  const [cvFileSize, setCvFileSize] = useState(ad.cvFileSize || ad.autresEmploisData?.cvFileSize || 0);
 
   // Location fields
   const [selectedProvinceName, setSelectedProvinceName] = useState(
@@ -115,6 +175,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       setTitle(ad.title || '');
       setDescription(ad.description || '');
       setPrice(ad.price ? String(ad.price) : '');
+      setPriceMax(ad.priceMax ? String(ad.priceMax) : '');
       setPriceUnit(ad.priceUnit || 'total');
       setMainCategory(ad.mainCategory || 'IMMOBILIER');
       setTransactionType(ad.transactionType || 'VENTE');
@@ -125,6 +186,30 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       setBricCategory(ad.bricCategory || 'Électronique & Smartphones');
       setDomesticJobType(ad.domesticJobType || 'Gardiens de nuit / de jour');
       setJobKind(ad.jobKind || (ad.transactionType === 'CHERCHE_EMPLOI' ? 'DEMANDE_EMPLOI' : 'OFFRE_EMPLOI'));
+      setNecroMinistry(ad.necrologieData?.ministry || 'Éducation nationale');
+      setNecroDeceasedName(ad.necrologieData?.deceasedName || '');
+      setNecroCeremonyDate(ad.necrologieData?.ceremonyDate || '');
+      setNecroCeremonyLocation(ad.necrologieData?.ceremonyLocation || '');
+      setNecroFuneralProgram(ad.necrologieData?.funeralProgram || '');
+      setNecroFamilyContact(ad.necrologieData?.familyContact || '');
+      setTutoringKind(ad.tutoringData?.kind || 'OFFRE');
+      setTutoringSubject(ad.tutoringData?.subject || 'Mathématiques');
+      setTutoringLevel(ad.tutoringData?.level || 'Tous niveaux');
+      setAvisCategory(ad.avisRechercheData?.category || 'Personne disparue');
+      setAvisTargetName(ad.avisRechercheData?.targetName || '');
+      setAvisLastSeenDate(ad.avisRechercheData?.lastSeenDate || '');
+      setAvisLastSeenLocation(ad.avisRechercheData?.lastSeenLocation || '');
+      setAvisHasReward(Boolean(ad.avisRechercheData?.hasReward || (ad.avisRechercheData?.rewardAmount && ad.avisRechercheData.rewardAmount > 0)));
+      setAvisRewardAmount(ad.avisRechercheData?.rewardAmount ? String(ad.avisRechercheData.rewardAmount) : '');
+      setAvisEmergencyContact(ad.avisRechercheData?.contactEmergency || '');
+      setAutresEmploisSubCategory(ad.autresEmploisData?.subCategory || "Demandeur d'emploi");
+      setAutresEmploisProfession(ad.autresEmploisData?.profession || '');
+      setAutresEmploisContractType(ad.autresEmploisData?.contractType || 'CDI');
+      setAutresEmploisExperience(ad.autresEmploisData?.experienceYears || '');
+      setCvUrl(ad.cvUrl || ad.autresEmploisData?.cvUrl || '');
+      setCvFileName(ad.cvFileName || ad.autresEmploisData?.cvFileName || '');
+      setCvFileType(ad.cvFileType || ad.autresEmploisData?.cvFileType || '');
+      setCvFileSize(ad.cvFileSize || ad.autresEmploisData?.cvFileSize || 0);
       setSelectedProvinceName(ad.location?.province || 'Estuaire');
       setSelectedCityName(ad.location?.city || 'Libreville');
       setSelectedNeighborhood(ad.location?.neighborhood || 'Centre');
@@ -191,6 +276,45 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
     }
   };
 
+  const handleCvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (ext !== 'pdf' && ext !== 'docx' && ext !== 'md') {
+      setErrorMsg('Format de CV non supporté. Veuillez choisir un fichier .pdf, .docx ou .md');
+      return;
+    }
+    try {
+      setErrorMsg(null);
+      if (auth.currentUser) {
+        const storagePath = `cvs/${auth.currentUser.uid}/${Date.now()}_${file.name}`;
+        const storageRef = ref(storage, storagePath);
+        await uploadBytes(storageRef, file);
+        const downloadUrl = await getDownloadURL(storageRef);
+        setCvUrl(downloadUrl);
+      } else {
+        const reader = new FileReader();
+        reader.onload = (loadEvt) => {
+          setCvUrl(loadEvt.target?.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
+      setCvFileName(file.name);
+      setCvFileType(ext);
+      setCvFileSize(file.size);
+    } catch (err) {
+      console.error('CV upload error:', err);
+      const reader = new FileReader();
+      reader.onload = (loadEvt) => {
+        setCvUrl(loadEvt.target?.result as string);
+        setCvFileName(file.name);
+        setCvFileType(ext);
+        setCvFileSize(file.size);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -204,9 +328,13 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       setErrorMsg('La description de l\'annonce est obligatoire.');
       return;
     }
+    const isDemandeurEmploi = mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === "Demandeur d'emploi";
     let numPrice = Number(price);
-    if (mainCategory === 'NECROLOGIE') {
+
+    if (mainCategory === 'NECROLOGIE' || mainCategory === 'AVIS_DE_RECHERCHE') {
       numPrice = 0;
+    } else if (isDemandeurEmploi) {
+      numPrice = Number(price) || 0;
     } else {
       if (price === '' || String(price).trim() === '') {
         setErrorMsg('Le prix de votre annonce est obligatoire.');
@@ -217,10 +345,19 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
         return;
       }
     }
-    if (images.length === 0) {
-      setErrorMsg('Au moins une photo est requise pour illustrer votre annonce.');
-      return;
+
+    if (isDemandeurEmploi) {
+      if (!cvUrl && !cvFileName) {
+        setErrorMsg("Le dépôt de votre CV (.pdf, .docx ou .md) est obligatoire pour la sous-catégorie Demandeur d'emploi.");
+        return;
+      }
+    } else {
+      if (images.length === 0) {
+        setErrorMsg('Au moins une photo est requise pour illustrer votre annonce.');
+        return;
+      }
     }
+
     if (!contactPhone.trim()) {
       setErrorMsg('Le numéro de téléphone de contact (+241...) est requis.');
       return;
@@ -230,6 +367,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       title: title.trim(),
       description: description.trim(),
       price: numPrice,
+      priceMax: (mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS') && priceMax && Number(priceMax) > numPrice ? Number(priceMax) : undefined,
       priceUnit,
       mainCategory,
       transactionType:
@@ -249,12 +387,14 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
 
     if (mainCategory === 'IMMOBILIER') {
       updatedData.propertyType = propertyType;
+      updatedData.isVipCorner = isAdVipCornerEligible({ mainCategory, transactionType, price: numPrice, priceUnit });
     } else if (mainCategory === 'MATERIEL_ROULANT') {
       updatedData.vehicleData = {
         category: vehicleCategory,
         brand: vehicleBrand.trim() || undefined,
         model: vehicleModel.trim() || undefined,
       };
+      updatedData.isVipCorner = isAdVipCornerEligible({ mainCategory, transactionType, price: numPrice, priceUnit });
     } else if (mainCategory === 'BRIC_A_BRAC') {
       updatedData.bricCategory = bricCategory;
     } else if (mainCategory === 'EMPLOI') {
@@ -263,6 +403,48 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       if (jobKind === 'DEMANDE_EMPLOI') {
         updatedData.transactionType = 'CHERCHE_EMPLOI';
       }
+    } else if (mainCategory === 'COURS_A_DOMICILE') {
+      updatedData.tutoringData = {
+        kind: tutoringKind,
+        subject: tutoringSubject,
+        level: tutoringLevel,
+      };
+    } else if (mainCategory === 'NECROLOGIE') {
+      // Point 1: Ministry modification persisted correctly
+      updatedData.necrologieData = {
+        ministry: necroMinistry,
+        deceasedName: necroDeceasedName.trim() || undefined,
+        ceremonyDate: necroCeremonyDate.trim() || undefined,
+        ceremonyLocation: necroCeremonyLocation.trim() || undefined,
+        funeralProgram: necroFuneralProgram.trim() || undefined,
+        familyContact: necroFamilyContact.trim() || undefined,
+      };
+      updatedData.price = 0;
+    } else if (mainCategory === 'AVIS_DE_RECHERCHE') {
+      updatedData.avisRechercheData = {
+        category: avisCategory,
+        targetName: avisTargetName.trim() || undefined,
+        lastSeenDate: avisLastSeenDate.trim() || undefined,
+        lastSeenLocation: avisLastSeenLocation.trim() || undefined,
+        hasReward: avisHasReward,
+        rewardAmount: Number(avisRewardAmount) || undefined,
+        contactEmergency: avisEmergencyContact.trim() || undefined,
+      };
+    } else if (mainCategory === 'AUTRES_EMPLOIS') {
+      updatedData.autresEmploisData = {
+        subCategory: autresEmploisSubCategory,
+        profession: autresEmploisProfession.trim() || undefined,
+        contractType: autresEmploisContractType as any,
+        experienceYears: autresEmploisExperience.trim() || undefined,
+        cvUrl: cvUrl || undefined,
+        cvFileName: cvFileName || undefined,
+        cvFileType: cvFileType || undefined,
+        cvFileSize: cvFileSize || undefined,
+      };
+      updatedData.cvUrl = cvUrl || undefined;
+      updatedData.cvFileName = cvFileName || undefined;
+      updatedData.cvFileType = cvFileType || undefined;
+      updatedData.cvFileSize = cvFileSize || undefined;
     }
 
     try {
@@ -361,12 +543,16 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                 { key: 'MATERIEL_ROULANT', label: 'Véhicules', icon: Car },
                 { key: 'BRIC_A_BRAC', label: 'Bric-à-Brac', icon: ShoppingBag },
                 { key: 'EMPLOI', label: 'Emploi Domestique', icon: Briefcase },
+                { key: 'COURS_A_DOMICILE', label: 'Cours à Domicile', icon: GraduationCap },
+                { key: 'NECROLOGIE', label: 'Nécrologie', icon: Heart },
+                { key: 'AVIS_DE_RECHERCHE', label: 'Avis de Recherche', icon: Search },
+                { key: 'AUTRES_EMPLOIS', label: 'Autres Emplois', icon: UserCheck },
               ].map(({ key, label, icon: Icon }) => (
                 <button
                   type="button"
                   key={key}
                   onClick={() => setMainCategory(key as MainCategory)}
-                  className={`p-3 rounded-2xl border text-center transition-all flex flex-col items-center gap-1.5 ${
+                  className={`p-3 rounded-2xl border text-center transition-all flex flex-col items-center gap-1.5 cursor-pointer ${
                     mainCategory === key
                       ? 'border-emerald-600 bg-emerald-50/70 text-emerald-900 font-extrabold ring-2 ring-emerald-500/20'
                       : 'border-slate-200 text-slate-700 hover:bg-slate-50 font-bold'
@@ -378,7 +564,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
               ))}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+            <div className="space-y-3 pt-2">
               {(mainCategory === 'IMMOBILIER' || mainCategory === 'MATERIEL_ROULANT') && (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -390,7 +576,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                         type="button"
                         key={type}
                         onClick={() => setTransactionType(type)}
-                        className={`py-2 px-3 rounded-xl border text-xs font-black transition-all ${
+                        className={`py-2 px-3 rounded-xl border text-xs font-black transition-all cursor-pointer ${
                           transactionType === type
                             ? 'border-emerald-600 bg-emerald-600 text-white'
                             : 'border-slate-200 text-slate-700 hover:bg-slate-50'
@@ -404,13 +590,58 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
               )}
 
               {mainCategory === 'EMPLOI' && (
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Mention de l'annonce :
-                  </label>
-                  <div className="py-2 px-3 rounded-xl border border-purple-200 bg-purple-50 text-purple-900 text-xs font-black flex items-center justify-between">
-                    <span>À EMPLOYER</span>
-                    <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md">Personnel de maison</span>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Type d'annonce Emploi :
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setJobKind('OFFRE_EMPLOI')}
+                        className={`p-2.5 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer ${
+                          jobKind === 'OFFRE_EMPLOI'
+                            ? 'bg-purple-600 border-purple-700 text-white shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-purple-50/50'
+                        }`}
+                      >
+                        💼 Offre d'emploi (Recruteur)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setJobKind('DEMANDE_EMPLOI')}
+                        className={`p-2.5 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer ${
+                          jobKind === 'DEMANDE_EMPLOI'
+                            ? 'bg-teal-600 border-teal-700 text-white shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-teal-50/50'
+                        }`}
+                      >
+                        🙋 Demande d'emploi (Candidat)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Métier Domestique :
+                    </label>
+                    <select
+                      value={domesticJobType}
+                      onChange={(e) => setDomesticJobType(e.target.value as DomesticJobType)}
+                      className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-emerald-500"
+                    >
+                      {[
+                        'Nounous (garde-bébé)',
+                        'Cuisiniers',
+                        'Gardiens de nuit / de jour',
+                        'Jardiniers',
+                        'Assistants aux personnes âgées',
+                        'Femmes de ménage / Repassage',
+                        'Chauffeurs particuliers',
+                      ].map((jt) => (
+                        <option key={jt} value={jt}>{jt}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}
@@ -429,6 +660,9 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                       'Villa',
                       'Maison',
                       'Appartement',
+                      'Studio (1 chambre + 1 salon)',
+                      'Chambre américaine (chambre + coin cuisine)',
+                      'Chambre simple',
                       'Studio / Chambre',
                       'Terrain / Parcelle',
                       'Bureau / Local commercial',
@@ -489,60 +723,413 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                 </div>
               )}
 
-              {mainCategory === 'EMPLOI' && (
-                <div className="space-y-3">
+              {/* Point 1: NÉCROLOGIE - Modifier son ministère & détails */}
+              {mainCategory === 'NECROLOGIE' && (
+                <div className="space-y-3 bg-slate-900 text-white p-4 rounded-2xl border border-slate-800">
+                  <div className="flex items-center gap-2 text-amber-400 border-b border-slate-800 pb-2">
+                    <Heart className="w-4 h-4 fill-amber-400/20" />
+                    <span className="text-xs font-bold uppercase tracking-wider">
+                      Détails Nécrologie & Avis d'Obsèques (Diffusion Nationale)
+                    </span>
+                  </div>
+
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      Type d'annonce Emploi :
+                    <label className="block text-xs font-bold text-amber-300 mb-1">
+                      Ministère / Corps professionnel de rattachement :
                     </label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setJobKind('OFFRE_EMPLOI')}
-                        className={`p-2.5 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer ${
-                          jobKind === 'OFFRE_EMPLOI'
-                            ? 'bg-purple-600 border-purple-700 text-white shadow-xs'
-                            : 'bg-white border-slate-200 text-slate-700 hover:bg-purple-50/50'
-                        }`}
-                      >
-                        💼 Offre d'emploi (Recruteur)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setJobKind('DEMANDE_EMPLOI')}
-                        className={`p-2.5 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer ${
-                          jobKind === 'DEMANDE_EMPLOI'
-                            ? 'bg-teal-600 border-teal-700 text-white shadow-xs'
-                            : 'bg-white border-slate-200 text-slate-700 hover:bg-teal-50/50'
-                        }`}
-                      >
-                        🙋 Demande d'emploi (Candidat)
-                      </button>
+                    <select
+                      value={necroMinistry}
+                      onChange={(e) => setNecroMinistry(e.target.value as NecrologieMinistry)}
+                      className="w-full text-xs font-bold bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:outline-amber-400"
+                    >
+                      {NECROLOGIE_MINISTRIES.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                        Nom complet du défunt / de la défunte :
+                      </label>
+                      <input
+                        type="text"
+                        value={necroDeceasedName}
+                        onChange={(e) => setNecroDeceasedName(e.target.value)}
+                        placeholder="Ex: Jean-Baptiste NGUEMA"
+                        className="w-full text-xs bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                        Date de la cérémonie :
+                      </label>
+                      <input
+                        type="text"
+                        value={necroCeremonyDate}
+                        onChange={(e) => setNecroCeremonyDate(e.target.value)}
+                        placeholder="Ex: Samedi 18 Octobre 2026"
+                        className="w-full text-xs bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                        Lieu de la cérémonie :
+                      </label>
+                      <input
+                        type="text"
+                        value={necroCeremonyLocation}
+                        onChange={(e) => setNecroCeremonyLocation(e.target.value)}
+                        placeholder="Ex: Église Sainte-Marie, Libreville"
+                        className="w-full text-xs bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                        Contact famille / organisation :
+                      </label>
+                      <input
+                        type="text"
+                        value={necroFamilyContact}
+                        onChange={(e) => setNecroFamilyContact(e.target.value)}
+                        placeholder="Ex: +241 77 00 00 00"
+                        className="w-full text-xs bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Métier Domestique :
+                    <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                      Programme sommaire des obsèques :
+                    </label>
+                    <textarea
+                      value={necroFuneralProgram}
+                      onChange={(e) => setNecroFuneralProgram(e.target.value)}
+                      rows={2}
+                      placeholder="Veillée, messe de requiem, levée de corps, inhumation..."
+                      className="w-full text-xs bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* COURS À DOMICILE */}
+              {mainCategory === 'COURS_A_DOMICILE' && (
+                <div className="space-y-3 bg-indigo-50/60 p-4 rounded-2xl border border-indigo-200">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTutoringKind('OFFRE')}
+                      className={`p-2.5 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer ${
+                        tutoringKind === 'OFFRE'
+                          ? 'bg-indigo-600 text-white border-indigo-700'
+                          : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      🎓 Offre de cours (Enseignant)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTutoringKind('DEMANDE')}
+                      className={`p-2.5 rounded-xl border text-center text-xs font-bold transition-all cursor-pointer ${
+                        tutoringKind === 'DEMANDE'
+                          ? 'bg-indigo-600 text-white border-indigo-700'
+                          : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      📖 Recherche de cours (Parent / Élève)
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-900 mb-1">
+                        Matière enseignée :
+                      </label>
+                      <select
+                        value={tutoringSubject}
+                        onChange={(e) => setTutoringSubject(e.target.value as TutoringSubject)}
+                        className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800"
+                      >
+                        {TUTORING_SUBJECTS.map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-900 mb-1">
+                        Niveau scolaire :
+                      </label>
+                      <select
+                        value={tutoringLevel}
+                        onChange={(e) => setTutoringLevel(e.target.value as TutoringLevel)}
+                        className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800"
+                      >
+                        {TUTORING_LEVELS.map((l) => (
+                          <option key={l} value={l}>{l}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Point 2: AVIS DE RECHERCHE */}
+              {mainCategory === 'AVIS_DE_RECHERCHE' && (
+                <div className="space-y-3 bg-amber-50/80 p-4 rounded-2xl border border-amber-300">
+                  <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider border-b border-amber-200 pb-2">
+                    <Search className="w-4 h-4 text-amber-700" />
+                    <span>Détails de l'Avis de Recherche</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-amber-950 mb-1">
+                      Catégorie d'avis de recherche :
                     </label>
                     <select
-                      value={domesticJobType}
-                      onChange={(e) => setDomesticJobType(e.target.value as DomesticJobType)}
-                      className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-emerald-500"
+                      value={avisCategory}
+                      onChange={(e) => setAvisCategory(e.target.value as AvisRechercheCategory)}
+                      className="w-full text-xs font-bold bg-white border border-slate-300 rounded-xl px-3 py-2.5 text-slate-800"
                     >
-                      {[
-                        'Nounous (garde-bébé)',
-                        'Cuisiniers',
-                        'Gardiens de nuit / de jour',
-                        'Jardiniers',
-                        'Assistants aux personnes âgées',
-                        'Femmes de ménage / Repassage',
-                        'Chauffeurs particuliers',
-                      ].map((jt) => (
-                        <option key={jt} value={jt}>{jt}</option>
+                      {AVIS_RECHERCHE_CATEGORIES.map((c) => (
+                        <option key={c} value={c}>{c}</option>
                       ))}
                     </select>
                   </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Nom / Description du sujet recherché :
+                      </label>
+                      <input
+                        type="text"
+                        value={avisTargetName}
+                        onChange={(e) => setAvisTargetName(e.target.value)}
+                        placeholder="Ex: Titre Foncier n° 4589, Chien Max..."
+                        className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Date de disparition / perte :
+                      </label>
+                      <input
+                        type="text"
+                        value={avisLastSeenDate}
+                        onChange={(e) => setAvisLastSeenDate(e.target.value)}
+                        placeholder="Ex: 5 Octobre 2026"
+                        className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Dernier lieu aperçu :
+                      </label>
+                      <input
+                        type="text"
+                        value={avisLastSeenLocation}
+                        onChange={(e) => setAvisLastSeenLocation(e.target.value)}
+                        placeholder="Ex: Quartier Glass, Libreville"
+                        className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Contact d'urgence :
+                      </label>
+                      <input
+                        type="text"
+                        value={avisEmergencyContact}
+                        onChange={(e) => setAvisEmergencyContact(e.target.value)}
+                        placeholder="Ex: +241 66 00 11 22"
+                        className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-amber-200 flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-xs font-bold text-amber-950 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={avisHasReward}
+                        onChange={(e) => setAvisHasReward(e.target.checked)}
+                        className="rounded-sm text-amber-600 focus:ring-amber-500"
+                      />
+                      <span>Récompense promise à la personne qui retrouve</span>
+                    </label>
+                    {avisHasReward && (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          value={avisRewardAmount}
+                          onChange={(e) => setAvisRewardAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                          placeholder="Montant FCFA"
+                          className="w-32 text-xs font-bold bg-white border border-amber-300 rounded-xl px-3 py-1.5 text-amber-900"
+                        />
+                        <span className="text-xs font-bold text-amber-900">FCFA</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Point 2: AUTRES EMPLOIS (Demandeur d'emploi avec CV obligatoire) */}
+              {mainCategory === 'AUTRES_EMPLOIS' && (
+                <div className="space-y-3 bg-teal-50/70 p-4 rounded-2xl border border-teal-300">
+                  <div className="flex items-center gap-2 text-teal-900 font-bold text-xs uppercase tracking-wider border-b border-teal-200 pb-2">
+                    <UserCheck className="w-4 h-4 text-teal-700" />
+                    <span>Détails Autres Emplois</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-teal-950 mb-1">
+                      Sous-catégorie :
+                    </label>
+                    <select
+                      value={autresEmploisSubCategory}
+                      onChange={(e) => setAutresEmploisSubCategory(e.target.value as AutresEmploisSubCategory)}
+                      className="w-full text-xs font-bold bg-white border border-slate-300 rounded-xl px-3 py-2.5 text-slate-800"
+                    >
+                      {AUTRES_EMPLOIS_SUBCATEGORIES.map((sc) => (
+                        <option key={sc} value={sc}>{sc}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Métier / Titre du poste :
+                      </label>
+                      <input
+                        type="text"
+                        value={autresEmploisProfession}
+                        onChange={(e) => setAutresEmploisProfession(e.target.value)}
+                        placeholder="Ex: Comptable, Développeur Web..."
+                        className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Type de contrat :
+                      </label>
+                      <select
+                        value={autresEmploisContractType}
+                        onChange={(e) => setAutresEmploisContractType(e.target.value)}
+                        className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2"
+                      >
+                        {['CDI', 'CDD', 'Stage', 'Freelance', 'Temps partiel', 'Autre'].map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Expérience :
+                      </label>
+                      <input
+                        type="text"
+                        value={autresEmploisExperience}
+                        onChange={(e) => setAutresEmploisExperience(e.target.value)}
+                        placeholder="Ex: 5 ans"
+                        className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Point 2: CV Attachment Box for Demandeur d'emploi */}
+                  {autresEmploisSubCategory === "Demandeur d'emploi" && (
+                    <div className="pt-2 border-t border-teal-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-teal-950 flex items-center gap-1.5">
+                          <FileText className="w-4 h-4 text-teal-700" />
+                          <span>Curriculum Vitae (CV) - Obligatoire (.pdf, .docx, .md)</span>
+                        </span>
+                        {cvFileName && (
+                          <span className="text-[10px] font-bold bg-teal-200 text-teal-900 px-2 py-0.5 rounded-full uppercase">
+                            {cvFileType || 'CV'} attaché
+                          </span>
+                        )}
+                      </div>
+
+                      {cvFileName ? (
+                        <div className="p-3 bg-white border border-teal-300 rounded-xl flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-center gap-2.5 overflow-hidden">
+                            <div className="p-2 bg-teal-100 text-teal-800 rounded-lg font-black text-xs uppercase shrink-0">
+                              {cvFileType || 'DOC'}
+                            </div>
+                            <div className="overflow-hidden">
+                              <p className="text-xs font-bold text-slate-900 truncate">{cvFileName}</p>
+                              {cvFileSize > 0 && (
+                                <p className="text-[10px] text-slate-500">{(cvFileSize / 1024).toFixed(1)} Ko</p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {cvUrl && (
+                              <a
+                                href={cvUrl}
+                                download={cvFileName}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-1.5 text-teal-700 hover:text-teal-900 hover:bg-teal-50 rounded-lg transition-colors cursor-pointer"
+                                title="Télécharger / Voir le CV"
+                              >
+                                <Download className="w-4 h-4" />
+                              </a>
+                            )}
+                            <label className="text-xs font-bold text-teal-800 hover:text-teal-950 bg-teal-50 hover:bg-teal-100 px-2.5 py-1.5 rounded-lg border border-teal-200 cursor-pointer">
+                              <span>Remplacer</span>
+                              <input
+                                type="file"
+                                accept=".pdf,.docx,.md"
+                                onChange={handleCvUpload}
+                                className="hidden"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCvUrl('');
+                                setCvFileName('');
+                                setCvFileType('');
+                                setCvFileSize(0);
+                              }}
+                              className="text-red-500 hover:text-red-700 p-1.5 rounded-lg hover:bg-red-50 cursor-pointer"
+                              title="Retirer le CV"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <label className="cursor-pointer border-2 border-dashed border-teal-300 bg-white hover:bg-teal-50 rounded-xl p-4 flex flex-col items-center justify-center gap-1.5 text-center transition-colors">
+                          <Upload className="w-5 h-5 text-teal-600" />
+                          <span className="text-xs font-bold text-teal-950">
+                            Sélectionner votre CV (.pdf, .docx, ou .md)
+                          </span>
+                          <span className="text-[10px] text-teal-700">
+                            L'attachement du CV est obligatoire à l'étape de publication pour les demandeurs d'emploi.
+                          </span>
+                          <input
+                            type="file"
+                            accept=".pdf,.docx,.md"
+                            onChange={handleCvUpload}
+                            className="hidden"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -630,66 +1217,128 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
               />
             </div>
 
-            {mainCategory !== 'NECROLOGIE' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    {mainCategory === 'EMPLOI' ? 'Salaire en Francs CFA (XAF) :' : 'Prix en Francs CFA (XAF) :'}
-                  </label>
-                  <input
-                    type="number"
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    placeholder={mainCategory === 'EMPLOI' ? 'Ex: 150000' : 'Ex: 250000'}
-                    className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-emerald-800 focus:outline-emerald-500"
-                    required
-                  />
-                </div>
+            {mainCategory !== 'NECROLOGIE' && mainCategory !== 'AVIS_DE_RECHERCHE' && (
+              <div className="space-y-2">
+                {(() => {
+                  const isJob = mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS';
+                  const isSeeker = (mainCategory === 'EMPLOI' && (jobKind === 'DEMANDE_EMPLOI' || transactionType === 'CHERCHE_EMPLOI')) ||
+                    (mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === "Demandeur d'emploi");
+                  const isEmployerOffer = isJob && !isSeeker;
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    {mainCategory === 'EMPLOI' ? 'Périodicité du salaire :' : 'Unité du prix :'}
-                  </label>
-                  <select
-                    value={priceUnit}
-                    onChange={(e) => setPriceUnit(e.target.value as any)}
-                    className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-emerald-500"
-                  >
-                    {mainCategory === 'EMPLOI' ? (
-                      <>
-                        <option value="mois">Mensuelle (par mois)</option>
-                        <option value="jour">Journalière (par jour)</option>
-                        <option value="trimestre">Trimestrielle (par trimestre)</option>
-                        <option value="an">Annuelle (par an)</option>
-                      </>
-                    ) : (
-                      <>
-                        <option value="total">Prix Total (Achat / Vente)</option>
-                        <option value="mois">Par Mois (Location)</option>
-                        <option value="jour">Par Jour</option>
-                        <option value="heure">Par Heure</option>
-                      </>
-                    )}
-                  </select>
-                </div>
+                  return (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                            {isSeeker
+                              ? 'Salaire demandé en Francs CFA (XAF) :'
+                              : isEmployerOffer
+                              ? 'Salaire proposé en Francs CFA (XAF) :'
+                              : 'Prix en Francs CFA (XAF) :'}
+                          </label>
+                          <input
+                            type="number"
+                            value={price}
+                            onChange={(e) => setPrice(e.target.value)}
+                            placeholder={isJob ? 'Ex: 150000' : 'Ex: 250000'}
+                            className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-emerald-800 focus:outline-emerald-500"
+                            required={!isSeeker}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                            {isJob ? 'Périodicité du salaire :' : 'Unité du prix :'}
+                          </label>
+                          <select
+                            value={priceUnit}
+                            onChange={(e) => setPriceUnit(e.target.value as any)}
+                            className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-emerald-500"
+                          >
+                            {isJob ? (
+                              <>
+                                <option value="mois">Salaire mensuel</option>
+                                <option value="jour">Salaire journalier</option>
+                                <option value="trimestre">Salaire trimestriel</option>
+                                <option value="an">Salaire annuel</option>
+                              </>
+                            ) : (
+                              <>
+                                <option value="total">Prix Total (Achat / Vente)</option>
+                                <option value="mois">Par Mois (Location)</option>
+                                <option value="jour">Par Jour</option>
+                                <option value="heure">Par Heure</option>
+                              </>
+                            )}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Tranche de salaire pour l'employeur (Point 1) */}
+                      {isEmployerOffer && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
+                          <label className="block text-xs font-bold text-slate-800">
+                            Fourchette / Tranche de salaire (Optionnel) :
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500 font-semibold shrink-0">De {price ? `${Number(price).toLocaleString('fr-FR')} FCFA` : '—'} à</span>
+                            <input
+                              type="number"
+                              value={priceMax}
+                              onChange={(e) => setPriceMax(e.target.value)}
+                              placeholder="Salaire maximum (ex: 250000)"
+                              className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                            />
+                            <span className="text-xs text-slate-500 font-bold shrink-0">FCFA</span>
+                          </div>
+                          <p className="text-[11px] text-slate-500">
+                            Laissez vide si le salaire est fixe. Si renseigné, l'annonce affichera la fourchette proposée.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Point 4: Corner VIP notification if eligible */}
+                {(mainCategory === 'IMMOBILIER' || mainCategory === 'MATERIEL_ROULANT') &&
+                  isAdVipCornerEligible({ mainCategory, transactionType, price: Number(price) || 0, priceUnit }) && (
+                    <div className="p-3 bg-gradient-to-r from-amber-50 to-amber-100/60 border border-amber-300 rounded-xl flex items-center gap-2.5 text-amber-950 text-xs shadow-xs animate-in fade-in">
+                      <div className="p-1.5 rounded-lg bg-amber-500 text-slate-950 font-black shrink-0">
+                        <Crown className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="font-extrabold block text-amber-900">
+                          👑 Annonce éligible au Corner VIP (Inclus sans aucun frais)
+                        </span>
+                        <span className="text-[11px] text-amber-800">
+                          En raison de son standing d'exception, votre annonce sera mise en avant dans le Corner VIP sans frais supplémentaires.
+                        </span>
+                      </div>
+                    </div>
+                  )}
               </div>
             )}
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                Description détaillée :
+                Description détaillée {mainCategory === 'NECROLOGIE' ? "(Hommage / Obsèques - Max 1000 car.)" : "(Max 500 car.)"} :
               </label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                rows={4}
-                maxLength={500}
-                placeholder="Décrivez l'état, les caractéristiques et les conditions de la transaction..."
+                rows={mainCategory === 'NECROLOGIE' ? 6 : 4}
+                maxLength={mainCategory === 'NECROLOGIE' ? 1000 : 500}
+                placeholder={
+                  mainCategory === 'NECROLOGIE'
+                    ? "Rédigez l'avis d'obsèques, l'hommage de la famille et le parcours du défunt (jusqu'à 1000 caractères)..."
+                    : "Décrivez l'état, les caractéristiques et les conditions de la transaction..."
+                }
                 className="w-full text-xs bg-white border border-slate-200 rounded-xl p-3 text-slate-800 focus:outline-emerald-500 leading-relaxed"
                 required
               />
               <span className="text-[10px] text-slate-400 block text-right mt-1">
-                {description.length}/500 caractères
+                {description.length}/{mainCategory === 'NECROLOGIE' ? 1000 : 500} caractères
               </span>
             </div>
           </div>

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3, ShieldCheck, Heart } from 'lucide-react';
+import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3, ShieldCheck, Heart, Download, FileText } from 'lucide-react';
 import { Ad, UserProfile } from '../types';
-import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd } from '../utils/formatters';
+import { isAdVipCornerEligible } from '../utils/vipCorner';
 import { ReportAdModal } from './ReportAdModal';
 import { ShareAdModal } from './ShareAdModal';
 import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
@@ -34,6 +35,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
   const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
   const isOwner = isAdOwner(ad, currentUser ?? null);
   const isVerified = Boolean(ad.isOwnerVerified || ad.isOwnerVip);
+  const isVip = isAdVipCornerEligible(ad) && (ad.mainCategory === 'IMMOBILIER' || ad.mainCategory === 'MATERIEL_ROULANT');
 
   return (
     <div className="app-modal-overlay">
@@ -116,7 +118,17 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                 </span>
               ) : ad.mainCategory === 'NECROLOGIE' ? (
                 <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-slate-800 text-white border border-slate-700">
-                  NÉCROLOGIE ({ad.necroMinistry || 'Avis de décès'})
+                  NÉCROLOGIE ({ad.necrologieData?.ministry || ad.necroMinistry || 'Avis de décès'})
+                </span>
+              ) : ad.mainCategory === 'AVIS_DE_RECHERCHE' ? (
+                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-red-100 text-red-900 border border-red-300">
+                  AVIS DE RECHERCHE ({ad.avisRechercheData?.category || 'Signalement'})
+                </span>
+              ) : ad.mainCategory === 'AUTRES_EMPLOIS' ? (
+                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-teal-100 text-teal-900 border border-teal-300">
+                  {ad.autresEmploisData?.subCategory === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
+                    ? "DEMANDE D'EMPLOI"
+                    : "OFFRE D'EMPLOI"}
                 </span>
               ) : ad.transactionType ? (
                 <span
@@ -129,6 +141,12 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                   {ad.transactionType === 'VENTE' ? 'À VENDRE (Achat)' : 'À LOUER (Location)'}
                 </span>
               ) : null}
+
+              {isVip && (
+                <span className="inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 text-xs font-black px-2.5 py-1 rounded-lg border border-amber-300 shadow-xs">
+                  <span>👑 CORNER VIP</span>
+                </span>
+              )}
 
               {isVerified && (
                 <button
@@ -234,29 +252,48 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
 
           {/* Pricing & Expiration Panel */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            {ad.mainCategory !== 'NECROLOGIE' ? (
+            {ad.mainCategory === 'NECROLOGIE' ? (
               <div>
                 <span className="text-xs font-bold uppercase text-slate-500 tracking-wider">
-                  {ad.mainCategory === 'EMPLOI' ? "Salaire proposé par l'employeur" : "Prix fixé par l'annonceur"}
+                  🕊️ Hommage & Obsèques
                 </span>
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-2xl sm:text-3xl font-black text-emerald-700">
-                    {formatFCFA(ad.price)}
-                  </span>
-                  {ad.priceUnit && ad.priceUnit !== 'total' && (
-                    <span className="text-sm font-bold text-slate-600">
-                      /{ad.priceUnit}
-                    </span>
-                  )}
+                <div className="text-xl font-black text-slate-900">
+                  {ad.necrologieData?.deceasedName || ad.necroDeceasedName || "Avis de Décès National"}
                 </div>
+                {(ad.necrologieData?.ministry || ad.necroMinistry) && (
+                  <span className="text-xs text-slate-600 font-semibold block mt-0.5">
+                    Corps / Ministère : <strong>{ad.necrologieData?.ministry || ad.necroMinistry}</strong>
+                  </span>
+                )}
+              </div>
+            ) : ad.mainCategory === 'AVIS_DE_RECHERCHE' ? (
+              <div>
+                <span className="text-xs font-bold uppercase text-red-600 tracking-wider">
+                  🚨 Avis de Recherche & Signalement
+                </span>
+                <div className="text-xl font-black text-slate-900">
+                  {ad.avisRechercheData?.targetName || ad.title}
+                </div>
+                {ad.avisRechercheData?.hasReward && ad.avisRechercheData?.rewardAmount ? (
+                  <span className="inline-block mt-1 bg-amber-100 text-amber-900 border border-amber-300 font-black text-xs px-2.5 py-1 rounded-lg">
+                    💰 Récompense promise : {ad.avisRechercheData.rewardAmount.toLocaleString('fr-FR')} FCFA
+                  </span>
+                ) : null}
               </div>
             ) : (
               <div>
                 <span className="text-xs font-bold uppercase text-slate-500 tracking-wider">
-                  Rubrique
+                  {getPriceOrSalaryLabel(ad)}
                 </span>
-                <div className="text-xl font-black text-slate-800">
-                  Nécrologie & Obsèques
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-2xl sm:text-3xl font-black text-emerald-700">
+                    {formatPriceDisplay(ad.price, ad.priceMax)}
+                  </span>
+                  {ad.priceUnit && ad.priceUnit !== 'total' && (
+                    <span className="text-sm font-bold text-slate-600">
+                      {formatPriceUnit(ad.priceUnit, isJobAd(ad))}
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -278,11 +315,21 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                   {onEditAd && (
                     <button
                       onClick={() => {
+                        if (isExpired) {
+                          alert("Cette annonce est expirée. Conformément aux règles, vous devez la prolonger au préalable pour pouvoir la modifier.");
+                          onOpenExtendModal(ad);
+                          return;
+                        }
                         onClose();
                         onEditAd(ad);
                       }}
-                      className="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs px-3.5 py-2.5 rounded-xl flex items-center gap-1.5 shadow-sm transition-colors"
+                      className={`${
+                        isExpired
+                          ? 'bg-slate-300 text-slate-600 cursor-not-allowed'
+                          : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white'
+                      } font-extrabold text-xs px-3.5 py-2.5 rounded-xl flex items-center gap-1.5 shadow-sm transition-colors`}
                       id="modal-edit-button"
+                      title={isExpired ? "Prolongez d'abord l'annonce pour pouvoir la modifier" : "Modifier l'annonce"}
                     >
                       <Edit3 className="w-3.5 h-3.5 text-white" />
                       <span>Modifier l'annonce</span>
@@ -347,12 +394,100 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
             {(ad.mainCategory === 'NECROLOGIE' || ad.necroMinistry) && (
               <div className="bg-slate-100 p-3 rounded-xl border border-slate-300 space-y-1">
                 <span className="font-bold text-slate-800 block mb-1">Avis de Décès & Nécrologie</span>
-                {ad.necroMinistry && <p className="text-slate-800">Ministère / Corps : <strong>{ad.necroMinistry}</strong></p>}
-                {ad.necroDeceasedName && <p className="text-slate-900 font-bold">Défunt(e) : {ad.necroDeceasedName}</p>}
-                {ad.necroCeremonyDate && <p className="text-slate-700">Cérémonie : {ad.necroCeremonyDate}</p>}
-                {ad.necroCeremonyLocation && <p className="text-slate-700">Lieu : {ad.necroCeremonyLocation}</p>}
-                {ad.necroFamilyContact && <p className="text-slate-700">Contact famille : <strong>{ad.necroFamilyContact}</strong></p>}
-                {ad.necroFuneralProgram && <p className="text-slate-600 text-[11px] pt-1 border-t border-slate-200">{ad.necroFuneralProgram}</p>}
+                {(ad.necrologieData?.ministry || ad.necroMinistry) && (
+                  <p className="text-slate-800">Ministère / Corps : <strong>{ad.necrologieData?.ministry || ad.necroMinistry}</strong></p>
+                )}
+                {(ad.necrologieData?.deceasedName || ad.necroDeceasedName) && (
+                  <p className="text-slate-900 font-bold">Défunt(e) : {ad.necrologieData?.deceasedName || ad.necroDeceasedName}</p>
+                )}
+                {(ad.necrologieData?.ceremonyDate || ad.necroCeremonyDate) && (
+                  <p className="text-slate-700">Cérémonie : {ad.necrologieData?.ceremonyDate || ad.necroCeremonyDate}</p>
+                )}
+                {(ad.necrologieData?.ceremonyLocation || ad.necroCeremonyLocation) && (
+                  <p className="text-slate-700">Lieu : {ad.necrologieData?.ceremonyLocation || ad.necroCeremonyLocation}</p>
+                )}
+                {(ad.necrologieData?.familyContact || ad.necroFamilyContact) && (
+                  <p className="text-slate-700">Contact famille : <strong>{ad.necrologieData?.familyContact || ad.necroFamilyContact}</strong></p>
+                )}
+                {(ad.necrologieData?.funeralProgram || ad.necroFuneralProgram) && (
+                  <p className="text-slate-600 text-[11px] pt-1 border-t border-slate-200">
+                    {ad.necrologieData?.funeralProgram || ad.necroFuneralProgram}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* AVIS DE RECHERCHE DETAIL CARD (Point 2) */}
+            {(ad.mainCategory === 'AVIS_DE_RECHERCHE' || ad.avisRechercheData) && (
+              <div className="bg-red-50 p-4 rounded-xl border border-red-200 space-y-2">
+                <span className="font-extrabold text-red-950 block text-xs uppercase tracking-wide">
+                  Détails de l'Avis de Recherche & Signalement
+                </span>
+                {ad.avisRechercheData?.category && <p className="text-slate-800 text-xs">Catégorie : <strong>{ad.avisRechercheData.category}</strong></p>}
+                {ad.avisRechercheData?.targetName && <p className="text-slate-900 font-bold text-xs">Cible / Élément recherché : {ad.avisRechercheData.targetName}</p>}
+                {ad.avisRechercheData?.lastSeenLocation && <p className="text-slate-700 text-xs">Dernier lieu vu : {ad.avisRechercheData.lastSeenLocation}</p>}
+                {ad.avisRechercheData?.lastSeenDate && <p className="text-slate-700 text-xs">Date de disparition : {ad.avisRechercheData.lastSeenDate}</p>}
+                {ad.avisRechercheData?.rewardAmount ? (
+                  <p className="text-emerald-700 font-black text-xs bg-emerald-100/70 p-2 rounded-lg border border-emerald-300">
+                    💰 Récompense promise : {ad.avisRechercheData.rewardAmount.toLocaleString('fr-FR')} FCFA
+                  </p>
+                ) : null}
+                {ad.avisRechercheData?.contactEmergency && (
+                  <p className="text-red-700 font-black text-xs bg-red-100/70 p-2 rounded-lg border border-red-300">
+                    🚨 Contact direct d'urgence : {ad.avisRechercheData.contactEmergency}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* AUTRES EMPLOIS DETAIL CARD WITH CV DOWNLOAD (Point 2) */}
+            {(ad.mainCategory === 'AUTRES_EMPLOIS' || ad.autresEmploisData || ad.cvUrl) && (
+              <div className="bg-teal-50 p-4 rounded-xl border border-teal-200 space-y-3">
+                <span className="font-extrabold text-teal-950 block text-xs uppercase tracking-wide">
+                  Informations sur l'Emploi & Candidature
+                </span>
+                {ad.autresEmploisData?.subCategory && (
+                  <p className="text-slate-800 text-xs">Type : <strong>{ad.autresEmploisData.subCategory}</strong></p>
+                )}
+                {ad.autresEmploisData?.profession && (
+                  <p className="text-slate-800 text-xs">Métier / Poste : <strong>{ad.autresEmploisData.profession}</strong></p>
+                )}
+                {ad.autresEmploisData?.contractType && (
+                  <p className="text-slate-700 text-xs">Contrat : <strong>{ad.autresEmploisData.contractType}</strong></p>
+                )}
+                {ad.autresEmploisData?.experienceYears && (
+                  <p className="text-slate-700 text-xs">Expérience : <strong>{ad.autresEmploisData.experienceYears}</strong></p>
+                )}
+
+                {(ad.cvUrl || ad.cvFileName) && (
+                  <div className="bg-white border border-teal-300 rounded-xl p-3 flex items-center justify-between gap-3 shadow-2xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-lg bg-teal-700 text-white flex items-center justify-center shrink-0 font-bold text-xs uppercase">
+                        {ad.cvFileType || 'CV'}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-900 truncate">
+                          {ad.cvFileName || 'Curriculum_Vitae_candidat'}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          {ad.cvFileSize ? `${(ad.cvFileSize / 1024).toFixed(0)} Ko` : 'Document joint'} • Format {ad.cvFileType?.toUpperCase() || 'PDF'}
+                        </p>
+                      </div>
+                    </div>
+                    {ad.cvUrl && (
+                      <a
+                        href={ad.cvUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        download={ad.cvFileName || 'CV_Candidat'}
+                        className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition-colors shrink-0"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Télécharger CV</span>
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -380,11 +515,39 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
           </div>
 
           {/* Advertiser Contact Info & Actions */}
-          <div className="bg-emerald-900 text-white rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className={`${
+            ad.mainCategory === 'NECROLOGIE'
+              ? 'bg-slate-900 border border-slate-700'
+              : ad.mainCategory === 'AVIS_DE_RECHERCHE'
+              ? 'bg-red-950 border border-red-800'
+              : 'bg-emerald-900'
+          } text-white rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-md`}>
             <div>
-              <div className="text-xs text-emerald-300 font-semibold uppercase tracking-wider">Contact de l'annonceur</div>
-              <div className="text-base sm:text-lg font-bold text-white mt-0.5">{ad.contactName}</div>
-              <div className="text-xs text-emerald-200 font-mono mt-0.5">{ad.contactPhone}</div>
+              <div className={`text-xs font-semibold uppercase tracking-wider ${
+                ad.mainCategory === 'NECROLOGIE'
+                  ? 'text-amber-300'
+                  : ad.mainCategory === 'AVIS_DE_RECHERCHE'
+                  ? 'text-red-300'
+                  : 'text-emerald-300'
+              }`}>
+                {ad.mainCategory === 'NECROLOGIE' ? 'Contact Famille / Hommage' : ad.mainCategory === 'AVIS_DE_RECHERCHE' ? 'Contact Urgent / Signalement' : "Contact de l'annonceur"}
+              </div>
+              <div className="text-base sm:text-lg font-bold text-white mt-0.5">
+                {ad.mainCategory === 'NECROLOGIE' && (ad.necrologieData?.familyContact || ad.necroFamilyContact)
+                  ? `Famille ${ad.necrologieData?.deceasedName || ad.necroDeceasedName || ad.contactName}`
+                  : ad.contactName}
+              </div>
+              <div className={`text-xs font-mono mt-0.5 ${
+                ad.mainCategory === 'NECROLOGIE'
+                  ? 'text-slate-300'
+                  : ad.mainCategory === 'AVIS_DE_RECHERCHE'
+                  ? 'text-red-200'
+                  : 'text-emerald-200'
+              }`}>
+                {ad.mainCategory === 'NECROLOGIE' && (ad.necrologieData?.familyContact || ad.necroFamilyContact)
+                  ? (ad.necrologieData?.familyContact || ad.necroFamilyContact)
+                  : (ad.avisRechercheData?.contactEmergency || ad.contactPhone)}
+              </div>
             </div>
 
             <div className="flex items-center gap-2.5 w-full sm:w-auto">
@@ -392,18 +555,24 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                 href={getWhatsAppUrl(ad.contactPhone, ad.title)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-extrabold text-xs px-4 py-3 rounded-xl shadow-md transition-colors"
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 font-extrabold text-xs px-4 py-3 rounded-xl shadow-md transition-colors ${
+                  ad.mainCategory === 'NECROLOGIE'
+                    ? 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                    : ad.mainCategory === 'AVIS_DE_RECHERCHE'
+                    ? 'bg-red-600 hover:bg-red-500 text-white'
+                    : 'bg-emerald-500 hover:bg-emerald-400 text-emerald-950'
+                }`}
               >
-                <MessageSquare className="w-4 h-4 text-emerald-950" />
-                <span>WhatsApp Direct</span>
+                <MessageSquare className="w-4 h-4" />
+                <span>{ad.mainCategory === 'NECROLOGIE' ? 'Condoléances (WhatsApp)' : ad.mainCategory === 'AVIS_DE_RECHERCHE' ? 'Signaler (WhatsApp)' : 'WhatsApp Direct'}</span>
               </a>
 
               <a
-                href={`tel:${ad.contactPhone}`}
+                href={`tel:${ad.mainCategory === 'NECROLOGIE' && (ad.necrologieData?.familyContact || ad.necroFamilyContact) ? (ad.necrologieData?.familyContact || ad.necroFamilyContact) : (ad.avisRechercheData?.contactEmergency || ad.contactPhone)}`}
                 className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-white hover:bg-slate-100 text-slate-900 font-extrabold text-xs px-4 py-3 rounded-xl shadow-md transition-colors"
               >
-                <Phone className="w-4 h-4 text-emerald-700" />
-                <span>Appeler</span>
+                <Phone className="w-4 h-4 text-slate-800" />
+                <span>{ad.mainCategory === 'NECROLOGIE' ? 'Appeler la famille' : ad.mainCategory === 'AVIS_DE_RECHERCHE' ? 'Appeler d\'urgence' : 'Appeler'}</span>
               </a>
             </div>
           </div>
