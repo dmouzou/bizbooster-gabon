@@ -17,7 +17,6 @@ import { trackSmsSent } from '../services/platformMetrics';
 import {
   X,
   Phone,
-  Smartphone,
   ShieldCheck,
   CheckCircle2,
   AlertCircle,
@@ -92,7 +91,6 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const [resendTimer, setResendTimer] = useState(45);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
-  const [deliveredOtpCode, setDeliveredOtpCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   // Cities matching selected province
@@ -132,21 +130,12 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       try {
         recaptchaRef.current.clear();
       } catch (e) {
-        console.warn('Recaptcha clear warn:', e);
+        // ignore
       }
       recaptchaRef.current = null;
     }
-    try {
-      if ((window as any).recaptchaVerifier) {
-        (window as any).recaptchaVerifier.clear();
-        (window as any).recaptchaVerifier = null;
-      }
-    } catch (e) {
-      // ignore
-    }
-    container.innerHTML = '';
-    auth.languageCode = 'fr';
 
+    auth.languageCode = 'fr';
     recaptchaRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
       size: 'invisible',
       callback: () => {
@@ -209,35 +198,33 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         }
         recaptchaRef.current = null;
       }
-      const container = document.getElementById('recaptcha-container');
-      if (container) {
-        container.innerHTML = '';
-      }
     } else {
       setErrorMessage(null);
       setSuccessNotice(null);
       setOtpCode('');
-      setDeliveredOtpCode(null);
       confirmationRef.current = null;
       setIsLoading(false);
     }
   }, [isOpen]);
 
   const sendCode = async () => {
+    if (isLoading) return false;
     setErrorMessage(null);
-    setDeliveredOtpCode(null);
+    setSuccessNotice(null);
     const e164 = formatGabonPhone(contactPhone);
     if (!/^\+241[67]\d{7}$/.test(e164)) {
       setErrorMessage('Numéro Gabon invalide (8 chiffres requis). Exemple : 77 45 20 18 (Airtel) ou 66 12 34 56 (Moov).');
       return false;
     }
     setIsLoading(true);
-    const cleanDigits = getPhoneClean(e164);
+    const cleanDigits = getPhoneClean(contactPhone);
+    const e164Clean = getPhoneClean(e164);
 
     try {
       const verifier = getOrCreateRecaptcha();
       confirmationRef.current = await signInWithPhoneNumber(auth, e164, verifier);
       await trackSmsSent(e164);
+      setSuccessNotice(`Code de confirmation SMS envoyé avec succès au ${e164}.`);
       return true;
     } catch (err: any) {
       console.warn('Firebase signInWithPhoneNumber returned:', err);
@@ -262,26 +249,27 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         errStr.includes('billing') ||
         errStr.includes('sms region policy');
 
-      // Point 5: Gestion et résolution du code d'erreur -39 pour les numéros standard non test
+      // Secours de validation si restriction réseau ou quota
       if (isCode39OrQuota) {
         try {
           const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
 
-          // Enregistrement dans Firestore pour traçabilité et validation
-          await setDoc(doc(db, 'phone_verifications', cleanDigits), {
+          const docData = {
             phoneNumber: e164,
             cleanDigits,
+            e164Clean,
             otpCode: generatedOtp,
             createdAt: new Date().toISOString(),
             expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
             verified: false,
             channel: 'GABON_SMS_GATEWAY',
-          });
+          };
 
-          // Enregistrement de la métrique d'envoi SMS
+          await setDoc(doc(db, 'phone_verifications', cleanDigits), docData);
+          await setDoc(doc(db, 'phone_verifications', e164Clean), docData);
           await trackSmsSent(e164);
 
-          // Objet de confirmation de secours pour valider l'OTP et authentifier l'utilisateur
+          // Objet de confirmation de secours pour valider l'OTP
           confirmationRef.current = {
             verificationId: `sms_otp_${cleanDigits}_${Date.now()}`,
             confirm: async (enteredCode: string): Promise<any> => {
@@ -298,6 +286,10 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   verified: true,
                   verifiedAt: new Date().toISOString(),
                 });
+                await updateDoc(doc(db, 'phone_verifications', e164Clean), {
+                  verified: true,
+                  verifiedAt: new Date().toISOString(),
+                });
               } catch {}
 
               const syntheticEmail = `${cleanDigits}@bizbooster.ga`;
@@ -309,24 +301,8 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
               } catch {
                 try {
                   userCred = await createUserWithEmailAndPassword(auth, syntheticEmail, fallbackPass);
-                } catch (createErr: any) {
-                  try {
-                    const uSnap = await getDoc(doc(db, 'users', cleanDigits));
-                    if (uSnap.exists() && uSnap.data().password) {
-                      userCred = await signInWithEmailAndPassword(auth, syntheticEmail, uSnap.data().password);
-                    }
-                  } catch {}
-
-                  if (!userCred && auth.currentUser) {
-                    userCred = { user: auth.currentUser };
-                  } else if (!userCred) {
-                    try {
-                      const { signInAnonymously } = await import('firebase/auth');
-                      userCred = await signInAnonymously(auth);
-                    } catch {
-                      userCred = { user: { uid: cleanDigits, phoneNumber: e164 } };
-                    }
-                  }
+                } catch {
+                  userCred = { user: { uid: cleanDigits, phoneNumber: e164 } };
                 }
               }
 
@@ -334,8 +310,8 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
             },
           } as ConfirmationResult;
 
-          setDeliveredOtpCode(generatedOtp);
-          setSuccessNotice(`Code SMS OTP délivré avec succès au ${e164}.`);
+          // Note de sécurité : le code OTP n'est JAMAIS affiché à l'écran du client
+          setSuccessNotice(`Code de confirmation SMS envoyé au ${e164}.`);
           return true;
         } catch (fallbackErr) {
           console.error('Error generating OTP fallback:', fallbackErr);
@@ -492,41 +468,98 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    const trimmedCode = otpCode.trim();
+    if (!trimmedCode || trimmedCode.length < 6) {
+      setErrorMessage('Veuillez saisir le code SMS à 6 chiffres.');
+      return;
+    }
+
     if (!confirmationRef.current) {
       setErrorMessage('La session de vérification a expiré. Veuillez renvoyer un code SMS.');
       setStage(1);
       return;
     }
     setIsLoading(true);
-    try {
-      const cred = await confirmationRef.current.confirm(otpCode);
-      const uid = cred.user?.uid || getPhoneClean(contactPhone);
-      let snap = await getDoc(doc(db, 'users', uid));
-      if (!snap.exists()) {
-        const cleanDigits = getPhoneClean(contactPhone);
-        const altSnap = await getDoc(doc(db, 'users', cleanDigits));
-        if (altSnap.exists()) {
-          snap = altSnap;
-        }
-      }
 
-      // Case A: User came from "Forgot Password" flow
+    const e164 = formatGabonPhone(contactPhone);
+    const cleanDigits = getPhoneClean(contactPhone);
+    const e164Clean = getPhoneClean(e164);
+
+    let cred: any = null;
+    let isVerified = false;
+
+    // 1. Validation principale : confirmation Firebase Phone Auth
+    try {
+      cred = await confirmationRef.current.confirm(trimmedCode);
+      isVerified = true;
+    } catch (confirmErr: any) {
+      console.warn('confirmationRef.confirm notice:', confirmErr?.code, confirmErr?.message);
+      // Vérification de secours dans Firestore phone_verifications
+      try {
+        const keys = [cleanDigits, e164Clean].filter(Boolean);
+        for (const k of keys) {
+          const vSnap = await getDoc(doc(db, 'phone_verifications', k));
+          if (vSnap.exists() && vSnap.data().otpCode === trimmedCode) {
+            const expiresAt = vSnap.data().expiresAt ? new Date(vSnap.data().expiresAt).getTime() : Infinity;
+            if (Date.now() <= expiresAt) {
+              isVerified = true;
+              await updateDoc(vSnap.ref, {
+                verified: true,
+                verifiedAt: new Date().toISOString(),
+              }).catch(() => {});
+              break;
+            }
+          }
+        }
+      } catch (fsErr) {
+        console.warn('Firestore fallback check error:', fsErr);
+      }
+    }
+
+    if (!isVerified) {
+      setErrorMessage('Code SMS incorrect ou expiré. Veuillez vérifier les 6 chiffres reçus sur votre téléphone.');
+      setIsLoading(false);
+      return;
+    }
+
+    // 2. Traitement après validation réussie du code SMS
+    try {
+      // Case A: Mot de passe oublié -> étape 4 pour définir le nouveau mot de passe
       if (isForgotPasswordFlow) {
         setPassword('');
         setConfirmPassword('');
-        setStage(4); // Promptly leads to enter and confirm new password
+        setStage(4);
+        setIsLoading(false);
         return;
       }
 
-      // Case B: Existing user with profile already created
-      if (snap.exists() && snap.data().termsAccepted) {
+      // Case B: Utilisateur existant dans Firestore
+      const uid = cred?.user?.uid || cleanDigits;
+      let snap: any = null;
+      try {
+        if (cred?.user?.uid) {
+          snap = await getDoc(doc(db, 'users', cred.user.uid));
+        }
+        if (!snap?.exists()) {
+          const altSnap = await getDoc(doc(db, 'users', cleanDigits));
+          if (altSnap.exists()) {
+            snap = altSnap;
+          } else {
+            const altSnap2 = await getDoc(doc(db, 'users', e164Clean));
+            if (altSnap2.exists()) snap = altSnap2;
+          }
+        }
+      } catch (readErr) {
+        console.warn('Firestore user fetch notice:', readErr);
+      }
+
+      if (snap && snap.exists() && snap.data().termsAccepted) {
         const profile = {
           id: snap.id || uid,
           password: snap.data().password || 'users-with-no-password',
           ...snap.data(),
         } as UserProfile;
 
-        // Ensure default password is saved in Firestore if absent
         if (!snap.data().password) {
           try {
             await updateDoc(doc(db, 'users', snap.id || uid), {
@@ -541,10 +574,11 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         return;
       }
 
-      // Case C: Brand new user registration -> Proceed to Stage 3 to set name, location and create password
+      // Case C: Nouvel utilisateur -> étape 3 (Nom, Localisation, Mot de passe & CGU)
       setStage(3);
-    } catch {
-      setErrorMessage('Code SMS incorrect ou expiré.');
+    } catch (procErr: any) {
+      console.warn('Post-verification routing notice:', procErr);
+      setStage(3);
     } finally {
       setIsLoading(false);
     }
@@ -933,40 +967,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                 <p className="font-extrabold text-slate-800">{contactPhone}</p>
               </div>
 
-              {deliveredOtpCode && (
-                <div className="bg-linear-to-r from-emerald-50 via-teal-50 to-indigo-50 border border-emerald-300 rounded-2xl p-4 shadow-xs space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-emerald-800 font-black text-xs">
-                      <Smartphone className="w-4 h-4 text-emerald-600 animate-pulse" />
-                      <span>SMS OTP Reçu avec succès (+241)</span>
-                    </div>
-                    <span className="text-[10px] font-black bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-full">
-                      Valide 10 min
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-emerald-200 shadow-xs">
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Votre code de confirmation
-                      </span>
-                      <div className="text-2xl font-black tracking-widest text-emerald-700">
-                        {deliveredOtpCode}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setOtpCode(deliveredOtpCode)}
-                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs transition-all flex items-center gap-1 cursor-pointer"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Insérer le code</span>
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-slate-600 leading-tight">
-                    Le code a été validé sur la passerelle gabonaise pour <strong>{contactPhone}</strong>. Cliquez sur le bouton ci-dessus pour le renseigner instantanément.
-                  </p>
-                </div>
-              )}
+
 
               <div>
                 <input

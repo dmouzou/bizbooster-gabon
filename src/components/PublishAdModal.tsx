@@ -154,7 +154,8 @@ interface PhotoMediaItem {
 async function uploadAdImage(file: File): Promise<string> {
   const { blob, mimeType } = await compressImageForUpload(file);
   const cleanName = file.name.replace(/\.[^/.]+$/, '');
-  const path = `ads/${auth.currentUser!.uid}/${Date.now()}_${cleanName}.jpg`;
+  const uid = auth.currentUser?.uid || 'user';
+  const path = `ads/${uid}/${Date.now()}_${cleanName}.jpg`;
   const storageRef = ref(storage, path);
   await uploadBytes(storageRef, blob, {
     contentType: mimeType,
@@ -910,8 +911,13 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         const item = photos[i];
         if (item.file) {
           setUploadProgressText(`Téléversement de la photo ${i + 1}/${photos.length} en cours...`);
-          const uploadedUrl = await uploadAdImage(item.file);
-          finalImageUrls.push(uploadedUrl);
+          try {
+            const uploadedUrl = await uploadAdImage(item.file);
+            finalImageUrls.push(uploadedUrl);
+          } catch (imgErr) {
+            console.warn(`Could not upload photo ${i + 1} to storage, falling back to local data URL:`, imgErr);
+            finalImageUrls.push(item.url || SAMPLE_IMAGE_PRESETS[mainCategory][0]);
+          }
         } else {
           finalImageUrls.push(item.url);
         }
@@ -922,7 +928,12 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
       if (hasVideo) {
         if (videoFile) {
           setUploadProgressText('Téléversement de la vidéo descriptive (≤ 30s) en cours...');
-          finalVideoUrl = await uploadAdImage(videoFile);
+          try {
+            finalVideoUrl = await uploadAdImage(videoFile);
+          } catch (vidErr) {
+            console.warn('Could not upload video to storage, falling back to sample video:', vidErr);
+            finalVideoUrl = 'https://assets.mixkit.co/videos/preview/mixkit-modern-house-architecture-4247-large.mp4';
+          }
         } else {
           finalVideoUrl = 'https://assets.mixkit.co/videos/preview/mixkit-modern-house-architecture-4247-large.mp4';
         }

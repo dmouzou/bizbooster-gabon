@@ -53,6 +53,7 @@ import { isAdVipCornerEligible } from '../utils/vipCorner';
 import { auth, storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { compressImageForUpload } from '../utils/imageCompressor';
+import { trackDownloadRequest } from '../services/platformMetrics';
 
 interface EditAdModalProps {
   isOpen: boolean;
@@ -1129,6 +1130,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                                 download={cvFileName}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={() => trackDownloadRequest(cvFileSize || 250000)}
                                 className="p-1.5 text-teal-700 hover:text-teal-900 hover:bg-teal-50 rounded-lg transition-colors cursor-pointer"
                                 title="Télécharger / Voir le CV"
                               >
@@ -1213,6 +1215,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                                 download={cvFileName}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={() => trackDownloadRequest(cvFileSize || 250000)}
                                 className="p-1.5 text-teal-700 hover:text-teal-900 hover:bg-teal-50 rounded-lg transition-colors cursor-pointer"
                                 title="Télécharger / Voir le descriptif"
                               >

@@ -124,7 +124,7 @@ service cloud.firestore {
     // ---------------------------------------------------------------
     match /system_counters/{counterId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || counterId == 'scalability_metrics';
     }
 
     // ---------------------------------------------------------------
@@ -147,6 +147,14 @@ service cloud.firestore {
     // ---------------------------------------------------------------
     match /user_notifications/{notifId} {
       allow read, write: if isSignedIn() || isAdmin();
+    }
+
+    // ---------------------------------------------------------------
+    // PAYMENTS (SingPay Gabon Transactions)
+    // ---------------------------------------------------------------
+    match /payments/{paymentId} {
+      allow read: if true;
+      allow write: if isSignedIn() || isAdmin();
     }
 
     // ---------------------------------------------------------------

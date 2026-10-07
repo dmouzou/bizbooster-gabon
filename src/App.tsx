@@ -1203,7 +1203,7 @@ function cleanUndefined(obj: any): any {
           expiresAt: new Date(finalExpiry).toISOString(),
           durationDays: Math.min(365, (targetAd.durationDays || 0) + effectiveDays),
           status: targetAd.status === 'EXPIRED' ? 'ACTIVE' : targetAd.status,
-          paymentMethod: 'AIRTEL',
+          paymentMethod: 'AIRTEL_MONEY',
           transactionRef: paymentInfo.transactionRef || `VIP-EXT-${Date.now().toString(36).toUpperCase()}`,
           paidAmount: 0,
           paymentVerified: true,
@@ -1538,6 +1538,7 @@ function cleanUndefined(obj: any): any {
                 onSelectCategory={handleSelectCategory}
                 setActiveCategory={handleSelectCategory}
                 categoryCounts={categoryCounts}
+                onOpenMobileCategoryMenu={() => setIsMobileArcMenuOpen(true)}
               />
             </div>
 
@@ -2113,7 +2114,6 @@ function cleanUndefined(obj: any): any {
         <button
           onClick={() => {
             setFrontendTab('catalog');
-            setIsMobileArcMenuOpen((prev) => !prev);
             scrollToTopInstant();
           }}
           className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${

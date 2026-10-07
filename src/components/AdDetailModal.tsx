@@ -6,6 +6,7 @@ import { isAdVipCornerEligible } from '../utils/vipCorner';
 import { ReportAdModal } from './ReportAdModal';
 import { ShareAdModal } from './ShareAdModal';
 import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
+import { trackDownloadRequest } from '../services/platformMetrics';
 
 interface AdDetailModalProps {
   ad: Ad | null;
@@ -589,12 +590,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                           rel="noopener noreferrer"
                           download={docFileName}
                           onClick={() => {
-                            // Record download request for platform capacity metrics
-                            try {
-                              const curr = Number(localStorage.getItem('bizbooster_download_requests_count') || '0');
-                              localStorage.setItem('bizbooster_download_requests_count', String(curr + 1));
-                              window.dispatchEvent(new Event('bizbooster_metric_updated'));
-                            } catch {}
+                            trackDownloadRequest(docFileSize || 250000);
                           }}
                           className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition-colors shrink-0 cursor-pointer"
                         >

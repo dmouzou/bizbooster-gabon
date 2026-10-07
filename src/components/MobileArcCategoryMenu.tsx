@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { X, Layers, Building2, Car, Package, Briefcase, GraduationCap, Heart, Search, UserCheck } from 'lucide-react';
+import { X, Building2, Car, Package, Briefcase, GraduationCap, Heart, Search, UserCheck } from 'lucide-react';
 import { MainCategory } from '../types';
 
 interface MobileArcCategoryMenuProps {
@@ -19,13 +19,6 @@ interface CategoryItem {
 }
 
 const CATEGORIES: CategoryItem[] = [
-  {
-    id: 'ALL',
-    label: 'TOUTES LES CATÉGORIES',
-    subtitle: 'Catalogue complet',
-    icon: <Layers className="w-4 h-4" />,
-    color: 'emerald',
-  },
   {
     id: 'IMMOBILIER',
     label: '1. IMMOBILIER',

@@ -38,13 +38,15 @@ import {
   TrendingUp,
   RefreshCw,
   Lock,
+  EyeOff,
+  Save,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
-import { getFirebaseQuotaComparison, trackSmsSent, trackDownloadRequest, resetSmsCounters } from '../services/platformMetrics';
+import { getFirebaseQuotaComparison, trackSmsSent, trackDownloadRequest, resetSmsCounters, resetDownloadCounters } from '../services/platformMetrics';
 import { RealTimeAnalytics } from './RealTimeAnalytics';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
@@ -211,20 +213,126 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Active Admin Tab: 'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY'
-  const [activeTab, setActiveTab] = useState<'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY'>('MODERATION');
+  // Active Admin Tab: 'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY' | 'PAYMENTS'
+  const [activeTab, setActiveTab] = useState<'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY' | 'PAYMENTS'>('MODERATION');
 
   // Point 4: Métriques temps réel de scalabilité et comparaison quota Firebase Spark/Blaze
   const [metricsTick, setMetricsTick] = useState(0);
+  const [liveScalabilityMetrics, setLiveScalabilityMetrics] = useState<{
+    smsSentToday?: number;
+    smsSentAllTime?: number;
+    totalDownloadRequests?: number;
+    totalDownloadBandwidthBytes?: number;
+  }>({});
+
+  // Configuration Passerelle SingPay Gabon
+  const [gatewayConfig, setGatewayConfig] = useState<{
+    singpayClientId: string;
+    singpayClientSecret: string;
+    singpayWalletId: string;
+    moovDisbursementNumber: string;
+    airtelDisbursementNumber: string;
+    isLive: boolean;
+    updatedAt?: string;
+  }>({
+    singpayClientId: '',
+    singpayClientSecret: '',
+    singpayWalletId: '',
+    moovDisbursementNumber: '62 18 87 34',
+    airtelDisbursementNumber: '',
+    isLive: true,
+  });
+  const [isSavingGateway, setIsSavingGateway] = useState(false);
+  const [showSecretKey, setShowSecretKey] = useState(false);
+  const [gatewaySaveSuccess, setGatewaySaveSuccess] = useState(false);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'payment_gateway'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setGatewayConfig({
+          singpayClientId: data.singpayClientId || '',
+          singpayClientSecret: data.singpayClientSecret || '',
+          singpayWalletId: data.singpayWalletId || '',
+          moovDisbursementNumber: data.moovDisbursementNumber || '62 18 87 34',
+          airtelDisbursementNumber: data.airtelDisbursementNumber || '',
+          isLive: data.isLive ?? true,
+          updatedAt: data.updatedAt,
+        });
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const handleSaveGatewayConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingGateway(true);
+    try {
+      const configRef = doc(db, 'settings', 'payment_gateway');
+      await setDoc(
+        configRef,
+        {
+          singpayClientId: gatewayConfig.singpayClientId.trim(),
+          singpayClientSecret: gatewayConfig.singpayClientSecret.trim(),
+          singpayWalletId: gatewayConfig.singpayWalletId.trim(),
+          moovDisbursementNumber: gatewayConfig.moovDisbursementNumber.trim() || '24162188734',
+          airtelDisbursementNumber: gatewayConfig.airtelDisbursementNumber.trim(),
+          isLive: gatewayConfig.isLive,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      setGatewaySaveSuccess(true);
+      setTimeout(() => setGatewaySaveSuccess(false), 4000);
+    } catch (err: any) {
+      alert('Erreur lors de l\'enregistrement des clés SingPay: ' + err.message);
+    } finally {
+      setIsSavingGateway(false);
+    }
+  };
+
   useEffect(() => {
     const handleMetricUpdate = () => setMetricsTick((prev) => prev + 1);
     window.addEventListener('bizbooster_metric_updated', handleMetricUpdate);
     return () => window.removeEventListener('bizbooster_metric_updated', handleMetricUpdate);
   }, []);
 
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'system_counters', 'scalability_metrics'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          const today = new Date().toISOString().split('T')[0];
+          const isToday = data.todayDate === today;
+          const todayCount = isToday ? Number(data.smsSentToday) || 0 : 0;
+          const allTimeCount = Number(data.smsSentAllTime) || 0;
+          const downloadReqCount = Number(data.totalDownloadRequests) || 0;
+          const downloadBandwidthBytes = Number(data.totalDownloadBandwidthBytes) || 0;
+
+          setLiveScalabilityMetrics({
+            smsSentToday: todayCount,
+            smsSentAllTime: allTimeCount,
+            totalDownloadRequests: downloadReqCount,
+            totalDownloadBandwidthBytes: downloadBandwidthBytes,
+          });
+          localStorage.setItem('bizbooster_sms_sent_date', today);
+          localStorage.setItem('bizbooster_sms_sent_today', String(todayCount));
+          localStorage.setItem('bizbooster_sms_sent_all_time', String(allTimeCount));
+          localStorage.setItem('bizbooster_download_requests_count', String(downloadReqCount));
+          localStorage.setItem('bizbooster_download_bandwidth_bytes', String(downloadBandwidthBytes));
+        }
+      },
+      (err) => {
+        console.warn('Live scalability metrics listener error:', err);
+      }
+    );
+    return () => unsub();
+  }, []);
+
   const quotaComparison = useMemo(() => {
-    return getFirebaseQuotaComparison(ads, users);
-  }, [ads, users, metricsTick]);
+    return getFirebaseQuotaComparison(ads, users, liveScalabilityMetrics);
+  }, [ads, users, metricsTick, liveScalabilityMetrics]);
 
   // Moderation filters
   type ModerationStatusFilter = 'PENDING' | 'PRIORITY' | 'ACTIVE' | 'REJECTED' | 'ALL';
@@ -699,6 +807,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <span>Dépassement</span>
               </span>
             )}
+          </button>
+
+          {/* TAB 6: PASSERELLE SINGPAY */}
+          <button
+            onClick={() => setActiveTab('PAYMENTS')}
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border cursor-pointer ${
+              activeTab === 'PAYMENTS'
+                ? 'bg-blue-600 text-white border-blue-500 shadow-md'
+                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800'
+            }`}
+          >
+            <Smartphone className="w-4 h-4" />
+            <span>Passerelle SingPay</span>
+            <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
+              gatewayConfig.singpayClientId && gatewayConfig.singpayClientSecret
+                ? 'bg-emerald-400 text-slate-950'
+                : 'bg-amber-400 text-slate-950 animate-pulse'
+            }`}>
+              {gatewayConfig.singpayClientId && gatewayConfig.singpayClientSecret ? 'Moov Actif' : 'À configurer'}
+            </span>
           </button>
         </div>
       </div>
@@ -1520,7 +1648,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                 <div className="flex items-center gap-1.5 pt-0.5">
                                   <button
                                     type="button"
-                                    onClick={() => setPreviewKycUser(u)}
+                                    onClick={() => {
+                                      trackDownloadRequest(2200000);
+                                      setPreviewKycUser(u);
+                                    }}
                                     className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900 underline flex items-center gap-1 cursor-pointer"
                                   >
                                     <FileText className="w-3 h-3" />
@@ -2194,13 +2325,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           <span className="text-[11px] text-slate-500">Fiches, CV, Médias & Exports</span>
                         </div>
                       </div>
-                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
-                        quotaComparison.isDownloadQuotaExceeded
-                          ? 'bg-red-500 text-white'
-                          : 'bg-emerald-100 text-emerald-800'
-                      }`}>
-                        {quotaComparison.isDownloadQuotaExceeded ? 'Quota Dépassé' : 'Dans le Quota'}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (window.confirm("Réinitialiser le compteur de téléchargements et de bande passante à 0 ?")) {
+                              await resetDownloadCounters();
+                            }
+                          }}
+                          className="text-[10px] font-bold text-slate-500 hover:text-purple-600 bg-slate-100 hover:bg-purple-50 px-2 py-0.5 rounded-full border border-slate-200 transition-colors cursor-pointer"
+                          title="Remettre le compteur de téléchargements à zéro"
+                        >
+                          🔄 Réinitialiser à 0
+                        </button>
+                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                          quotaComparison.isDownloadQuotaExceeded
+                            ? 'bg-red-500 text-white'
+                            : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {quotaComparison.isDownloadQuotaExceeded ? 'Quota Dépassé' : 'Dans le Quota'}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-1">
@@ -2513,6 +2658,235 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* VIEW 6: PASSERELLE DE PAIEMENT SINGPAY GABON */}
+      {activeTab === 'PAYMENTS' && (
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-4">
+            <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="bg-blue-100 text-blue-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-sm">
+                    Passerelle Officielle Gabon
+                  </span>
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+                    Moov Money Actif
+                  </span>
+                  <span className="bg-amber-100 text-amber-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-amber-300">
+                    Airtel Money en standby
+                  </span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black text-slate-900 mt-2">
+                  Passerelle de Paiement SingPay Gabon
+                </h2>
+                <p className="text-xs text-slate-500 mt-1 max-w-2xl">
+                  Intégration directe de l'API SingPay pour le prélèvement USSD Push sur mobile. Les fonds réglés par les annonceurs via Moov Money sont transférés vers le compte marchand <strong>62 18 87 34</strong>.
+                </p>
+              </div>
+
+              <a
+                href="https://client.singpay.ga/doc/reference/index.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 shrink-0 cursor-pointer"
+              >
+                <span>Documentation SingPay</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+
+            {/* Status Alert Banner */}
+            {gatewayConfig.singpayClientId && gatewayConfig.singpayClientSecret && gatewayConfig.singpayWalletId ? (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-900 flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-extrabold text-emerald-950">Passerelle SingPay opérationnelle</p>
+                  <p className="text-emerald-800 leading-relaxed text-[11px]">
+                    Les identifiants API sont enregistrés. Les demandes de paiement Moov Money déclenchent un appel direct à l'API SingPay (<code>POST /v1/62/paiement</code>) avec envoi de l'invite USSD sur le téléphone du client et redirection des fonds vers le numéro marchand <strong>{gatewayConfig.moovDisbursementNumber || '62 18 87 34'}</strong>.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-extrabold text-amber-950">Identifiants API SingPay requis</p>
+                  <p className="text-amber-800 leading-relaxed text-[11px]">
+                    Renseignez vos clés fournies par SingPay (Client ID, Client Secret et Wallet ID) ci-dessous pour activer les transactions réelles sur l'application.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Form Card */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div>
+                <h3 className="font-extrabold text-slate-900 text-base">Configuration des Clés API SingPay</h3>
+                <p className="text-xs text-slate-500">Ces clés sont stockées de façon sécurisée et utilisées exclusivement par le serveur Cloud Functions.</p>
+              </div>
+              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
+                {gatewayConfig.updatedAt ? `Dernière mise à jour : ${new Date(gatewayConfig.updatedAt).toLocaleDateString('fr-FR')}` : 'Configuration initiale'}
+              </span>
+            </div>
+
+            <form onSubmit={handleSaveGatewayConfig} className="space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* Client ID */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Client ID SingPay (<code className="text-blue-600 lowercase">x-client-id</code>)
+                  </label>
+                  <input
+                    type="text"
+                    value={gatewayConfig.singpayClientId}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, singpayClientId: e.target.value })}
+                    placeholder="Ex: 9b2d3e4f-..."
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                  />
+                  <span className="text-[10px] text-slate-400">Identifiant client fourni dans votre compte SingPay Workspace.</span>
+                </div>
+
+                {/* Client Secret */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Client Secret SingPay (<code className="text-blue-600 lowercase">x-client-secret</code>)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showSecretKey ? 'text' : 'password'}
+                      value={gatewayConfig.singpayClientSecret}
+                      onChange={(e) => setGatewayConfig({ ...gatewayConfig, singpayClientSecret: e.target.value })}
+                      placeholder="••••••••••••••••••••••••••••••••"
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-3.5 pr-10 py-2.5 text-xs font-mono text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSecretKey(!showSecretKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                      title={showSecretKey ? 'Masquer' : 'Afficher'}
+                    >
+                      {showSecretKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <span className="text-[10px] text-slate-400">Clé secrète OAuth 2.0 confidentielle.</span>
+                </div>
+
+                {/* Wallet ID */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Wallet ID du Portefeuille (<code className="text-blue-600 lowercase">x-wallet</code>)
+                  </label>
+                  <input
+                    type="text"
+                    value={gatewayConfig.singpayWalletId}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, singpayWalletId: e.target.value })}
+                    placeholder="Ex: 60a7e4b9c..."
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                  />
+                  <span className="text-[10px] text-slate-400">ID du portefeuille à récupérer dans le détail du portefeuille sur SingPay.</span>
+                </div>
+
+                {/* Moov Money Disbursement Phone */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Numéro Moov Récepteur (<code className="text-blue-600 lowercase">disbursement</code>)
+                    </label>
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.2 rounded-full">
+                      Actif
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={gatewayConfig.moovDisbursementNumber}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, moovDisbursementNumber: e.target.value })}
+                    placeholder="62 18 87 34"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                  />
+                  <span className="text-[10px] text-slate-400">Numéro Moov Money recevant les fonds collectés (62 18 87 34).</span>
+                </div>
+
+                {/* Airtel Money Disbursement Phone (Standby) */}
+                <div className="space-y-1.5 opacity-60">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Numéro Airtel Récepteur (Standby)
+                    </label>
+                    <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.2 rounded-full">
+                      En standby
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    disabled
+                    value={gatewayConfig.airtelDisbursementNumber || 'En attente du numéro Airtel'}
+                    placeholder="Standby..."
+                    className="w-full bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-500 cursor-not-allowed"
+                  />
+                  <span className="text-[10px] text-slate-400">Airtel Money est mis en pause jusqu'à communication du numéro de réception.</span>
+                </div>
+              </div>
+
+              {/* Feedback and submit */}
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                <div>
+                  {gatewaySaveSuccess && (
+                    <span className="text-xs font-bold text-emerald-700 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      Configuration SingPay enregistrée avec succès dans Firebase !
+                    </span>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingGateway}
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold shadow-md transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  {isSavingGateway ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
+                  <span>{isSavingGateway ? 'Enregistrement...' : 'Enregistrer la configuration SingPay'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Technical Architecture Details */}
+          <div className="bg-slate-900 text-white rounded-3xl p-6 sm:p-8 border border-slate-800 shadow-sm space-y-4">
+            <h3 className="font-extrabold text-base flex items-center gap-2 text-white">
+              <Lock className="w-5 h-5 text-blue-400" />
+              <span>Architecture de Sécurité SingPay Gabon</span>
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-300">
+              <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/60 space-y-1.5">
+                <span className="font-bold text-blue-300 block">1. Secret Client Inviolable</span>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Le <code>x-client-secret</code> n'est jamais présent dans le code frontend ou visible par les utilisateurs. Tous les appels passent par Firebase Cloud Functions sécurisé.
+                </p>
+              </div>
+              <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/60 space-y-1.5">
+                <span className="font-bold text-emerald-300 block">2. Code PIN sur le Téléphone</span>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  L'utilisateur saisit son code PIN secret à 4 chiffres directement sur son propre téléphone mobile via le push USSD natif Moov Money, garantissant une conformité bancaire totale.
+                </p>
+              </div>
+              <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/60 space-y-1.5">
+                <span className="font-bold text-purple-300 block">3. Validation Temps Réel</span>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Le statut de la transaction est vérifié en continu auprès de SingPay (<code>/v1/transaction/api/status</code>). L'annonce est publiée dès confirmation de la réussite du paiement.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

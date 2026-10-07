@@ -48,7 +48,7 @@ import {
 } from 'firebase/auth';
 import { doc, updateDoc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
-import { trackSmsSent } from '../services/platformMetrics';
+import { trackSmsSent, trackDownloadRequest } from '../services/platformMetrics';
 import { Ad, UserProfile, SubscriptionTier, BoosterPackType, AdPackType, PaymentOperator, isUserAdmin, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime, isAdOwner, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
 import { isAdBoostFeatured } from '../utils/personalization';
@@ -238,7 +238,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [pwdSuccess, setPwdSuccess] = useState<string | null>(null);
   const [pwdLoading, setPwdLoading] = useState(false);
   const [pwdResendTimer, setPwdResendTimer] = useState(45);
-  const [pwdDeliveredOtp, setPwdDeliveredOtp] = useState<string | null>(null);
   const pwdConfirmationRef = useRef<ConfirmationResult | null>(null);
   const pwdRecaptchaRef = useRef<RecaptchaVerifier | null>(null);
 
@@ -584,9 +583,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   // Requirement 3c: Send SMS OTP for password change
   const handleRequestPasswordOtp = async () => {
+    if (pwdLoading) return;
     setPwdError(null);
     setPwdSuccess(null);
-    setPwdDeliveredOtp(null);
     const phone = currentUser.contactPhone || currentUser.phoneNumber;
     if (!phone) {
       setPwdError('Aucun numéro de téléphone Gabon associé à ce compte.');
@@ -594,6 +593,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     }
     const e164 = formatGabonPhone(phone);
     const cleanDigits = phone.replace(/\D/g, '');
+    const e164Clean = e164.replace(/\D/g, '');
     setPwdLoading(true);
     try {
       const verifier = getOrCreatePwdRecaptcha();
@@ -601,6 +601,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       await trackSmsSent(e164);
       setPwdStep('OTP');
       setPwdResendTimer(45);
+      setPwdSuccess(`Code de confirmation SMS envoyé au ${e164}.`);
     } catch (err: any) {
       console.warn('Password OTP Firebase signInWithPhoneNumber returned:', err);
       const errStr = ((err?.message || '') + ' ' + (err?.code || '')).toLowerCase();
@@ -617,15 +618,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       if (isCode39OrQuota) {
         try {
           const fallbackOtp = Math.floor(100000 + Math.random() * 900000).toString();
-          await setDoc(doc(db, 'phone_verifications', cleanDigits), {
+          const docData = {
             phoneNumber: e164,
             cleanDigits,
+            e164Clean,
             otpCode: fallbackOtp,
             createdAt: new Date().toISOString(),
             expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
             verified: false,
             channel: 'GABON_SMS_GATEWAY',
-          });
+          };
+          await setDoc(doc(db, 'phone_verifications', cleanDigits), docData);
+          await setDoc(doc(db, 'phone_verifications', e164Clean), docData);
           await trackSmsSent(e164);
           pwdConfirmationRef.current = {
             verificationId: `pwd_otp_${cleanDigits}_${Date.now()}`,
@@ -639,9 +643,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               return {} as any;
             },
           } as ConfirmationResult;
-          setPwdDeliveredOtp(fallbackOtp);
           setPwdStep('OTP');
           setPwdResendTimer(45);
+          setPwdSuccess(`Code de confirmation SMS envoyé au ${e164}.`);
           return;
         } catch (fsErr) {
           console.warn('Could not set fallback OTP:', fsErr);
@@ -658,14 +662,46 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const handleVerifyPasswordOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setPwdError(null);
-    if (!pwdConfirmationRef.current) {
-      setPwdError('La session SMS a expiré. Veuillez redemander un code.');
-      setPwdStep('IDLE');
+    const trimmed = pwdOtp.trim();
+    if (!trimmed || trimmed.length < 6) {
+      setPwdError('Veuillez saisir le code SMS à 6 chiffres.');
       return;
     }
     setPwdLoading(true);
     try {
-      await pwdConfirmationRef.current.confirm(pwdOtp);
+      let isVerified = false;
+      if (pwdConfirmationRef.current) {
+        try {
+          await pwdConfirmationRef.current.confirm(trimmed);
+          isVerified = true;
+        } catch (confirmErr: any) {
+          console.warn('pwdConfirmationRef.confirm error:', confirmErr);
+        }
+      }
+
+      if (!isVerified) {
+        const phone = currentUser.contactPhone || currentUser.phoneNumber || '';
+        const cleanDigits = phone.replace(/\D/g, '');
+        const e164 = formatGabonPhone(phone);
+        const e164Clean = e164.replace(/\D/g, '');
+
+        for (const key of [cleanDigits, e164Clean].filter(Boolean)) {
+          const vSnap = await getDoc(doc(db, 'phone_verifications', key));
+          if (vSnap.exists() && vSnap.data().otpCode === trimmed) {
+            const expiresAt = vSnap.data().expiresAt ? new Date(vSnap.data().expiresAt).getTime() : Infinity;
+            if (Date.now() <= expiresAt) {
+              isVerified = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!isVerified) {
+        setPwdError('Code SMS OTP incorrect ou expiré. Veuillez vérifier le code reçu sur votre téléphone.');
+        return;
+      }
+
       setPwdStep('NEW_PWD');
     } catch {
       setPwdError('Code SMS OTP incorrect ou expiré.');
@@ -1115,7 +1151,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
               {currentUser.idDocumentUrl && (
                 <button
-                  onClick={() => setPreviewDocModal(currentUser.idDocumentUrl || null)}
+                  onClick={() => {
+                    trackDownloadRequest(2200000);
+                    setPreviewDocModal(currentUser.idDocumentUrl || null);
+                  }}
                   className="text-xs font-bold text-emerald-800 bg-white hover:bg-emerald-100/70 border border-emerald-200 px-4 py-2.5 rounded-xl transition-colors flex items-center gap-1.5 shrink-0"
                 >
                   <FileText className="w-4 h-4" />
@@ -2059,30 +2098,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     Entrez le code SMS à 6 chiffres envoyé au {currentUser.contactPhone || currentUser.phoneNumber} :
                   </div>
 
-                  {pwdDeliveredOtp && (
-                    <div className="bg-linear-to-r from-emerald-50 to-teal-50 border border-emerald-300 rounded-xl p-3 space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-extrabold text-emerald-800 flex items-center gap-1">
-                          <Smartphone className="w-4 h-4 text-emerald-600 animate-pulse" />
-                          Code SMS OTP Reçu (+241)
-                        </span>
-                        <span className="bg-emerald-200/80 text-emerald-900 text-[10px] font-black px-2 py-0.5 rounded-full">
-                          Valide 10 min
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between bg-white p-2.5 rounded-lg border border-emerald-200">
-                        <span className="text-xl font-black tracking-widest text-emerald-700">{pwdDeliveredOtp}</span>
-                        <button
-                          type="button"
-                          onClick={() => setPwdOtp(pwdDeliveredOtp)}
-                          className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-black hover:bg-emerald-700 transition-all cursor-pointer flex items-center gap-1 shadow-xs"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Insérer le code</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
+
                   <input
                     type="text"
                     maxLength={6}

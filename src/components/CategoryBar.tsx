@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Building2, Car, Package, Briefcase, Layers, ChevronLeft, ChevronRight, GraduationCap, Heart, Search, UserCheck } from 'lucide-react';
+import { Building2, Car, Package, Briefcase, Layers, ChevronLeft, ChevronRight, GraduationCap, Heart, Search, UserCheck, Grid } from 'lucide-react';
 import { MainCategory } from '../types';
 
 interface CategoryBarProps {
@@ -7,6 +7,7 @@ interface CategoryBarProps {
   onSelectCategory?: (category: MainCategory | 'ALL') => void;
   setActiveCategory?: (category: MainCategory | 'ALL') => void;
   categoryCounts: Record<MainCategory | 'ALL', number>;
+  onOpenMobileCategoryMenu?: () => void;
 }
 
 export const CategoryBar: React.FC<CategoryBarProps> = ({
@@ -14,6 +15,7 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
   onSelectCategory,
   setActiveCategory,
   categoryCounts,
+  onOpenMobileCategoryMenu,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sliderTrackRef = useRef<HTMLDivElement>(null);
@@ -198,109 +200,188 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
   return (
     <div className="bg-white border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5">
-        {/* Scroller horizontal compact des catégories (avec support glisser, molette et tactile) */}
-        <div
-          ref={scrollContainerRef}
-          onScroll={updateScrollState}
-          onWheel={handleWheel}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUpOrLeave}
-          onMouseLeave={handleMouseUpOrLeave}
-          className="flex items-center gap-2.5 overflow-x-auto pb-1 scrollbar-none select-none cursor-grab active:cursor-grabbing scroll-smooth"
-        >
-          {categories.map((cat) => {
-            const isSelected = activeCategory === cat.id;
-            const count = categoryCounts[cat.id] || 0;
-            return (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => handleSelect(cat.id)}
-                className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border transition-all text-left whitespace-nowrap shrink-0 cursor-pointer ${
-                  isSelected
-                    ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-xs ring-1 ring-emerald-400/40'
-                    : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
-                }`}
-                id={`cat-button-${cat.id.toLowerCase()}`}
-                title={`${cat.label} • ${cat.subtitle}`}
-              >
-                <div
-                  className={`p-2 rounded-lg shrink-0 ${
-                    isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  {cat.icon}
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-extrabold text-xs tracking-tight uppercase">{cat.label}</span>
-                    <span
-                      className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
-                        isSelected
-                          ? 'bg-emerald-200/80 text-emerald-900'
-                          : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      {count}
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-slate-500 font-medium">{cat.subtitle}</p>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Navigation : Flèches gauche/droite et curseur slider interactif */}
-        {hasOverflow && (
-          <div className="flex items-center justify-center gap-3 pt-1.5">
-            {/* Flèche gauche */}
-            <button
-              type="button"
-              onClick={() => scroll('left')}
-              disabled={!canScrollLeft}
-              className={`p-1.5 sm:p-2 rounded-xl border border-slate-200 bg-white shadow-xs text-slate-700 hover:text-emerald-700 hover:bg-slate-50 transition-all cursor-pointer ${
-                !canScrollLeft ? 'opacity-30 cursor-not-allowed' : 'hover:scale-105 active:scale-95'
-              }`}
-              title="Faire défiler vers la gauche"
-              aria-label="Faire défiler vers la gauche"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-
-            {/* Curseur slider interactif */}
-            <div
-              ref={sliderTrackRef}
-              onClick={handleTrackClick}
-              className="w-48 sm:w-72 h-2 bg-slate-200 hover:bg-slate-300/80 rounded-full cursor-pointer relative shadow-inner transition-colors group"
-              title="Curseur : glissez ou cliquez pour naviguer entre les catégories"
-            >
+        {/* VERSION MOBILE (md:hidden) : Uniquement 'Toutes les catégories' et le bouton 'Sélectionner une catégorie' en bas, sans scroller ni autres catégories */}
+        <div className="md:hidden space-y-2">
+          {/* Case 'Toutes les catégories' */}
+          <button
+            type="button"
+            onClick={() => handleSelect('ALL')}
+            className={`w-full flex items-center justify-between p-3 rounded-2xl border transition-all text-left cursor-pointer ${
+              activeCategory === 'ALL'
+                ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-xs ring-1 ring-emerald-400/40'
+                : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+            }`}
+            id="mobile-cat-button-all"
+            title="Toutes les catégories • Catalogue complet"
+          >
+            <div className="flex items-center gap-3 min-w-0">
               <div
-                onMouseDown={handleThumbMouseDown}
-                style={{
-                  width: '32%',
-                  left: `${scrollProgress * 68}%`,
-                }}
-                className="absolute top-0 bottom-0 bg-emerald-600 group-hover:bg-emerald-700 rounded-full cursor-grab active:cursor-grabbing shadow-sm transition-colors"
-              />
+                className={`p-2 rounded-xl shrink-0 ${
+                  activeCategory === 'ALL' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                <Layers className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-extrabold text-xs tracking-tight uppercase truncate">
+                    TOUTES LES CATÉGORIES
+                  </span>
+                  <span
+                    className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full shrink-0 ${
+                      activeCategory === 'ALL'
+                        ? 'bg-emerald-200/80 text-emerald-900'
+                        : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {categoryCounts['ALL'] || 0}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500 font-medium truncate">Catalogue complet</p>
+              </div>
             </div>
 
-            {/* Flèche droite */}
-            <button
-              type="button"
-              onClick={() => scroll('right')}
-              disabled={!canScrollRight}
-              className={`p-1.5 sm:p-2 rounded-xl border border-slate-200 bg-white shadow-xs text-slate-700 hover:text-emerald-700 hover:bg-slate-50 transition-all cursor-pointer ${
-                !canScrollRight ? 'opacity-30 cursor-not-allowed' : 'hover:scale-105 active:scale-95'
-              }`}
-              title="Faire défiler vers la droite"
-              aria-label="Faire défiler vers la droite"
-            >
+            {activeCategory !== 'ALL' && (
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-md shrink-0">
+                Réinitialiser
+              </span>
+            )}
+          </button>
+
+          {/* Bouton/lien cliquable en bas de 'Toutes les catégories' pour ouvrir le menu */}
+          <button
+            type="button"
+            onClick={() => onOpenMobileCategoryMenu?.()}
+            id="open-mobile-category-menu-btn"
+            className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 active:bg-slate-950 text-white shadow-md transition-all active:scale-[0.99] cursor-pointer group border border-slate-800"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                <Grid className="w-4 h-4" />
+              </div>
+              <div className="text-left min-w-0">
+                <span className="text-xs font-black text-white tracking-wide block truncate">
+                  Sélectionner une catégorie
+                </span>
+                <span className="text-[10px] text-slate-300 block truncate">
+                  {activeCategory === 'ALL'
+                    ? 'Choisir parmi les 8 rubriques'
+                    : `Sélection : ${categories.find((c) => c.id === activeCategory)?.label || activeCategory}`}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 text-emerald-400 font-bold text-xs group-hover:translate-x-0.5 transition-transform shrink-0">
+              <span>Parcourir</span>
               <ChevronRight className="w-4 h-4" />
-            </button>
+            </div>
+          </button>
+        </div>
+
+        {/* VERSION DESKTOP (hidden md:block) : Scroller horizontal complet des catégories */}
+        <div className="hidden md:block">
+          <div
+            ref={scrollContainerRef}
+            onScroll={updateScrollState}
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUpOrLeave}
+            onMouseLeave={handleMouseUpOrLeave}
+            className="flex items-center gap-2.5 overflow-x-auto pb-1 scrollbar-none select-none cursor-grab active:cursor-grabbing scroll-smooth"
+          >
+            {categories.map((cat) => {
+              const isSelected = activeCategory === cat.id;
+              const count = categoryCounts[cat.id] || 0;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => handleSelect(cat.id)}
+                  className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border transition-all text-left whitespace-nowrap shrink-0 cursor-pointer ${
+                    isSelected
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-xs ring-1 ring-emerald-400/40'
+                      : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                  }`}
+                  id={`cat-button-${cat.id.toLowerCase()}`}
+                  title={`${cat.label} • ${cat.subtitle}`}
+                >
+                  <div
+                    className={`p-2 rounded-lg shrink-0 ${
+                      isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {cat.icon}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-extrabold text-xs tracking-tight uppercase">{cat.label}</span>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
+                          isSelected
+                            ? 'bg-emerald-200/80 text-emerald-900'
+                            : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-medium">{cat.subtitle}</p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
-        )}
+
+          {/* Navigation : Flèches gauche/droite et curseur slider interactif */}
+          {hasOverflow && (
+            <div className="flex items-center justify-center gap-3 pt-1.5">
+              {/* Flèche gauche */}
+              <button
+                type="button"
+                onClick={() => scroll('left')}
+                disabled={!canScrollLeft}
+                className={`p-1.5 sm:p-2 rounded-xl border border-slate-200 bg-white shadow-xs text-slate-700 hover:text-emerald-700 hover:bg-slate-50 transition-all cursor-pointer ${
+                  !canScrollLeft ? 'opacity-30 cursor-not-allowed' : 'hover:scale-105 active:scale-95'
+                }`}
+                title="Faire défiler vers la gauche"
+                aria-label="Faire défiler vers la gauche"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              {/* Curseur slider interactif */}
+              <div
+                ref={sliderTrackRef}
+                onClick={handleTrackClick}
+                className="w-48 sm:w-72 h-2 bg-slate-200 hover:bg-slate-300/80 rounded-full cursor-pointer relative shadow-inner transition-colors group"
+                title="Curseur : glissez ou cliquez pour naviguer entre les catégories"
+              >
+                <div
+                  onMouseDown={handleThumbMouseDown}
+                  style={{
+                    width: '32%',
+                    left: `${scrollProgress * 68}%`,
+                  }}
+                  className="absolute top-0 bottom-0 bg-emerald-600 group-hover:bg-emerald-700 rounded-full cursor-grab active:cursor-grabbing shadow-sm transition-colors"
+                />
+              </div>
+
+              {/* Flèche droite */}
+              <button
+                type="button"
+                onClick={() => scroll('right')}
+                disabled={!canScrollRight}
+                className={`p-1.5 sm:p-2 rounded-xl border border-slate-200 bg-white shadow-xs text-slate-700 hover:text-emerald-700 hover:bg-slate-50 transition-all cursor-pointer ${
+                  !canScrollRight ? 'opacity-30 cursor-not-allowed' : 'hover:scale-105 active:scale-95'
+                }`}
+                title="Faire défiler vers la droite"
+                aria-label="Faire défiler vers la droite"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

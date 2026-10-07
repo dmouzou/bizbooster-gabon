@@ -1,8 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Smartphone, CheckCircle, AlertCircle, Loader2, Lock, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  ShieldCheck,
+  Smartphone,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
+  ArrowRight,
+  RefreshCw,
+  PhoneCall,
+  Radio,
+  Lock,
+} from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { PaymentOperator } from '../types';
 import { formatFCFA } from '../utils/formatters';
+import { initiateSingPay, pollSingPayStatus, MOOV_MERCHANT_NUMBER } from '../services/singpay';
 
 interface MobilePaymentSimulatorProps {
   amount: number;
@@ -30,126 +42,178 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
   onCancel,
   initialPhone,
 }) => {
-  const formattedInitial = to8Digits(initialPhone);
-  const initialOperator: PaymentOperator =
-    formattedInitial.startsWith('65') ||
-    formattedInitial.startsWith('66') ||
-    formattedInitial.startsWith('62') ||
-    formattedInitial.startsWith('60')
-      ? 'MOOV_MONEY'
-      : 'AIRTEL_MONEY';
-
-  const [operator, setOperator] = useState<PaymentOperator>(initialOperator);
-  // Point 7: Le champ de texte pour le numéro Airtel/Moov money est initialement vide
-  const [mobileNumber, setMobileNumber] = useState('');
+  // Moov Money is active via SingPay; Airtel Money is on standby
+  const [operator, setOperator] = useState<PaymentOperator>('MOOV_MONEY');
+  const [mobileNumber, setMobileNumber] = useState(to8Digits(initialPhone) || '');
   const [phoneError, setPhoneError] = useState('');
-  const [step, setStep] = useState<'FORM' | 'PUSH_SENT' | 'PIN_ENTRY' | 'PROCESSING' | 'SUCCESS'>('FORM');
-  const [pin, setPin] = useState('');
-  const [pinError, setPinError] = useState('');
-  const [countdown, setCountdown] = useState(45);
+
+  type PaymentStep =
+    | 'FORM'
+    | 'INITIATING'
+    | 'WAITING_USSD_CONFIRMATION'
+    | 'SUCCESS'
+    | 'FAILED';
+
+  const [step, setStep] = useState<PaymentStep>('FORM');
+  const [transactionRef, setTransactionRef] = useState('');
+  const [transactionId, setTransactionId] = useState<string | undefined>(undefined);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [failureReason, setFailureReason] = useState('');
+  const [countdown, setCountdown] = useState(90);
+
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    };
+  }, []);
 
   const handlePhoneChange = (val: string) => {
     setMobileNumber(val);
     setPhoneError('');
-    // Auto-detect Gabon telecom operator if user types recognizable prefix
-    const clean = val.replace(/[^0-9]/g, '');
-    let checkDigits = clean;
-    if (checkDigits.startsWith('241')) checkDigits = checkDigits.slice(3);
-    if (checkDigits.startsWith('0')) checkDigits = checkDigits.slice(1);
-    if (
-      checkDigits.startsWith('60') ||
-      checkDigits.startsWith('62') ||
-      checkDigits.startsWith('65') ||
-      checkDigits.startsWith('66')
-    ) {
-      setOperator('MOOV_MONEY');
-    } else if (
-      checkDigits.startsWith('74') ||
-      checkDigits.startsWith('77') ||
-      checkDigits.startsWith('76')
-    ) {
-      setOperator('AIRTEL_MONEY');
-    }
   };
 
-  const handleOperatorChange = (op: PaymentOperator) => {
-    setOperator(op);
-    setPhoneError('');
+  const cleanDigits = (raw: string) => {
+    let clean = raw.replace(/[^0-9]/g, '');
+    if (clean.startsWith('241')) clean = clean.slice(3);
+    if (clean.startsWith('0')) clean = clean.slice(1);
+    return clean;
   };
 
-  // Trigger simulated push
-  const handleInitiatePayment = (e: React.FormEvent) => {
+  // Trigger real SingPay USSD Push
+  const handleInitiatePayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = mobileNumber.replace(/[^0-9]/g, '');
-    let digits = clean;
-    if (digits.startsWith('241')) digits = digits.slice(3);
-    if (digits.startsWith('0')) digits = digits.slice(1);
 
-    if (!digits || digits.length < 8) {
-      setPhoneError('Veuillez entrer un numéro de téléphone gabonais valide (8 chiffres).');
+    if (operator === 'AIRTEL_MONEY') {
+      setPhoneError('Airtel Money est temporairement en attente de configuration. Veuillez régler via Moov Money.');
       return;
     }
+
+    const digits = cleanDigits(mobileNumber);
+    if (!digits || digits.length !== 8) {
+      setPhoneError('Veuillez entrer un numéro de téléphone gabonais à 8 chiffres (ex: 062 18 87 34).');
+      return;
+    }
+
+    const isMoov =
+      digits.startsWith('60') ||
+      digits.startsWith('62') ||
+      digits.startsWith('65') ||
+      digits.startsWith('66');
+
+    if (!isMoov) {
+      setPhoneError('Préfixe Moov Money requis : le numéro doit commencer par 060, 062, 065 ou 066.');
+      return;
+    }
+
     setPhoneError('');
-    setStep('PUSH_SENT');
+    setStep('INITIATING');
+    setStatusMessage('Connexion à la passerelle SingPay Gabon...');
 
-    // Simulate phone receiving the USSD push after 1.5 seconds
-    setTimeout(() => {
-      setStep('PIN_ENTRY');
-    }, 1500);
-  };
+    const generatedRef = `SP-MM-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    setTransactionRef(generatedRef);
 
-  // Countdown timer during push
-  useEffect(() => {
-    if (step === 'PIN_ENTRY' || step === 'PUSH_SENT') {
-      const timer = setInterval(() => {
-        setCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+    try {
+      const initResult = await initiateSingPay({
+        amount,
+        phoneNumber: digits,
+        reference: generatedRef,
+        itemDescription,
+        operator: 'MOOV_MONEY',
+      });
+
+      setTransactionId(initResult.transactionId);
+      setStep('WAITING_USSD_CONFIRMATION');
+      setCountdown(90);
+      setStatusMessage('Demande USSD Push transmise sur votre mobile Moov Money.');
+
+      // Start countdown timer
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            setStep('FAILED');
+            setFailureReason('Délai d\'attente dépassé (timeout 90s). La transaction a expiré sans confirmation sur le téléphone.');
+            return 0;
+          }
+          return prev - 1;
+        });
       }, 1000);
-      return () => clearInterval(timer);
+
+      // Start polling SingPay status every 3 seconds
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = setInterval(async () => {
+        try {
+          const statusRes = await pollSingPayStatus({
+            transactionId: initResult.transactionId,
+            reference: generatedRef,
+          });
+
+          if (statusRes.status === 'SUCCESS') {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+
+            setStep('SUCCESS');
+            try {
+              confetti({
+                particleCount: 80,
+                spread: 70,
+                origin: { y: 0.6 },
+              });
+            } catch {}
+
+            setTimeout(() => {
+              onSuccess({
+                operator: 'MOOV_MONEY',
+                contactPhone: digits,
+                transactionRef: generatedRef,
+              });
+            }, 1800);
+          } else if (statusRes.status === 'FAILED') {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+
+            setStep('FAILED');
+            setFailureReason(
+              statusRes.failureReason ||
+                statusRes.message ||
+                'Paiement non validé ou rejeté sur le téléphone mobile.'
+            );
+          }
+        } catch (err: any) {
+          console.warn('Polling error:', err);
+        }
+      }, 3000);
+    } catch (err: any) {
+      console.error('SingPay initiation error:', err);
+      setStep('FAILED');
+      const msg = err.message || 'Impossible d\'initialiser le paiement avec SingPay.';
+      setFailureReason(msg);
     }
-  }, [step]);
+  };
 
-  // Validate PIN and complete
-  const handleConfirmPin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (pin.length !== 4) {
-      setPinError('Le code PIN doit comporter 4 chiffres');
-      return;
-    }
-    setPinError('');
-    setStep('PROCESSING');
-
-    setTimeout(() => {
-      setStep('SUCCESS');
-      try {
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 }
-        });
-      } catch (err) {
-        // Safe fallback
-      }
-
-      const ref = `${operator === 'AIRTEL_MONEY' ? 'AM' : 'MM'}-GAB-${Math.floor(100000 + Math.random() * 900000)}`;
-      setTimeout(() => {
-        onSuccess({
-          operator,
-          contactPhone: mobileNumber,
-          transactionRef: ref
-        });
-      }, 1800);
-    }, 2000);
+  const handleRetry = () => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    setStep('FORM');
+    setFailureReason('');
+    setPhoneError('');
   };
 
   return (
     <div className="bg-slate-900 text-white rounded-3xl p-5 sm:p-6 max-w-md w-full max-h-[85vh] overflow-y-auto shadow-2xl border border-slate-700 animate-in fade-in zoom-in-95">
-      {/* Title */}
+      {/* Header */}
       <div className="text-center mb-4">
         <div className="inline-flex items-center justify-center w-11 h-11 rounded-2xl bg-emerald-950 border border-emerald-500/40 text-emerald-400 mb-2 shadow-inner">
           <Smartphone className="w-5 h-5" />
         </div>
         <h3 className="text-lg font-black tracking-tight text-white">
-          Paiement Mobile au Gabon
+          Paiement Mobile au Gabon (SingPay)
         </h3>
         <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">
           {itemDescription}
@@ -160,47 +224,20 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
         </div>
       </div>
 
+      {/* STEP 1: FORM */}
       {step === 'FORM' && (
         <form onSubmit={handleInitiatePayment} className="space-y-4">
-          {/* Information box: Explicitly informing the user that this number will be charged */}
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3.5 text-xs text-amber-200 flex items-start gap-2.5">
-            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="font-bold text-amber-300">Numéro de prélèvement Mobile Money</p>
-              <p className="text-slate-300 text-[11px] leading-relaxed">
-                Le numéro que vous entrerez ci-dessous est <strong>celui avec lequel le paiement s'effectuera</strong>. Assurez-vous d'avoir ce téléphone à portée de main pour valider l'invite de débit USSD.
-              </p>
-            </div>
-          </div>
-
-          {/* Operator Selector: Airtel vs Moov */}
+          {/* Operator Selector */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-2">
-              Choisissez votre opérateur
+              Opérateur de paiement mobile
             </label>
             <div className="grid grid-cols-2 gap-3">
-              {/* Airtel Money */}
+              {/* Moov Money (ACTIVE) */}
               <button
                 type="button"
-                onClick={() => handleOperatorChange('AIRTEL_MONEY')}
-                className={`p-3 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center cursor-pointer ${
-                  operator === 'AIRTEL_MONEY'
-                    ? 'bg-red-950/70 border-red-500 ring-2 ring-red-500/50 text-white'
-                    : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-600'
-                }`}
-              >
-                <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center font-black text-xs text-white shadow-sm">
-                  AM
-                </div>
-                <span className="font-bold text-xs">Airtel Money</span>
-                <span className="text-[10px] text-red-300">074 / 077 / 076</span>
-              </button>
-
-              {/* Moov Money */}
-              <button
-                type="button"
-                onClick={() => handleOperatorChange('MOOV_MONEY')}
-                className={`p-3 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center cursor-pointer ${
+                onClick={() => setOperator('MOOV_MONEY')}
+                className={`p-3 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center cursor-pointer relative ${
                   operator === 'MOOV_MONEY'
                     ? 'bg-blue-950/70 border-blue-500 ring-2 ring-blue-500/50 text-white'
                     : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-600'
@@ -209,16 +246,57 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
                 <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-black text-xs text-white shadow-sm">
                   MM
                 </div>
-                <span className="font-bold text-xs">Moov Money</span>
+                <div className="flex items-center gap-1">
+                  <span className="font-bold text-xs">Moov Money</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+                </div>
                 <span className="text-[10px] text-blue-300">060 / 062 / 065 / 066</span>
+                <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                  SingPay Actif
+                </span>
               </button>
+
+              {/* Airtel Money (STANDBY) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setOperator('AIRTEL_MONEY');
+                  setPhoneError('Airtel Money est temporairement en attente de configuration. Veuillez choisir Moov Money.');
+                }}
+                className={`p-3 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center cursor-pointer relative opacity-60 ${
+                  operator === 'AIRTEL_MONEY'
+                    ? 'bg-red-950/70 border-red-500 ring-2 ring-red-500/50 text-white'
+                    : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-600'
+                }`}
+              >
+                <div className="w-8 h-8 rounded-full bg-red-600/80 flex items-center justify-center font-black text-xs text-white shadow-sm">
+                  AM
+                </div>
+                <span className="font-bold text-xs">Airtel Money</span>
+                <span className="text-[10px] text-slate-400">074 / 077 / 076</span>
+                <span className="text-[9px] font-bold text-amber-400 bg-amber-950/80 px-2 py-0.5 rounded-full border border-amber-500/30">
+                  En standby
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Info notice: merchant recipient phone */}
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-3 text-xs text-blue-200 flex items-start gap-2.5">
+            <Radio className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-bold text-blue-300">Passerelle SingPay Gabon (USSD Push)</p>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                Paiement direct sécurisé. Les fonds seront transmis au compte marchand Moov officiel :{' '}
+                <strong className="text-white font-mono">{MOOV_MERCHANT_NUMBER}</strong>.
+              </p>
             </div>
           </div>
 
           {/* Phone Input */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-              Numéro de téléphone payeur ({operator === 'AIRTEL_MONEY' ? 'Airtel Money' : 'Moov Money'})
+              Votre numéro Moov Money payeur
             </label>
             <div className="relative">
               <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
@@ -228,16 +306,16 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
                 type="tel"
                 value={mobileNumber}
                 onChange={(e) => handlePhoneChange(e.target.value)}
-                placeholder={operator === 'AIRTEL_MONEY' ? 'Ex: 077 00 00 00 ou 77 00 00 00' : 'Ex: 066 00 00 00 ou 66 00 00 00'}
+                placeholder="Ex: 062 18 87 34 ou 66 00 00 00"
                 required
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-14 pr-3.5 py-2.5 text-sm font-mono font-bold text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-14 pr-3.5 py-2.5 text-sm font-mono font-bold text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
               />
             </div>
             {phoneError && (
               <p className="text-xs text-red-400 font-medium mt-1.5">{phoneError}</p>
             )}
             <p className="text-[11px] text-slate-400 mt-1.5">
-              Entrez le numéro du compte avec lequel vous allez régler. Une notification push USSD sera envoyée sur ce téléphone.
+              Un message de validation USSD apparaîtra automatiquement sur ce téléphone.
             </p>
           </div>
 
@@ -252,90 +330,130 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
             </button>
             <button
               type="submit"
-              className={`flex-2 flex items-center justify-center gap-2 text-white text-xs font-black py-2.5 rounded-xl shadow-lg transition-all cursor-pointer ${
-                operator === 'AIRTEL_MONEY'
-                  ? 'bg-red-600 hover:bg-red-700'
-                  : 'bg-blue-600 hover:bg-blue-700'
-              }`}
+              className="flex-2 flex items-center justify-center gap-2 text-white text-xs font-black py-2.5 rounded-xl shadow-lg transition-all cursor-pointer bg-blue-600 hover:bg-blue-700"
             >
-              <span>Valider et Payer</span>
+              <span>Valider et Payer avec Moov</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </form>
       )}
 
-      {step === 'PUSH_SENT' && (
-        <div className="text-center py-6 space-y-3">
-          <Loader2 className="w-10 h-10 text-amber-400 animate-spin mx-auto" />
-          <h4 className="font-bold text-sm text-white">Envoi de la requête de paiement...</h4>
-          <p className="text-xs text-slate-400">
-            Connexion au réseau {operator === 'AIRTEL_MONEY' ? 'Airtel Money Gabon' : 'Moov Money Gabon'} en cours
-          </p>
+      {/* STEP 2: INITIATING */}
+      {step === 'INITIATING' && (
+        <div className="text-center py-8 space-y-3">
+          <Loader2 className="w-10 h-10 text-blue-400 animate-spin mx-auto" />
+          <h4 className="font-bold text-sm text-white">Initialisation du paiement SingPay...</h4>
+          <p className="text-xs text-slate-400">{statusMessage}</p>
         </div>
       )}
 
-      {step === 'PIN_ENTRY' && (
-        <form onSubmit={handleConfirmPin} className="space-y-4">
-          <div className="bg-slate-800/90 border-2 border-amber-500/60 rounded-2xl p-4 text-center">
-            <div className="inline-flex p-2 bg-amber-500/20 text-amber-400 rounded-full mb-2">
-              <Lock className="w-5 h-5" />
+      {/* STEP 3: WAITING USSD CONFIRMATION ON USER'S ACTUAL MOBILE */}
+      {step === 'WAITING_USSD_CONFIRMATION' && (
+        <div className="space-y-4 text-center py-2">
+          <div className="relative inline-block mx-auto">
+            <div className="w-16 h-16 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center mx-auto border-2 border-blue-400 shadow-lg">
+              <PhoneCall className="w-8 h-8 animate-pulse text-blue-300" />
             </div>
-            <h4 className="font-black text-sm text-amber-300">Invite USSD Direct</h4>
-            <p className="text-xs text-slate-200 mt-1">
-              "Confirmez le débit de <strong>{formatFCFA(amount)}</strong> pour BIZBOOSTER. Entrez votre code PIN secret :"
+            <span className="absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 text-white rounded-full text-[10px] font-black flex items-center justify-center animate-ping">
+              •
+            </span>
+          </div>
+
+          <div className="space-y-1">
+            <h4 className="font-black text-base text-white">Demande USSD Push transmise !</h4>
+            <p className="text-xs text-blue-300 font-semibold">
+              Consultez maintenant l'écran de votre téléphone mobile
             </p>
+          </div>
 
-            <div className="mt-3">
-              <input
-                type="password"
-                maxLength={4}
-                autoFocus
-                value={pin}
-                onChange={(e) => {
-                  setPin(e.target.value.replace(/\D/g, ''));
-                  setPinError('');
-                }}
-                placeholder="• • • •"
-                className="w-32 mx-auto tracking-[0.6em] text-center text-xl font-mono font-black bg-slate-900 border border-amber-400 rounded-xl py-2 text-amber-400 focus:outline-hidden"
-              />
-              {pinError && <p className="text-xs text-red-400 mt-1">{pinError}</p>}
+          <div className="bg-slate-800/90 border border-blue-500/40 rounded-2xl p-4 text-left space-y-2.5 text-xs text-slate-200">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-700">
+              <span className="text-slate-400">Numéro à débiter :</span>
+              <span className="font-mono font-bold text-white">+241 {cleanDigits(mobileNumber)}</span>
             </div>
+            <div className="flex items-center justify-between pb-2 border-b border-slate-700">
+              <span className="text-slate-400">Montant :</span>
+              <span className="font-bold text-amber-400">{formatFCFA(amount)}</span>
+            </div>
+            <div className="flex items-center justify-between pb-2 border-b border-slate-700">
+              <span className="text-slate-400">Réceptionnaire Moov :</span>
+              <span className="font-mono font-bold text-blue-300">{MOOV_MERCHANT_NUMBER}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Référence SingPay :</span>
+              <span className="font-mono text-[10px] text-slate-400 truncate max-w-[170px]">{transactionRef}</span>
+            </div>
+          </div>
 
-            <div className="text-[11px] text-slate-400 mt-3">
-              Expire dans {countdown}s • Saisissez votre code PIN secret à 4 chiffres pour confirmer le débit sécurisé.
-            </div>
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3 text-xs text-amber-200 flex items-start gap-2 text-left">
+            <Lock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-[11px] leading-relaxed">
+              Une invite Moov Money s'affiche sur votre téléphone. Saisissez votre <strong>code secret (PIN) Moov Money à 4 chiffres</strong> sur votre appareil pour valider le débit.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-center gap-2 text-xs text-slate-400 pt-1">
+            <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+            <span>En attente de votre confirmation... ({countdown}s restantes)</span>
           </div>
 
           <button
-            type="submit"
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-3 rounded-xl shadow-lg transition-colors flex items-center justify-center gap-2"
+            type="button"
+            onClick={onCancel}
+            className="w-full text-xs text-slate-400 hover:text-white py-2 rounded-xl transition-colors cursor-pointer"
           >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Confirmer le paiement sécurisé</span>
+            Annuler la transaction
           </button>
-        </form>
-      )}
-
-      {step === 'PROCESSING' && (
-        <div className="text-center py-6 space-y-3">
-          <Loader2 className="w-10 h-10 text-emerald-400 animate-spin mx-auto" />
-          <h4 className="font-bold text-sm text-white">Traitement de la transaction...</h4>
-          <p className="text-xs text-slate-400">
-            Vérification du solde et débit en cours via le serveur de compensation.
-          </p>
         </div>
       )}
 
+      {/* STEP 4: SUCCESS */}
       {step === 'SUCCESS' && (
         <div className="text-center py-6 space-y-3">
-          <div className="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto border border-emerald-500/40">
-            <CheckCircle className="w-7 h-7" />
+          <div className="w-14 h-14 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto border-2 border-emerald-500/40">
+            <CheckCircle className="w-8 h-8" />
           </div>
-          <h4 className="font-black text-base text-emerald-400">Paiement Réussi !</h4>
+          <h4 className="font-black text-lg text-emerald-400">Paiement Moov Money Validé !</h4>
           <p className="text-xs text-slate-300">
-            Votre annonce est automatiquement activée et mise en ligne sur le réseau BIZBOOSTER.
+            Votre transaction SingPay a été confirmée avec succès. Votre opération est en cours d'activation.
           </p>
+          <div className="text-[11px] font-mono text-slate-400 bg-slate-800/80 p-2 rounded-xl border border-slate-700">
+            Réf : {transactionRef}
+          </div>
+        </div>
+      )}
+
+      {/* STEP 5: FAILED */}
+      {step === 'FAILED' && (
+        <div className="text-center py-6 space-y-4">
+          <div className="w-14 h-14 bg-red-500/20 text-red-400 rounded-full flex items-center justify-center mx-auto border-2 border-red-500/40">
+            <AlertCircle className="w-8 h-8" />
+          </div>
+          <div className="space-y-1">
+            <h4 className="font-black text-base text-red-400">Échec du paiement</h4>
+            <p className="text-xs text-slate-300 leading-relaxed px-2">
+              {failureReason}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-2.5 rounded-xl transition-colors cursor-pointer"
+            >
+              Fermer
+            </button>
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="flex-2 flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black py-2.5 rounded-xl shadow-lg transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Réessayer le paiement</span>
+            </button>
+          </div>
         </div>
       )}
     </div>

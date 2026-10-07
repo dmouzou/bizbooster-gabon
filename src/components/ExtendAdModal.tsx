@@ -86,7 +86,7 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
   const handleVipFreeExtend = () => {
     if (isAtMaxLimit) return;
     onExtendSuccess(ad.id, selectedExtension.days, {
-      operator: 'AIRTEL',
+      operator: 'AIRTEL_MONEY',
       transactionRef: `VIP-EXT-${Date.now().toString(36).toUpperCase()}`,
       isFreeVip: true,
     });

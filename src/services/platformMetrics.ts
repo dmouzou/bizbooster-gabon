@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, increment } from 'firebase/firestore';
 import { db } from './firebase';
 import { Ad, UserProfile } from '../types';
 
@@ -87,60 +87,69 @@ export function isFirebaseTestPhoneNumber(phone?: string): boolean {
  * N'incrémente PAS le compteur pour les numéros de test Firebase Authentication (gratuits).
  */
 export async function trackSmsSent(phoneNumber?: string): Promise<{ today: number; allTime: number }> {
-  const today = getTodayString();
-  const savedDate = localStorage.getItem(SMS_SENT_DATE_KEY);
-
-  let currentToday = 0;
-  if (savedDate === today) {
-    currentToday = Number(localStorage.getItem(SMS_SENT_TODAY_KEY) || '0');
-  } else {
-    currentToday = 0;
-    localStorage.setItem(SMS_SENT_DATE_KEY, today);
-  }
-
-  const currentAllTime = Number(localStorage.getItem(SMS_SENT_ALL_TIME_KEY) || '0');
-
-  // Exclusion formelle des numéros de test Firebase (Point 7)
+  // Exclusion formelle des numéros de test Firebase
   if (isFirebaseTestPhoneNumber(phoneNumber)) {
+    const currentToday = Number(localStorage.getItem(SMS_SENT_TODAY_KEY) || '0');
+    const currentAllTime = Number(localStorage.getItem(SMS_SENT_ALL_TIME_KEY) || '0');
     return { today: currentToday, allTime: currentAllTime };
   }
 
-  const nextToday = currentToday + 1;
-  const nextAllTime = currentAllTime + 1;
+  const today = getTodayString();
+  const metricsRef = doc(db, 'system_counters', 'scalability_metrics');
+  let finalToday = 1;
+  let finalAllTime = 1;
 
-  localStorage.setItem(SMS_SENT_TODAY_KEY, String(nextToday));
-  localStorage.setItem(SMS_SENT_ALL_TIME_KEY, String(nextAllTime));
-
-  // Sync avec Firestore de manière asynchrone pour persistance multi-appareils
   try {
-    const metricsRef = doc(db, 'system_counters', 'scalability_metrics');
-    await setDoc(
-      metricsRef,
-      {
-        lastSmsSentAt: new Date().toISOString(),
+    const snap = await getDoc(metricsRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      const isSameDay = data.todayDate === today;
+      finalToday = isSameDay ? (Number(data.smsSentToday) || 0) + 1 : 1;
+      finalAllTime = (Number(data.smsSentAllTime) || 0) + 1;
+      await setDoc(
+        metricsRef,
+        {
+          todayDate: today,
+          smsSentToday: finalToday,
+          smsSentAllTime: finalAllTime,
+          lastSmsSentAt: new Date().toISOString(),
+          lastSmsRecipient: phoneNumber || 'unknown',
+        },
+        { merge: true }
+      );
+    } else {
+      await setDoc(metricsRef, {
         todayDate: today,
-        smsSentToday: nextToday,
-        smsSentAllTime: nextAllTime,
-      },
-      { merge: true }
-    );
+        smsSentToday: 1,
+        smsSentAllTime: 1,
+        lastSmsSentAt: new Date().toISOString(),
+        lastSmsRecipient: phoneNumber || 'unknown',
+      });
+    }
   } catch (err) {
-    // ignore
+    console.warn('Could not sync SMS metric to Firestore:', err);
   }
 
+  localStorage.setItem(SMS_SENT_DATE_KEY, today);
+  localStorage.setItem(SMS_SENT_TODAY_KEY, String(finalToday));
+  localStorage.setItem(SMS_SENT_ALL_TIME_KEY, String(finalAllTime));
   window.dispatchEvent(new Event('bizbooster_metric_updated'));
-  return { today: nextToday, allTime: nextAllTime };
+
+  return { today: finalToday, allTime: finalAllTime };
 }
 
 /**
- * Enregistre une requête de téléchargement (téléchargement CV, fiche de poste, rapport PDF, export).
+ * Enregistre une requête de téléchargement (téléchargement CV, fiche de poste, rapport PDF, export, aperçu document).
+ * Met à jour à la fois le cache local et le document Firestore scalability_metrics de manière atomique.
  */
 export async function trackDownloadRequest(estimatedBytes = 250000): Promise<number> {
-  const currentRequests = Number(localStorage.getItem(DOWNLOAD_REQUESTS_KEY) || '85');
+  const rawReq = localStorage.getItem(DOWNLOAD_REQUESTS_KEY);
+  const currentRequests = rawReq && rawReq !== '85' && rawReq !== '240' ? Number(rawReq) : 0;
   const nextRequests = currentRequests + 1;
   localStorage.setItem(DOWNLOAD_REQUESTS_KEY, String(nextRequests));
 
-  const currentBytes = Number(localStorage.getItem(DOWNLOAD_BANDWIDTH_BYTES_KEY) || '24500000');
+  const rawBytes = localStorage.getItem(DOWNLOAD_BANDWIDTH_BYTES_KEY);
+  const currentBytes = rawBytes && rawBytes !== '24500000' && rawBytes !== '185000000' ? Number(rawBytes) : 0;
   const nextBytes = currentBytes + estimatedBytes;
   localStorage.setItem(DOWNLOAD_BANDWIDTH_BYTES_KEY, String(nextBytes));
 
@@ -149,16 +158,44 @@ export async function trackDownloadRequest(estimatedBytes = 250000): Promise<num
     await setDoc(
       metricsRef,
       {
-        totalDownloadRequests: nextRequests,
-        totalDownloadBandwidthBytes: nextBytes,
+        totalDownloadRequests: increment(1),
+        totalDownloadBandwidthBytes: increment(estimatedBytes),
         lastDownloadAt: new Date().toISOString(),
       },
       { merge: true }
     );
-  } catch {}
+  } catch (err) {
+    console.warn('Could not sync download metric to Firestore:', err);
+  }
 
   window.dispatchEvent(new Event('bizbooster_metric_updated'));
   return nextRequests;
+}
+
+/**
+ * Réinitialise le compteur de téléchargements et de bande passante à 0.
+ */
+export async function resetDownloadCounters(): Promise<{ requests: number; bytes: number }> {
+  localStorage.setItem(DOWNLOAD_REQUESTS_KEY, '0');
+  localStorage.setItem(DOWNLOAD_BANDWIDTH_BYTES_KEY, '0');
+
+  try {
+    const metricsRef = doc(db, 'system_counters', 'scalability_metrics');
+    await setDoc(
+      metricsRef,
+      {
+        totalDownloadRequests: 0,
+        totalDownloadBandwidthBytes: 0,
+        lastDownloadResetAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('Could not reset download metrics in Firestore:', err);
+  }
+
+  window.dispatchEvent(new Event('bizbooster_metric_updated'));
+  return { requests: 0, bytes: 0 };
 }
 
 /**
@@ -235,25 +272,35 @@ export async function resetSmsCounters(): Promise<{ today: number; allTime: numb
  */
 export function getFirebaseQuotaComparison(
   ads: Ad[],
-  users: UserProfile[] = []
+  users: UserProfile[] = [],
+  liveMetrics?: {
+    smsSentToday?: number;
+    smsSentAllTime?: number;
+    totalDownloadRequests?: number;
+    totalDownloadBandwidthBytes?: number;
+  }
 ): FirebaseQuotaComparison {
   const today = getTodayString();
   const savedDate = localStorage.getItem(SMS_SENT_DATE_KEY);
 
-  // 1. SMS (Réinitialisé à 0 selon la demande utilisateur)
+  // 1. SMS (Priorité aux métriques Firestore temps réel si disponibles)
   let smsSentToday = 0;
-  if (savedDate === today) {
-    const rawToday = localStorage.getItem(SMS_SENT_TODAY_KEY);
-    // Purge de l'ancienne valeur de démonstration 12
-    smsSentToday = rawToday && rawToday !== '12' ? Number(rawToday) : 0;
+  let smsSentAllTime = 0;
+
+  if (liveMetrics?.smsSentToday !== undefined) {
+    smsSentToday = liveMetrics.smsSentToday;
+    smsSentAllTime = liveMetrics.smsSentAllTime ?? 0;
   } else {
-    smsSentToday = 0;
-    localStorage.setItem(SMS_SENT_DATE_KEY, today);
-    localStorage.setItem(SMS_SENT_TODAY_KEY, '0');
+    if (savedDate === today) {
+      const rawToday = localStorage.getItem(SMS_SENT_TODAY_KEY);
+      smsSentToday = rawToday && rawToday !== '12' ? Number(rawToday) : 0;
+    } else {
+      smsSentToday = 0;
+    }
+    const rawAllTime = localStorage.getItem(SMS_SENT_ALL_TIME_KEY);
+    smsSentAllTime = rawAllTime && rawAllTime !== '154' ? Number(rawAllTime) : 0;
   }
 
-  const rawAllTime = localStorage.getItem(SMS_SENT_ALL_TIME_KEY);
-  const smsSentAllTime = rawAllTime && rawAllTime !== '154' ? Number(rawAllTime) : 0;
   const smsDailyQuota = 10;
   const smsExcessCount = Math.max(0, smsSentToday - smsDailyQuota);
   const smsExtraUnitPriceUSD = 0.21;
@@ -271,9 +318,20 @@ export function getFirebaseQuotaComparison(
   const storageAccruedCostFCFA = Math.round(storageAccruedCostUSD * FCFA_EXCHANGE_RATE);
   const isStorageQuotaExceeded = storageExcessGB > 0;
 
-  // 3. Downloads & Operations
-  const totalDownloadRequests = Number(localStorage.getItem(DOWNLOAD_REQUESTS_KEY) || '240');
-  const bandwidthBytes = Number(localStorage.getItem(DOWNLOAD_BANDWIDTH_BYTES_KEY) || '185000000');
+  // 3. Downloads & Operations (Priorité aux métriques Firestore temps réel si disponibles)
+  let totalDownloadRequests = 0;
+  let bandwidthBytes = 0;
+
+  if (liveMetrics?.totalDownloadRequests !== undefined) {
+    totalDownloadRequests = liveMetrics.totalDownloadRequests;
+    bandwidthBytes = liveMetrics.totalDownloadBandwidthBytes ?? 0;
+  } else {
+    const rawReq = localStorage.getItem(DOWNLOAD_REQUESTS_KEY);
+    totalDownloadRequests = rawReq && rawReq !== '85' && rawReq !== '240' ? Number(rawReq) : 0;
+    const rawBytes = localStorage.getItem(DOWNLOAD_BANDWIDTH_BYTES_KEY);
+    bandwidthBytes = rawBytes && rawBytes !== '24500000' && rawBytes !== '185000000' ? Number(rawBytes) : 0;
+  }
+
   const totalDownloadBandwidthGB = Number((bandwidthBytes / (1024 * 1024 * 1024)).toFixed(3));
   const downloadFreeTierOpsPerDay = 50000;
   const downloadFreeTierBandwidthGB = 1.0; // 1 Go/jour gratuit
