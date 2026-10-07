@@ -487,7 +487,6 @@ export const INITIAL_ADS: Ad[] = [
     isTest: true,
     title: 'Avis de recherche urgent - Pochette avec Titre Foncier et Passeports égarés',
     mainCategory: 'AVIS_DE_RECHERCHE',
-    transactionType: 'VENTE',
     avisRechercheData: {
       category: 'Document ou Titre officiel perdu',
       targetName: 'Titre Foncier N° 5812 & 2 Passeports gabonais',
@@ -527,7 +526,7 @@ export const INITIAL_ADS: Ad[] = [
     isTest: true,
     title: 'Comptable Senior & Contrôleur de Gestion (10 ans d\'expérience) - CV disponible',
     mainCategory: 'AUTRES_EMPLOIS',
-    transactionType: 'LOCATION',
+    transactionType: 'CHERCHE_EMPLOI',
     autresEmploisData: {
       subCategory: "Demandeur d'emploi",
       profession: 'Comptable Senior / Chef Comptable',
@@ -546,7 +545,8 @@ export const INITIAL_ADS: Ad[] = [
       city: 'Libreville',
       neighborhood: 'Mont-Bouët'
     },
-    price: 0,
+    price: 650000,
+    priceMax: 850000,
     priceUnit: 'mois',
     description: 'Cadre comptable diplômé Bac+5 en audit et contrôle de gestion. Maîtrise avancée de Sage 100 Cloud, SYSCOHADA révisé, déclarations fiscales DGI/CNSS et reporting financier. Disponible immédiatement pour poste de Responsable Administratif et Financier ou Chef Comptable. CV ci-joint.',
     images: [],
@@ -563,19 +563,31 @@ export const INITIAL_ADS: Ad[] = [
     viewsCount: 290,
     isOwnerVerified: true
   },
-  // 17. AUTRES EMPLOIS - OFFRE D'EMPLOI
+  // 17. AUTRES EMPLOIS - OFFRE D'EMPLOI AVEC FICHE DE POSTE TÉLÉVERSÉE (OPTIONNELLE)
   {
     id: 'ad-emploi-offre-1',
     isTest: true,
     title: 'Recrutement : Responsable Logistique et Opérations Flotte (H/F)',
     mainCategory: 'AUTRES_EMPLOIS',
-    transactionType: 'VENTE',
+    transactionType: 'EMPLOYER',
     autresEmploisData: {
       subCategory: "Offre d'emploi",
       profession: 'Responsable Logistique & Flotte',
       experienceYears: '5 à 7 ans',
-      contractType: 'CDI'
+      contractType: 'CDI',
+      jobDocUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+      jobDocFileName: 'Fiche_Poste_Responsable_Logistique.pdf',
+      jobDocFileType: 'pdf',
+      jobDocFileSize: 185000
     },
+    jobDocUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+    jobDocFileName: 'Fiche_Poste_Responsable_Logistique.pdf',
+    jobDocFileType: 'pdf',
+    jobDocFileSize: 185000,
+    cvUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+    cvFileName: 'Fiche_Poste_Responsable_Logistique.pdf',
+    cvFileType: 'pdf',
+    cvFileSize: 185000,
     location: {
       province: 'Estuaire',
       city: 'Owendo',
@@ -583,7 +595,7 @@ export const INITIAL_ADS: Ad[] = [
     },
     price: 750000,
     priceUnit: 'mois',
-    description: 'Société de transport et logistique basée à Owendo recherche son Responsable Logistique et Flotte. Missions : supervision de la flotte poids lourds, optimisation des tournées, gestion des stocks et maintenance préventive. Salaire motivant selon profil.',
+    description: 'Société de transport et logistique basée à Owendo recherche son Responsable Logistique et Flotte. Missions : supervision de la flotte poids lourds, optimisation des tournées, gestion des stocks et maintenance préventive. Fiche de poste complète disponible en téléchargement.',
     images: [
       'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=1000&q=80'
     ],

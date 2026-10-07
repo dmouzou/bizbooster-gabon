@@ -121,6 +121,10 @@ export interface AutresEmploisData {
   cvFileName?: string;
   cvFileType?: 'pdf' | 'docx' | 'md' | string;
   cvFileSize?: number;
+  jobDocUrl?: string;
+  jobDocFileName?: string;
+  jobDocFileType?: 'pdf' | 'docx' | 'md' | string;
+  jobDocFileSize?: number;
 }
 
 export type PaymentOperator = 'AIRTEL_MONEY' | 'MOOV_MONEY';
@@ -158,11 +162,15 @@ export interface Ad {
   avisRechercheData?: AvisRechercheData; // Point 2: Avis de Recherche
   autresEmploisData?: AutresEmploisData; // Point 2: Autres Emplois
   
-  // Point 2: CV attaché (Demandeur d'emploi - .pdf, .docx, .md)
+  // Point 2: Document joint (.pdf, .docx, .md) : CV pour demandeur d'emploi OU Fiche de poste pour donneur d'emploi (optionnel)
   cvUrl?: string;
   cvFileName?: string;
   cvFileType?: 'pdf' | 'docx' | 'md' | string;
   cvFileSize?: number;
+  jobDocUrl?: string;
+  jobDocFileName?: string;
+  jobDocFileType?: 'pdf' | 'docx' | 'md' | string;
+  jobDocFileSize?: number;
 
   // Point 4: Corner VIP
   isVipCorner?: boolean; // Éligible et affiché dans le Corner VIP sans frais
@@ -179,7 +187,7 @@ export interface Ad {
   isOwnerVip?: boolean;
   isOwnerVerified?: boolean; // Trust badge signal, does not discriminate against unverified listings
 
-  description: string; // limited character text (<= 500 chars)
+  description: string; // limited character text (<= 1000 chars)
   images?: string[];
   videoUrl?: string;
   
@@ -238,6 +246,7 @@ export interface UserProfile {
   subscriptionExpiresAt?: string;
   subscriptionStartedAt?: string;
   freeBoostsRemaining?: number; // max 20 per user
+  consumedFreeAdsCount?: number; // Count of free ads consumed under subscription/plan
   activePack?: AdPackType;
   activeBoosterPack?: BoosterPackType;
 
@@ -260,6 +269,7 @@ export interface UserProfile {
     neighborhood?: string;
   };
   favoriteAdIds?: string[];
+  seenNotificationIds?: string[];
 }
 
 export const isUserSuperAdmin = (user?: { role?: string; isSuperAdmin?: boolean } | null): boolean => {

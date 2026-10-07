@@ -52,6 +52,7 @@ import {
 import { isAdVipCornerEligible } from '../utils/vipCorner';
 import { auth, storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { compressImageForUpload } from '../utils/imageCompressor';
 
 interface EditAdModalProps {
   isOpen: boolean;
@@ -69,6 +70,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
   if (!isOpen || !ad) return null;
 
   const wasActive = ad.status === 'ACTIVE';
+  const isRejected = ad.status === 'REJECTED';
 
   // Form states
   const [title, setTitle] = useState(ad.title || '');
@@ -262,9 +264,14 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
     try {
       setUploadingImage(true);
       setErrorMsg(null);
-      const storagePath = `ads/${auth.currentUser.uid}/${Date.now()}_${file.name}`;
+      const { blob, mimeType } = await compressImageForUpload(file);
+      const cleanName = file.name.replace(/\.[^/.]+$/, '');
+      const storagePath = `ads/${auth.currentUser.uid}/${Date.now()}_${cleanName}.jpg`;
       const storageRef = ref(storage, storagePath);
-      await uploadBytes(storageRef, file);
+      await uploadBytes(storageRef, blob, {
+        contentType: mimeType,
+        cacheControl: 'public,max-age=31536000,immutable',
+      });
       const downloadUrl = await getDownloadURL(storageRef);
       setImages((prev) => [...prev, downloadUrl]);
     } catch (err: any) {
@@ -333,15 +340,25 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
 
     if (mainCategory === 'NECROLOGIE' || mainCategory === 'AVIS_DE_RECHERCHE') {
       numPrice = 0;
-    } else if (isDemandeurEmploi) {
-      numPrice = Number(price) || 0;
     } else {
       if (price === '' || String(price).trim() === '') {
-        setErrorMsg('Le prix de votre annonce est obligatoire.');
+        setErrorMsg(
+          mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS'
+            ? 'Le montant du salaire désiré ou proposé est obligatoire.'
+            : 'Le prix de votre annonce est obligatoire.'
+        );
         return;
       }
       if (isNaN(numPrice) || numPrice <= 0) {
-        setErrorMsg('Le prix en FCFA ne peut pas être égal à 0. Veuillez renseigner un montant supérieur à 0.');
+        setErrorMsg(
+          mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS'
+            ? 'Le salaire désiré ou proposé ne peut pas être égal à 0 ou négatif. Veuillez renseigner un montant strictement supérieur à 0 FCFA.'
+            : 'Le prix en FCFA ne peut pas être égal à 0 ou négatif. Veuillez renseigner un montant supérieur à 0.'
+        );
+        return;
+      }
+      if (priceMax && (isNaN(Number(priceMax)) || Number(priceMax) <= 0)) {
+        setErrorMsg('La borne maximale de salaire ou prix ne peut pas être égale à 0 ou négative.');
         return;
       }
     }
@@ -431,20 +448,31 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
         contactEmergency: avisEmergencyContact.trim() || undefined,
       };
     } else if (mainCategory === 'AUTRES_EMPLOIS') {
+      const isSeeker = autresEmploisSubCategory === "Demandeur d'emploi";
       updatedData.autresEmploisData = {
         subCategory: autresEmploisSubCategory,
         profession: autresEmploisProfession.trim() || undefined,
         contractType: autresEmploisContractType as any,
         experienceYears: autresEmploisExperience.trim() || undefined,
-        cvUrl: cvUrl || undefined,
-        cvFileName: cvFileName || undefined,
-        cvFileType: cvFileType || undefined,
-        cvFileSize: cvFileSize || undefined,
+        cvUrl: isSeeker ? (cvUrl || undefined) : undefined,
+        cvFileName: isSeeker ? (cvFileName || undefined) : undefined,
+        cvFileType: isSeeker ? (cvFileType || undefined) : undefined,
+        cvFileSize: isSeeker ? (cvFileSize || undefined) : undefined,
+        jobDocUrl: !isSeeker ? (cvUrl || undefined) : undefined,
+        jobDocFileName: !isSeeker ? (cvFileName || undefined) : undefined,
+        jobDocFileType: !isSeeker ? (cvFileType || undefined) : undefined,
+        jobDocFileSize: !isSeeker ? (cvFileSize || undefined) : undefined,
       };
       updatedData.cvUrl = cvUrl || undefined;
       updatedData.cvFileName = cvFileName || undefined;
       updatedData.cvFileType = cvFileType || undefined;
       updatedData.cvFileSize = cvFileSize || undefined;
+      if (!isSeeker) {
+        updatedData.jobDocUrl = cvUrl || undefined;
+        updatedData.jobDocFileName = cvFileName || undefined;
+        updatedData.jobDocFileType = cvFileType || undefined;
+        updatedData.jobDocFileSize = cvFileSize || undefined;
+      }
     }
 
     try {
@@ -453,7 +481,8 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       onClose();
     } catch (err: any) {
       console.error('Save ad edit error:', err);
-      setErrorMsg('Erreur lors de la sauvegarde des modifications. Veuillez réessayer.');
+      const detail = err?.message || err?.code || '';
+      setErrorMsg(detail ? `Erreur (${detail}) : vérifiez votre saisie ou réessayez.` : 'Erreur lors de la sauvegarde des modifications. Veuillez réessayer.');
     } finally {
       setIsSubmitting(false);
     }
@@ -480,6 +509,10 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                   <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
                     Actuellement En Ligne
                   </span>
+                ) : isRejected ? (
+                  <span className="bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                    Annonce Rejetée (À Corriger)
+                  </span>
                 ) : (
                   <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
                     En attente de vérification
@@ -502,7 +535,22 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
         {/* Scrollable Form Content */}
         <form onSubmit={handleSubmit} className="overflow-y-auto p-5 sm:p-6 space-y-6 flex-1">
           {/* Status Alert Banner */}
-          {wasActive ? (
+          {isRejected ? (
+            <div className="p-4 bg-rose-50 border border-rose-300 rounded-2xl flex items-start gap-3 text-rose-950 text-xs">
+              <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <strong className="block font-black text-rose-900 text-sm mb-0.5">
+                  Annonce refusée par la modération — Correction requise
+                </strong>
+                {ad.moderationReason ? (
+                  <p className="mb-1.5 text-rose-900 font-semibold bg-rose-100/80 p-2 rounded-xl border border-rose-200">
+                    Motif de refus : <span className="font-normal italic">« {ad.moderationReason} »</span>
+                  </p>
+                ) : null}
+                Apportez les modifications nécessaires ci-dessous. Dès l'enregistrement, votre annonce corrigée sera <strong>automatiquement renvoyée aux modérateurs</strong> pour être vérifiée et approuvée.
+              </div>
+            </div>
+          ) : wasActive ? (
             <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl flex items-start gap-3 text-amber-950 text-xs">
               <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
               <div>
@@ -1130,6 +1178,90 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                       )}
                     </div>
                   )}
+
+                  {/* Point 2: Document joint pour Donneur d'emploi (Optionnel) */}
+                  {autresEmploisSubCategory !== "Demandeur d'emploi" && (
+                    <div className="pt-2 border-t border-teal-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-teal-950 flex items-center gap-1.5">
+                          <FileText className="w-4 h-4 text-teal-700" />
+                          <span>Fiche de poste / Descriptif de l'emploi (.pdf, .docx, .md)</span>
+                        </span>
+                        <span className="text-[10px] font-bold bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full uppercase">
+                          {cvFileName ? `${cvFileType || 'DOC'} attaché` : 'Optionnel'}
+                        </span>
+                      </div>
+
+                      {cvFileName ? (
+                        <div className="p-3 bg-white border border-teal-300 rounded-xl flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-center gap-2.5 overflow-hidden">
+                            <div className="p-2 bg-teal-100 text-teal-800 rounded-lg font-black text-xs uppercase shrink-0">
+                              {cvFileType || 'DOC'}
+                            </div>
+                            <div className="overflow-hidden">
+                              <p className="text-xs font-bold text-slate-900 truncate">{cvFileName}</p>
+                              {cvFileSize > 0 && (
+                                <p className="text-[10px] text-slate-500">{(cvFileSize / 1024).toFixed(1)} Ko</p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {cvUrl && (
+                              <a
+                                href={cvUrl}
+                                download={cvFileName}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-1.5 text-teal-700 hover:text-teal-900 hover:bg-teal-50 rounded-lg transition-colors cursor-pointer"
+                                title="Télécharger / Voir le descriptif"
+                              >
+                                <Download className="w-4 h-4" />
+                              </a>
+                            )}
+                            <label className="text-xs font-bold text-teal-800 hover:text-teal-950 bg-teal-50 hover:bg-teal-100 px-2.5 py-1.5 rounded-lg border border-teal-200 cursor-pointer">
+                              <span>Remplacer</span>
+                              <input
+                                type="file"
+                                accept=".pdf,.docx,.md"
+                                onChange={handleCvUpload}
+                                className="hidden"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCvUrl('');
+                                setCvFileName('');
+                                setCvFileType('');
+                                setCvFileSize(0);
+                              }}
+                              className="text-red-500 hover:text-red-700 p-1.5 rounded-lg hover:bg-red-50 cursor-pointer"
+                              title="Retirer le document"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <label className="cursor-pointer border-2 border-dashed border-teal-300 bg-white hover:bg-teal-50 rounded-xl p-4 flex flex-col items-center justify-center gap-1.5 text-center transition-colors">
+                          <Upload className="w-5 h-5 text-teal-600" />
+                          <span className="text-xs font-bold text-teal-950">
+                            Téléverser la fiche de poste ou descriptif (.pdf, .docx, .md)
+                          </span>
+                          <span className="text-[10px] text-teal-700">
+                            Optionnel : permet aux candidats de consulter et télécharger la fiche de poste détaillée.
+                          </span>
+                          <input
+                            type="file"
+                            accept=".pdf,.docx,.md"
+                            onChange={handleCvUpload}
+                            className="hidden"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1231,7 +1363,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                         <div>
                           <label className="block text-xs font-bold text-slate-700 mb-1">
                             {isSeeker
-                              ? 'Salaire demandé en Francs CFA (XAF) :'
+                              ? 'Salaire désiré en Francs CFA (XAF) :'
                               : isEmployerOffer
                               ? 'Salaire proposé en Francs CFA (XAF) :'
                               : 'Prix en Francs CFA (XAF) :'}
@@ -1242,7 +1374,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                             onChange={(e) => setPrice(e.target.value)}
                             placeholder={isJob ? 'Ex: 150000' : 'Ex: 250000'}
                             className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-emerald-800 focus:outline-emerald-500"
-                            required={!isSeeker}
+                            required
                           />
                         </div>
 
@@ -1322,23 +1454,23 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                Description détaillée {mainCategory === 'NECROLOGIE' ? "(Hommage / Obsèques - Max 1000 car.)" : "(Max 500 car.)"} :
+                Description détaillée (Max 1000 car.) :
               </label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                rows={mainCategory === 'NECROLOGIE' ? 6 : 4}
-                maxLength={mainCategory === 'NECROLOGIE' ? 1000 : 500}
+                rows={6}
+                maxLength={1000}
                 placeholder={
                   mainCategory === 'NECROLOGIE'
                     ? "Rédigez l'avis d'obsèques, l'hommage de la famille et le parcours du défunt (jusqu'à 1000 caractères)..."
-                    : "Décrivez l'état, les caractéristiques et les conditions de la transaction..."
+                    : "Décrivez l'état, les caractéristiques et les conditions de la transaction (jusqu'à 1000 caractères)..."
                 }
                 className="w-full text-xs bg-white border border-slate-200 rounded-xl p-3 text-slate-800 focus:outline-emerald-500 leading-relaxed"
                 required
               />
               <span className="text-[10px] text-slate-400 block text-right mt-1">
-                {description.length}/{mainCategory === 'NECROLOGIE' ? 1000 : 500} caractères
+                {description.length}/1000 caractères
               </span>
             </div>
           </div>
@@ -1480,6 +1612,8 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
               className={`flex-2 py-3 rounded-xl font-black text-xs text-white transition-all shadow-md flex items-center justify-center gap-2 ${
                 wasActive
                   ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-amber-500/20'
+                  : isRejected
+                  ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/20'
                   : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
               }`}
             >
@@ -1492,6 +1626,11 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                 <>
                   <ShieldAlert className="w-4 h-4 text-slate-950" />
                   <span>Enregistrer et renvoyer en vérification</span>
+                </>
+              ) : isRejected ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-white" />
+                  <span>Enregistrer et renvoyer aux modérateurs</span>
                 </>
               ) : (
                 <>

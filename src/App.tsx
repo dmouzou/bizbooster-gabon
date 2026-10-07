@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Search,
   Filter,
@@ -19,11 +19,13 @@ import {
   PlusCircle,
   Crown,
   ArrowUpDown,
+  ArrowUp,
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CategoryBar } from './components/CategoryBar';
 import { MobileArcCategoryMenu } from './components/MobileArcCategoryMenu';
 import { UserPreferencesModal, UserPreferences } from './components/UserPreferencesModal';
+import { InAppNotificationModal } from './components/InAppNotificationModal';
 import { ImmobilierFilterBar } from './components/ImmobilierFilterBar';
 import { VehiclesFilterBar } from './components/VehiclesFilterBar';
 import { TutoringFilterBar } from './components/TutoringFilterBar';
@@ -63,6 +65,7 @@ import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, d
 import { auth, db } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
 import { isTestAd } from './components/AdminPanel';
+import { markNotificationAsSeenLocally } from './services/notificationService';
 import AdminApp from './AdminApp';
 
 function normalizeSearchText(str: string): string {
@@ -388,21 +391,56 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
   const [isPhoneAuthOpen, setIsPhoneAuthOpen] = useState(false);
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
   const [isMobileArcMenuOpen, setIsMobileArcMenuOpen] = useState(false);
-  const [isPrefModalOpen, setIsPrefModalOpen] = useState<boolean>(() => {
-    try {
-      const prefs = localStorage.getItem('bizbooster_user_preferences');
-      const skipped = localStorage.getItem('bizbooster_user_preferences_skipped');
-      return !prefs && !skipped;
-    } catch {
-      return false;
-    }
-  });
+  
+  // Point 3: Modal de préférences s'affiche après minimum 15s, uniquement dans l'espace catalogue et si aucun autre onglet/modale n'est ouvert
+  const [isPrefModalOpen, setIsPrefModalOpen] = useState<boolean>(false);
+  const [has15SecondsElapsed, setHas15SecondsElapsed] = useState(false);
+  const prefModalAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setHas15SecondsElapsed(true);
+    }, 15000); // 15 secondes minimum
+    return () => clearTimeout(timer);
+  }, []);
+
   const [authTriggerPurpose, setAuthTriggerPurpose] = useState<'PUBLISH' | 'DASHBOARD'>('DASHBOARD');
   const [selectedAdForDetail, setSelectedAdForDetail] = useState<Ad | null>(null);
   const [selectedAdForExtend, setSelectedAdForExtend] = useState<Ad | null>(null);
   const [adToEdit, setAdToEdit] = useState<Ad | null>(null);
   const [adPendingEditConfirm, setAdPendingEditConfirm] = useState<Ad | null>(null);
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
+
+  // Point 6: Bouton retour en haut de page dans l'espace catalogue
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  useEffect(() => {
+    const handleScroll = () => {
+      // Déclenchement après avoir défilé 3 à 5 annonces (~750px)
+      setShowScrollTop(window.scrollY > 750);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Retour immédiat en haut de page sans traverser tout le site
+  const scrollToTopInstant = () => {
+    try {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    } catch {
+      window.scrollTo(0, 0);
+    }
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  };
+
+  // Point 2: Ticker périodique pour rafraîchir l'algorithme de personnalisation
+  const [personalizationTick, setPersonalizationTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPersonalizationTick((t) => t + 1);
+    }, 60000); // Mise à jour automatique toutes les 60 secondes
+    return () => clearInterval(timer);
+  }, []);
 
   // Favorites management (Requirement 4)
   const [guestFavoriteIds, setGuestFavoriteIds] = useState<string[]>(() => {
@@ -420,6 +458,11 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     }
     return guestFavoriteIds;
   }, [currentUser, guestFavoriteIds]);
+
+  const userAds = useMemo(() => {
+    if (!currentUser) return [];
+    return ads.filter((ad) => isAdOwner(ad, currentUser) || (ad.userId && ad.userId === currentUser.id));
+  }, [ads, currentUser]);
 
   const handleToggleFavorite = async (adId: string) => {
     const isFav = activeFavoriteIds.includes(adId);
@@ -484,6 +527,49 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     window.addEventListener('popstate', checkUrlForAd);
     return () => window.removeEventListener('popstate', checkUrlForAd);
   }, [ads]);
+
+  // Point 3: Affichage de la modale de préférences uniquement après 15s ET si dans le catalogue ET si aucun autre onglet/modale n'est ouvert
+  useEffect(() => {
+    if (!has15SecondsElapsed || prefModalAttemptedRef.current) return;
+    try {
+      const prefs = localStorage.getItem('bizbooster_user_preferences');
+      const skipped = localStorage.getItem('bizbooster_user_preferences_skipped');
+      if (prefs || skipped) {
+        prefModalAttemptedRef.current = true;
+        return;
+      }
+
+      const hasOtherModalOrTabOpen = Boolean(
+        frontendTab !== 'catalog' ||
+        selectedAdForDetail ||
+        selectedAdForExtend ||
+        adToEdit ||
+        adPendingEditConfirm ||
+        isPublishModalOpen ||
+        isCguModalOpen ||
+        isPhoneAuthOpen ||
+        isLogoutConfirmOpen ||
+        isMobileArcMenuOpen
+      );
+
+      if (!hasOtherModalOrTabOpen) {
+        prefModalAttemptedRef.current = true;
+        setIsPrefModalOpen(true);
+      }
+    } catch {}
+  }, [
+    has15SecondsElapsed,
+    frontendTab,
+    selectedAdForDetail,
+    selectedAdForExtend,
+    adToEdit,
+    adPendingEditConfirm,
+    isPublishModalOpen,
+    isCguModalOpen,
+    isPhoneAuthOpen,
+    isLogoutConfirmOpen,
+    isMobileArcMenuOpen,
+  ]);
 
   const handleCloseAdDetail = () => {
     setSelectedAdForDetail(null);
@@ -756,9 +842,9 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       return true;
     });
 
-    // Requirement 5: Personalization, recency and sort options
+    // Requirement 5 & Point 2: Personalization, recency and dynamic sort options
     if (feedSortMode === 'RECOMMENDED') {
-      return sortAdsPersonalized(list);
+      return sortAdsPersonalized(list, activeFavoriteIds);
     } else if (feedSortMode === 'RECENT') {
       return sortAdsRecent(list);
     } else if (feedSortMode === 'PRICE_ASC') {
@@ -797,6 +883,8 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     emploiJobType,
     emploiProvince,
     emploiCity,
+    activeFavoriteIds,
+    personalizationTick,
   ]);
 
   // Handle open publish flow with mandatory auth check
@@ -942,6 +1030,25 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     }
   };
 
+function cleanUndefined(obj: any): any {
+  if (obj === null || obj === undefined) return undefined;
+  if (obj instanceof Date || obj instanceof RegExp) return obj;
+  if (Array.isArray(obj)) return obj.map(cleanUndefined).filter((v) => v !== undefined);
+  if (typeof obj === 'object') {
+    const cleaned: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v !== undefined) {
+        const val = cleanUndefined(v);
+        if (val !== undefined) {
+          cleaned[k] = val;
+        }
+      }
+    }
+    return cleaned;
+  }
+  return obj;
+}
+
   // Save edited ad handler
   const handleSaveEditedAd = async (
     adId: string,
@@ -954,22 +1061,89 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       return;
     }
 
+    const wasRejected = targetAd.status === 'REJECTED';
+    const needsModeration = wasActive || wasRejected;
+    const nowIso = new Date().toISOString();
+
+    const cleanedFields = cleanUndefined(updatedFields);
+
     try {
-      await updateDoc(doc(db, 'ads', adId), {
-        ...updatedFields,
-        ...(wasActive ? { status: 'PENDING_REVIEW' } : {}),
-        updatedAt: new Date().toISOString(),
+      const adDocRef = doc(db, 'ads', adId);
+      const adSnap = await getDoc(adDocRef);
+
+      const payload: Record<string, any> = {
+        ...cleanedFields,
+        ...(needsModeration ? { status: 'PENDING_REVIEW' } : {}),
+        ...(!targetAd.userId && currentUser?.id ? { userId: currentUser.id } : {}),
+        updatedAt: nowIso,
+      };
+
+      if (adSnap.exists()) {
+        await updateDoc(adDocRef, payload);
+      } else {
+        // Annonce de démo/initiale modifiée par son détenteur : on persiste en base
+        await setDoc(adDocRef, cleanUndefined({
+          id: adId,
+          title: targetAd.title,
+          description: targetAd.description || '',
+          price: targetAd.price || 0,
+          priceUnit: targetAd.priceUnit || 'total',
+          mainCategory: targetAd.mainCategory,
+          location: targetAd.location,
+          contactName: targetAd.contactName || 'Annonceur',
+          contactPhone: targetAd.contactPhone,
+          images: targetAd.images || [],
+          durationDays: targetAd.durationDays || 30,
+          publishedAt: targetAd.publishedAt || nowIso,
+          expiresAt: targetAd.expiresAt || new Date(Date.now() + 30 * 86400000).toISOString(),
+          viewsCount: targetAd.viewsCount || 0,
+          paidAmount: targetAd.paidAmount || 0,
+          userId: auth.currentUser?.uid || currentUser?.id || 'user',
+          ...payload,
+        }));
+      }
+
+      // Mise à jour optimiste immédiate dans myAds et publicAds (retrait temporaire du catalogue public si renvoi en modération)
+      setMyAds((prev) => {
+        const exists = prev.some((a) => a.id === adId);
+        const updatedAd: Ad = {
+          ...targetAd,
+          ...cleanedFields,
+          ...(needsModeration ? { status: 'PENDING_REVIEW' } : {}),
+          updatedAt: nowIso,
+        };
+        return exists ? prev.map((a) => (a.id === adId ? updatedAd : a)) : [updatedAd, ...prev];
       });
 
+      if (needsModeration) {
+        setPublicAds((prev) => prev.filter((a) => a.id !== adId));
+      } else {
+        setPublicAds((prev) =>
+          prev.map((a) => (a.id === adId ? { ...a, ...cleanedFields, updatedAt: nowIso } : a))
+        );
+      }
+
+      if (wasRejected && currentUser?.id) {
+        const rejectionKey = targetAd.moderatedAt || targetAd.createdAt || 'rejected';
+        markNotificationAsSeenLocally(currentUser.id, `rej_${adId}_${rejectionKey}`);
+        if (targetAd.updatedAt) {
+          markNotificationAsSeenLocally(currentUser.id, `rej_${adId}_${targetAd.updatedAt}`);
+        }
+      }
+
       if (wasActive) {
-        showToast("Modifications enregistrées ! Votre annonce a été renvoyée en modération administrative pour vérification.");
+        showToast("Modifications enregistrées ! Votre annonce a été retirée temporairement et renvoyée en modération administrative pour vérification.");
+      } else if (wasRejected) {
+        showToast("Modifications enregistrées ! Vos corrections ont été transmises aux modérateurs pour vérification.");
       } else {
         showToast("Modifications enregistrées avec succès !");
       }
       setAdToEdit(null);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to update ad:', e);
-      showToast("Erreur lors de l'enregistrement des modifications.");
+      const errDetails = e?.message || e?.code || String(e);
+      showToast(`Erreur (${errDetails}) : enregistrement non effectué.`);
+      throw e;
     }
   };
 
@@ -1908,6 +2082,31 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
         }}
       />
 
+      {/* 10. Notifications In-App Système (Modale en haut d'écran, max 30s) */}
+      <InAppNotificationModal
+        currentUser={currentUser}
+        userAds={userAds}
+        onSelectAdDetail={(ad) => setSelectedAdForDetail(ad)}
+        onOpenExtendModal={(ad) => setSelectedAdForExtend(ad)}
+        onEditAd={(ad) => handleTriggerEdit(ad)}
+        onOpenSubscriptions={() => {
+          setFrontendTab('dashboard');
+        }}
+      />
+
+      {/* 11. Bouton Retour en haut de page dans l'espace catalogue (Point 6) */}
+      {frontendTab === 'catalog' && showScrollTop && (
+        <button
+          onClick={scrollToTopInstant}
+          className="fixed bottom-20 md:bottom-8 right-5 z-30 bg-emerald-700 hover:bg-emerald-800 text-white p-3.5 rounded-full shadow-2xl border-2 border-emerald-400/50 hover:scale-110 active:scale-95 transition-all cursor-pointer flex items-center justify-center group"
+          title="Retour immédiat en haut de page"
+          aria-label="Retour immédiat en haut du catalogue"
+          id="scroll-to-top-button"
+        >
+          <ArrowUp className="w-5 h-5 text-white transition-transform group-hover:-translate-y-0.5" />
+        </button>
+      )}
+
       {/* 6. Native Mobile Bottom Navigation Bar (Optimized for quick thumb reach) */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 px-4 py-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-2xl flex items-center justify-around">
         {/* Tab 1: Catalogue */}
@@ -1915,7 +2114,7 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
           onClick={() => {
             setFrontendTab('catalog');
             setIsMobileArcMenuOpen((prev) => !prev);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            scrollToTopInstant();
           }}
           className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
             frontendTab === 'catalog'
@@ -1947,7 +2146,7 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
           onClick={() => {
             if (currentUser) {
               setFrontendTab('user-dashboard');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
+              scrollToTopInstant();
             } else {
               setAuthTriggerPurpose('DASHBOARD');
               setIsPhoneAuthOpen(true);

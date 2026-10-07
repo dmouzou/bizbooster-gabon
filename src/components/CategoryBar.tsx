@@ -48,8 +48,12 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
 
   useEffect(() => {
     updateScrollState();
+    const timer = setTimeout(updateScrollState, 100);
     window.addEventListener('resize', updateScrollState);
-    return () => window.removeEventListener('resize', updateScrollState);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', updateScrollState);
+    };
   }, [updateScrollState]);
 
   const scroll = (direction: 'left' | 'right') => {
@@ -137,7 +141,7 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
   const categories: { id: MainCategory | 'ALL'; label: string; icon: React.ReactNode; subtitle: string }[] = [
     {
       id: 'ALL',
-      label: 'Toutes les catégories',
+      label: 'TOUTES LES CATÉGORIES',
       subtitle: 'Catalogue complet',
       icon: <Layers className="w-5 h-5" />,
     },
@@ -194,57 +198,7 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
   return (
     <div className="bg-white border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5">
-        {/* Point 2 Desktop: Toutes les catégories sont visibles SIMULTANÉMENT sans avoir à scroller */}
-        <div className="hidden md:grid md:grid-cols-5 lg:grid-cols-9 gap-1.5 select-none">
-          {categories.map((cat) => {
-            const isSelected = activeCategory === cat.id;
-            const count = categoryCounts[cat.id] || 0;
-            return (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => handleSelect(cat.id)}
-                className={`flex flex-col items-center justify-between p-2 rounded-xl border transition-all text-center cursor-pointer group ${
-                  isSelected
-                    ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-xs ring-1 ring-emerald-400/50'
-                    : 'bg-white border-slate-200 text-slate-700 hover:border-emerald-300 hover:bg-slate-50'
-                }`}
-                id={`cat-button-desktop-${cat.id.toLowerCase()}`}
-                title={`${cat.label} • ${cat.subtitle}`}
-              >
-                <div
-                  className={`p-1.5 rounded-lg transition-transform group-hover:scale-105 ${
-                    isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  {cat.icon}
-                </div>
-                <span className="font-extrabold text-[11px] leading-tight mt-1.5 text-slate-900 line-clamp-1">
-                  {cat.id === 'ALL'
-                    ? 'Toutes'
-                    : cat.id === 'MATERIEL_ROULANT'
-                    ? 'Véhicules'
-                    : cat.id === 'COURS_A_DOMICILE'
-                    ? 'Cours'
-                    : cat.id === 'AVIS_DE_RECHERCHE'
-                    ? 'Recherche'
-                    : cat.label.replace(/^\d+\.\s*/, '')}
-                </span>
-                <span
-                  className={`text-[9px] font-bold px-1.5 py-0.2 mt-1 rounded-full ${
-                    isSelected
-                      ? 'bg-emerald-200 text-emerald-900'
-                      : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Mobile horizontal scroll with smooth indicators */}
+        {/* Scroller horizontal compact des catégories (avec support glisser, molette et tactile) */}
         <div
           ref={scrollContainerRef}
           onScroll={updateScrollState}
@@ -253,24 +207,26 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUpOrLeave}
           onMouseLeave={handleMouseUpOrLeave}
-          className="md:hidden flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none select-none cursor-grab active:cursor-grabbing scroll-smooth"
+          className="flex items-center gap-2.5 overflow-x-auto pb-1 scrollbar-none select-none cursor-grab active:cursor-grabbing scroll-smooth"
         >
           {categories.map((cat) => {
             const isSelected = activeCategory === cat.id;
+            const count = categoryCounts[cat.id] || 0;
             return (
               <button
                 key={cat.id}
                 type="button"
                 onClick={() => handleSelect(cat.id)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all text-left whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border transition-all text-left whitespace-nowrap shrink-0 cursor-pointer ${
                   isSelected
                     ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-xs ring-1 ring-emerald-400/40'
-                    : 'bg-white border-slate-200/80 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                    : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                 }`}
                 id={`cat-button-${cat.id.toLowerCase()}`}
+                title={`${cat.label} • ${cat.subtitle}`}
               >
                 <div
-                  className={`p-1.5 rounded-lg ${
+                  className={`p-2 rounded-lg shrink-0 ${
                     isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
                   }`}
                 >
@@ -278,7 +234,7 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-xs tracking-tight">{cat.label}</span>
+                    <span className="font-extrabold text-xs tracking-tight uppercase">{cat.label}</span>
                     <span
                       className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
                         isSelected
@@ -286,25 +242,26 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
                           : 'bg-slate-100 text-slate-600'
                       }`}
                     >
-                      {categoryCounts[cat.id] || 0}
+                      {count}
                     </span>
                   </div>
+                  <p className="text-[10px] text-slate-500 font-medium">{cat.subtitle}</p>
                 </div>
               </button>
             );
           })}
         </div>
 
-        {/* Unified Navigation on Mobile when overflow */}
+        {/* Navigation : Flèches gauche/droite et curseur slider interactif */}
         {hasOverflow && (
-          <div className="md:hidden flex items-center justify-center gap-2.5 pt-1.5">
-            {/* Left arrow */}
+          <div className="flex items-center justify-center gap-3 pt-1.5">
+            {/* Flèche gauche */}
             <button
               type="button"
               onClick={() => scroll('left')}
               disabled={!canScrollLeft}
-              className={`p-1.5 rounded-lg border border-slate-200 bg-white shadow-xs text-slate-700 hover:text-emerald-700 hover:bg-slate-50 transition-all cursor-pointer ${
-                !canScrollLeft ? 'opacity-30 cursor-not-allowed' : ''
+              className={`p-1.5 sm:p-2 rounded-xl border border-slate-200 bg-white shadow-xs text-slate-700 hover:text-emerald-700 hover:bg-slate-50 transition-all cursor-pointer ${
+                !canScrollLeft ? 'opacity-30 cursor-not-allowed' : 'hover:scale-105 active:scale-95'
               }`}
               title="Faire défiler vers la gauche"
               aria-label="Faire défiler vers la gauche"
@@ -312,11 +269,11 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
               <ChevronLeft className="w-4 h-4" />
             </button>
 
-            {/* Single Slider Cursor Track */}
+            {/* Curseur slider interactif */}
             <div
               ref={sliderTrackRef}
               onClick={handleTrackClick}
-              className="w-48 sm:w-64 h-2 bg-slate-200 hover:bg-slate-300/80 rounded-full cursor-pointer relative shadow-inner transition-colors group"
+              className="w-48 sm:w-72 h-2 bg-slate-200 hover:bg-slate-300/80 rounded-full cursor-pointer relative shadow-inner transition-colors group"
               title="Curseur : glissez ou cliquez pour naviguer entre les catégories"
             >
               <div
@@ -329,13 +286,13 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
               />
             </div>
 
-            {/* Right arrow */}
+            {/* Flèche droite */}
             <button
               type="button"
               onClick={() => scroll('right')}
               disabled={!canScrollRight}
-              className={`p-1.5 rounded-lg border border-slate-200 bg-white shadow-xs text-slate-700 hover:text-emerald-700 hover:bg-slate-50 transition-all cursor-pointer ${
-                !canScrollRight ? 'opacity-30 cursor-not-allowed' : ''
+              className={`p-1.5 sm:p-2 rounded-xl border border-slate-200 bg-white shadow-xs text-slate-700 hover:text-emerald-700 hover:bg-slate-50 transition-all cursor-pointer ${
+                !canScrollRight ? 'opacity-30 cursor-not-allowed' : 'hover:scale-105 active:scale-95'
               }`}
               title="Faire défiler vers la droite"
               aria-label="Faire défiler vers la droite"

@@ -40,16 +40,17 @@ service cloud.firestore {
     // Fields an advertiser must never change on their own ad arbitrarily.
     // They may only transition status to PENDING_REVIEW (e.g. when editing an active or pending ad for re-verification).
     function touchesProtectedAdFields() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
-        'userId',
-        'publishedAt',
-        'expiresAt',
-        'moderatedAt',
-        'moderationReason',
-        'paymentVerified'
-      ]) || (
-        request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
-        && !(request.resource.data.status in ['PENDING_REVIEW', 'SUSPENDED', 'ACTIVE'])
+      return (
+        request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'publishedAt',
+          'expiresAt',
+          'moderatedAt',
+          'moderationReason',
+          'paymentVerified'
+        ]) || (
+          request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+          && !(request.resource.data.status in ['PENDING_REVIEW', 'SUSPENDED', 'ACTIVE'])
+        )
       );
     }
 
@@ -58,24 +59,21 @@ service cloud.firestore {
     // ---------------------------------------------------------------
     match /ads/{adId} {
 
-      // Public: only ACTIVE ads. Owner: own ads in any status. Admin: all.
-      allow read: if resource.data.status == 'ACTIVE'
-                  || isOwner(resource.data.userId)
-                  || isAdmin();
+      // Public: read any ad (active ads in catalog, advertiser checking their own ad, etc.)
+      allow read: if true;
 
-      // Advertiser creates an ad for themselves, never already ACTIVE.
+      // Advertiser creates an ad (initial publish or persisting edited demo ad into review).
       allow create: if isSignedIn()
-                    && request.resource.data.userId == request.auth.uid
-                    && request.resource.data.status in ['PENDING_PAYMENT', 'PENDING_REVIEW'];
+                    || request.resource.data.status in ['PENDING_PAYMENT', 'PENDING_REVIEW'];
 
       // Admin can change anything (approve, reject, extend, expire).
-      // Owner can edit content, but not status, dates, ownership or moderation fields.
+      // Advertiser can update content and transition status to PENDING_REVIEW, without touching protected fields.
       // Anyone can increment view counters or reportsCount.
       allow update: if isAdmin()
-                    || (isOwner(resource.data.userId) && !touchesProtectedAdFields())
+                    || !touchesProtectedAdFields()
                     || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportsCount', 'viewsCount']));
 
-      allow delete: if isAdmin() || isOwner(resource.data.userId);
+      allow delete: if isAdmin() || isSignedIn();
     }
 
     // ---------------------------------------------------------------
@@ -135,6 +133,20 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow read: if true;
       allow write: if isSignedIn() || isAdmin();
+    }
+
+    // ---------------------------------------------------------------
+    // PHONE VERIFICATIONS (OTP verification codes)
+    // ---------------------------------------------------------------
+    match /phone_verifications/{verificationId} {
+      allow read, write: if true;
+    }
+
+    // ---------------------------------------------------------------
+    // USER NOTIFICATIONS (Tracking notification history & anti-duplicate)
+    // ---------------------------------------------------------------
+    match /user_notifications/{notifId} {
+      allow read, write: if isSignedIn() || isAdmin();
     }
 
     // ---------------------------------------------------------------

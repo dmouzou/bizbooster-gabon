@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3, ShieldCheck, Heart, Download, FileText } from 'lucide-react';
+import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3, ShieldCheck, Heart, Download, FileText, ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
 import { Ad, UserProfile } from '../types';
-import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
 import { isAdVipCornerEligible } from '../utils/vipCorner';
 import { ReportAdModal } from './ReportAdModal';
 import { ShareAdModal } from './ShareAdModal';
@@ -32,6 +32,69 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [showVerifiedModal, setShowVerifiedModal] = useState(false);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [touchEndX, setTouchEndX] = useState<number | null>(null);
+
+  const images = (ad.images && ad.images.length > 0)
+    ? ad.images
+    : ['https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1000&q=80'];
+  const currentImage = images[activeImageIndex] || images[0];
+  const hasMultipleImages = images.length > 1;
+
+  // Réinitialiser la première image lors de l'ouverture d'une nouvelle annonce
+  React.useEffect(() => {
+    setActiveImageIndex(0);
+    setIsLightboxOpen(false);
+  }, [ad.id]);
+
+  const handlePrevImage = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setActiveImageIndex((prev) => (prev > 0 ? prev - 1 : images.length - 1));
+  };
+
+  const handleNextImage = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setActiveImageIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0));
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStartX(e.targetTouches[0].clientX);
+    setTouchEndX(null);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    setTouchEndX(e.targetTouches[0].clientX);
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStartX === null || touchEndX === null || !hasMultipleImages) return;
+    const diff = touchStartX - touchEndX;
+    if (diff > 45) {
+      handleNextImage();
+    } else if (diff < -45) {
+      handlePrevImage();
+    }
+    setTouchStartX(null);
+    setTouchEndX(null);
+  };
+
+  // Navigation clavier dans le lightbox plein écran
+  React.useEffect(() => {
+    if (!isLightboxOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsLightboxOpen(false);
+      } else if (e.key === 'ArrowLeft') {
+        handlePrevImage();
+      } else if (e.key === 'ArrowRight') {
+        handleNextImage();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isLightboxOpen, hasMultipleImages, images.length]);
+
   const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
   const isOwner = isAdOwner(ad, currentUser ?? null);
   const isVerified = Boolean(ad.isOwnerVerified || ad.isOwnerVip);
@@ -96,51 +159,14 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
           {/* Main Title & Badges */}
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-2">
-              {ad.mainCategory === 'BRIC_A_BRAC' ? (
-                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300">
-                  À VENDRE (Bric-à-Brac)
-                </span>
-              ) : ad.mainCategory === 'EMPLOI' ? (
-                <span
-                  className={`text-xs font-black uppercase px-2.5 py-1 rounded-lg ${
-                    ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
-                      ? 'bg-teal-100 text-teal-900 border border-teal-300'
-                      : 'bg-purple-100 text-purple-900 border border-purple-300'
-                  }`}
-                >
-                  {ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
-                    ? "DEMANDE D'EMPLOI (Candidat cherche travail)"
-                    : "OFFRE D'EMPLOI (Recruteur cherche travailleur)"}
-                </span>
-              ) : ad.mainCategory === 'COURS_A_DOMICILE' ? (
-                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-indigo-100 text-indigo-900 border border-indigo-300">
-                  {ad.tutoringKind === 'DEMANDE' ? 'DEMANDE DE COURS' : 'OFFRE DE COURS'}
-                </span>
-              ) : ad.mainCategory === 'NECROLOGIE' ? (
-                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-slate-800 text-white border border-slate-700">
-                  NÉCROLOGIE ({ad.necrologieData?.ministry || ad.necroMinistry || 'Avis de décès'})
-                </span>
-              ) : ad.mainCategory === 'AVIS_DE_RECHERCHE' ? (
-                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-red-100 text-red-900 border border-red-300">
-                  AVIS DE RECHERCHE ({ad.avisRechercheData?.category || 'Signalement'})
-                </span>
-              ) : ad.mainCategory === 'AUTRES_EMPLOIS' ? (
-                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-teal-100 text-teal-900 border border-teal-300">
-                  {ad.autresEmploisData?.subCategory === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
-                    ? "DEMANDE D'EMPLOI"
-                    : "OFFRE D'EMPLOI"}
-                </span>
-              ) : ad.transactionType ? (
-                <span
-                  className={`text-xs font-black uppercase px-2.5 py-1 rounded-lg ${
-                    ad.transactionType === 'VENTE'
-                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                      : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                  }`}
-                >
-                  {ad.transactionType === 'VENTE' ? 'À VENDRE (Achat)' : 'À LOUER (Location)'}
-                </span>
-              ) : null}
+              {(() => {
+                const badge = getAdTransactionBadge(ad);
+                return (
+                  <span className={`text-xs font-black uppercase px-2.5 py-1 rounded-lg ${badge.badgeClass}`}>
+                    {badge.label}
+                  </span>
+                );
+              })()}
 
               {isVip && (
                 <span className="inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 text-xs font-black px-2.5 py-1 rounded-lg border border-amber-300 shadow-xs">
@@ -204,28 +230,103 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
             )}
           </div>
 
-          {/* Photo Gallery */}
-          <div>
-            <div className="aspect-16/10 sm:aspect-16/9 rounded-2xl overflow-hidden bg-slate-100 border border-slate-200">
+          {/* Photo Gallery: Présentation intégrale de chaque photo sans rognage */}
+          <div className="space-y-2.5">
+            <div
+              className="relative aspect-16/10 sm:aspect-16/9 rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center select-none group/gallery cursor-pointer"
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              onClick={() => setIsLightboxOpen(true)}
+              title="Cliquer pour afficher la photo en grand écran"
+            >
+              {/* Fond d'ambiance flouté pour harmoniser les marges et éliminer les bandes vides */}
               <img
-                src={ad.images?.[activeImageIndex] || ad.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1000&q=80'}
-                alt={ad.title || 'Annonce'}
-                className="w-full h-full object-cover"
+                src={currentImage}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-35 select-none pointer-events-none z-0"
                 referrerPolicy="no-referrer"
               />
+
+              {/* Photo intégrale non rognée (object-contain) */}
+              <img
+                src={currentImage}
+                alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
+                className="relative z-10 w-full h-full object-contain drop-shadow-md select-none transition-transform duration-300 group-hover/gallery:scale-[1.01]"
+                referrerPolicy="no-referrer"
+              />
+
+              {/* Badge compteur de photos */}
+              {hasMultipleImages && (
+                <div className="absolute bottom-3 right-3 z-20 bg-slate-950/80 backdrop-blur-xs text-white text-[11px] font-bold px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 shadow-md">
+                  <span>📷</span>
+                  <span>{activeImageIndex + 1} / {images.length}</span>
+                </div>
+              )}
+
+              {/* Bouton Agrandir / Plein écran */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsLightboxOpen(true);
+                }}
+                className="absolute top-3 right-3 z-20 p-2 rounded-xl bg-slate-950/70 hover:bg-slate-950 text-white backdrop-blur-xs border border-white/10 shadow-md transition-all hover:scale-105 cursor-pointer opacity-90 hover:opacity-100"
+                title="Agrandir la photo en plein écran"
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+
+              {/* Flèches de navigation Précédent / Suivant */}
+              {hasMultipleImages && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handlePrevImage}
+                    aria-label="Photo précédente"
+                    title="Photo précédente"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white flex items-center justify-center transition-all duration-200 shadow-lg backdrop-blur-xs z-20 hover:scale-110 cursor-pointer opacity-80 hover:opacity-100"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNextImage}
+                    aria-label="Photo suivante"
+                    title="Photo suivante"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white flex items-center justify-center transition-all duration-200 shadow-lg backdrop-blur-xs z-20 hover:scale-110 cursor-pointer opacity-80 hover:opacity-100"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                </>
+              )}
             </div>
 
-            {(ad.images?.length || 0) > 1 && (
-              <div className="flex gap-2 mt-2.5 overflow-x-auto pb-1">
-                {(ad.images || []).map((img, idx) => (
+            {/* Vignettes sous la photo principale */}
+            {hasMultipleImages && (
+              <div className="flex gap-2.5 overflow-x-auto pb-1 scrollbar-thin">
+                {images.map((img, idx) => (
                   <button
                     key={idx}
+                    type="button"
                     onClick={() => setActiveImageIndex(idx)}
-                    className={`w-16 h-14 rounded-xl overflow-hidden border-2 shrink-0 transition-all ${
-                      activeImageIndex === idx ? 'border-emerald-600 ring-2 ring-emerald-400' : 'border-slate-200 opacity-70 hover:opacity-100'
+                    className={`relative w-16 h-14 rounded-xl overflow-hidden border-2 shrink-0 transition-all bg-slate-900 cursor-pointer ${
+                      activeImageIndex === idx
+                        ? 'border-emerald-500 ring-2 ring-emerald-400/40 opacity-100 scale-102'
+                        : 'border-slate-200 opacity-60 hover:opacity-100 hover:border-slate-400'
                     }`}
+                    title={`Afficher la photo ${idx + 1}`}
                   >
-                    <img src={img} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <img
+                      src={img}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    {activeImageIndex === idx && (
+                      <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none" />
+                    )}
                   </button>
                 ))}
               </div>
@@ -459,35 +560,51 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                   <p className="text-slate-700 text-xs">Expérience : <strong>{ad.autresEmploisData.experienceYears}</strong></p>
                 )}
 
-                {(ad.cvUrl || ad.cvFileName) && (
-                  <div className="bg-white border border-teal-300 rounded-xl p-3 flex items-center justify-between gap-3 shadow-2xs">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-9 h-9 rounded-lg bg-teal-700 text-white flex items-center justify-center shrink-0 font-bold text-xs uppercase">
-                        {ad.cvFileType || 'CV'}
+                {(ad.cvUrl || ad.cvFileName || ad.jobDocUrl || ad.autresEmploisData?.jobDocUrl) && (() => {
+                  const isSeeker = ad.autresEmploisData?.subCategory === "Demandeur d'emploi" || ad.transactionType === 'CHERCHE_EMPLOI';
+                  const docUrl = ad.jobDocUrl || ad.autresEmploisData?.jobDocUrl || ad.cvUrl;
+                  const docFileName = ad.jobDocFileName || ad.autresEmploisData?.jobDocFileName || ad.cvFileName || (isSeeker ? 'Curriculum_Vitae_candidat' : 'Fiche_Poste_Emploi');
+                  const docFileType = ad.jobDocFileType || ad.autresEmploisData?.jobDocFileType || ad.cvFileType || 'PDF';
+                  const docFileSize = ad.jobDocFileSize || ad.autresEmploisData?.jobDocFileSize || ad.cvFileSize;
+
+                  return (
+                    <div className="bg-white border border-teal-300 rounded-xl p-3 flex items-center justify-between gap-3 shadow-2xs">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-9 h-9 rounded-lg bg-teal-700 text-white flex items-center justify-center shrink-0 font-bold text-xs uppercase">
+                          {docFileType || (isSeeker ? 'CV' : 'DOC')}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">
+                            {docFileName}
+                          </p>
+                          <p className="text-[10px] text-slate-500">
+                            {docFileSize ? `${(docFileSize / 1024).toFixed(0)} Ko` : 'Document joint'} • Format {docFileType.toUpperCase()}
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-900 truncate">
-                          {ad.cvFileName || 'Curriculum_Vitae_candidat'}
-                        </p>
-                        <p className="text-[10px] text-slate-500">
-                          {ad.cvFileSize ? `${(ad.cvFileSize / 1024).toFixed(0)} Ko` : 'Document joint'} • Format {ad.cvFileType?.toUpperCase() || 'PDF'}
-                        </p>
-                      </div>
+                      {docUrl && (
+                        <a
+                          href={docUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          download={docFileName}
+                          onClick={() => {
+                            // Record download request for platform capacity metrics
+                            try {
+                              const curr = Number(localStorage.getItem('bizbooster_download_requests_count') || '0');
+                              localStorage.setItem('bizbooster_download_requests_count', String(curr + 1));
+                              window.dispatchEvent(new Event('bizbooster_metric_updated'));
+                            } catch {}
+                          }}
+                          className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition-colors shrink-0 cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>{isSeeker ? 'Télécharger CV' : 'Télécharger la fiche de poste'}</span>
+                        </a>
+                      )}
                     </div>
-                    {ad.cvUrl && (
-                      <a
-                        href={ad.cvUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        download={ad.cvFileName || 'CV_Candidat'}
-                        className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition-colors shrink-0"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Télécharger CV</span>
-                      </a>
-                    )}
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             )}
 
@@ -616,6 +733,109 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
           onClose={() => setShowVerifiedModal(false)}
           advertiserName={ad.contactName}
         />
+      )}
+
+      {/* Lightbox / Visualiseur Plein Écran Haute Résolution */}
+      {isLightboxOpen && (
+        <div
+          className="fixed inset-0 z-70 bg-slate-950/95 backdrop-blur-md flex flex-col justify-between p-3 sm:p-5 animate-in fade-in duration-200"
+          onClick={() => setIsLightboxOpen(false)}
+        >
+          {/* Header Lightbox */}
+          <div
+            className="flex items-center justify-between text-white shrink-0 pb-2 z-80"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 min-w-0 pr-4">
+              <span className="text-xs font-black uppercase text-amber-400 bg-amber-950/80 px-2.5 py-1 rounded-lg border border-amber-500/30 shrink-0">
+                REF: {ad.id.toUpperCase()}
+              </span>
+              <span className="text-xs font-semibold text-slate-300 truncate">
+                {ad.title}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0">
+              {hasMultipleImages && (
+                <span className="text-xs font-bold text-slate-300 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700">
+                  📷 {activeImageIndex + 1} / {images.length}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsLightboxOpen(false)}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white transition-colors cursor-pointer"
+                title="Fermer le plein écran (Échap)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Corps Image Plein Écran */}
+          <div
+            className="relative flex-1 flex items-center justify-center p-2 min-h-0 select-none"
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={currentImage}
+              alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
+              className="max-w-full max-h-[80vh] object-contain rounded-xl drop-shadow-2xl select-none"
+              referrerPolicy="no-referrer"
+            />
+
+            {/* Flèches de navigation en plein écran */}
+            {hasMultipleImages && (
+              <>
+                <button
+                  type="button"
+                  onClick={handlePrevImage}
+                  aria-label="Photo précédente"
+                  title="Photo précédente"
+                  className="absolute left-2 sm:left-6 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/80 hover:bg-slate-900 text-white flex items-center justify-center transition-all duration-200 shadow-xl backdrop-blur-xs z-30 hover:scale-110 cursor-pointer"
+                >
+                  <ChevronLeft className="w-6 h-6" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNextImage}
+                  aria-label="Photo suivante"
+                  title="Photo suivante"
+                  className="absolute right-2 sm:right-6 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/80 hover:bg-slate-900 text-white flex items-center justify-center transition-all duration-200 shadow-xl backdrop-blur-xs z-30 hover:scale-110 cursor-pointer"
+                >
+                  <ChevronRight className="w-6 h-6" />
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Vignettes Lightbox */}
+          {hasMultipleImages && (
+            <div
+              className="flex justify-center gap-2 overflow-x-auto py-2 shrink-0 z-80"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {images.map((img, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setActiveImageIndex(idx)}
+                  className={`w-14 h-12 rounded-xl overflow-hidden border-2 shrink-0 transition-all bg-slate-900 cursor-pointer ${
+                    activeImageIndex === idx
+                      ? 'border-emerald-500 ring-2 ring-emerald-400 opacity-100 scale-105'
+                      : 'border-slate-700 opacity-60 hover:opacity-100 hover:border-slate-500'
+                  }`}
+                  title={`Photo ${idx + 1}`}
+                >
+                  <img src={img} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

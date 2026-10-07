@@ -81,7 +81,8 @@ import {
   TUTORING_LEVELS,
   TUTORING_SUBJECTS,
 } from '../data/categoriesData';
-import { calculateBill, formatFCFA, formatPriceDisplay, formatPriceUnit } from '../utils/formatters';
+import { calculateBill, formatFCFA, formatPriceDisplay, formatPriceUnit, getAdTransactionBadge } from '../utils/formatters';
+import { compressImageForUpload } from '../utils/imageCompressor';
 import { isAdVipCornerEligible, getVipThresholdDescription, VIP_CORNER_INFO } from '../utils/vipCorner';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
 import { CguModal } from './CguModal';
@@ -151,9 +152,14 @@ interface PhotoMediaItem {
 }
 
 async function uploadAdImage(file: File): Promise<string> {
-  const path = `ads/${auth.currentUser!.uid}/${Date.now()}_${file.name}`;
+  const { blob, mimeType } = await compressImageForUpload(file);
+  const cleanName = file.name.replace(/\.[^/.]+$/, '');
+  const path = `ads/${auth.currentUser!.uid}/${Date.now()}_${cleanName}.jpg`;
   const storageRef = ref(storage, path);
-  await uploadBytes(storageRef, file);
+  await uploadBytes(storageRef, blob, {
+    contentType: mimeType,
+    cacheControl: 'public,max-age=31536000,immutable',
+  });
   return getDownloadURL(storageRef);
 }
 
@@ -673,14 +679,19 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
   // Dynamic Bill Calculation (Section C-d) based on photos count and video option
   const bill = useMemo(() => {
-    return calculateBill(durationDays, photos.length, hasVideo);
-  }, [durationDays, photos.length, hasVideo]);
+    return calculateBill(durationDays, photos.length, hasVideo, currentUser?.subscriptionTier);
+  }, [durationDays, photos.length, hasVideo, currentUser?.subscriptionTier]);
 
-  // Base price is waived if subscriber, VIP, or subscribing right now
+  // Point 3: Subscription free ads are strictly consumable (e.g. Pro: 8 free ads total).
+  // Once consumed, subsequent ads (from 9th onward) are billed at standard price, even if an old ad is deleted.
+  const consumedFreeAdsCount = currentUser?.consumedFreeAdsCount || 0;
+  const hasFreeAdQuotaRemaining = Boolean(isExempt || consumedFreeAdsCount < maxQuota);
+
+  // Base price is waived if VIP, currently buying a subscription, or subscriber with remaining free quota
   const isBasePostingCovered = Boolean(
     isExempt ||
-    isSubscriber ||
-    requiresSubscription
+    requiresSubscription ||
+    (isSubscriber && hasFreeAdQuotaRemaining)
   );
 
   const basePriceToPay = isBasePostingCovered ? 0 : bill.basePrice;
@@ -1002,12 +1013,24 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 profession: autresEmploisProfession,
                 contractType: autresEmploisContractType as any,
                 experienceYears: autresEmploisExperience,
+                cvUrl: autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? finalCvUrl : undefined,
+                cvFileName: autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? (cvFileName || undefined) : undefined,
+                cvFileType: autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? (cvFileType || undefined) : undefined,
+                cvFileSize: autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? (cvFileSize || undefined) : undefined,
+                jobDocUrl: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? finalCvUrl : undefined,
+                jobDocFileName: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileName || undefined) : undefined,
+                jobDocFileType: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileType || undefined) : undefined,
+                jobDocFileSize: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileSize || undefined) : undefined,
               }
             : undefined,
         cvUrl: finalCvUrl,
         cvFileName: cvFileName || undefined,
         cvFileType: cvFileType || undefined,
         cvFileSize: cvFileSize || undefined,
+        jobDocUrl: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? finalCvUrl : undefined,
+        jobDocFileName: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileName || undefined) : undefined,
+        jobDocFileType: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileType || undefined) : undefined,
+        jobDocFileSize: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileSize || undefined) : undefined,
         isVipCorner: isVipEligible,
         price: (mainCategory === 'NECROLOGIE' || mainCategory === 'AVIS_DE_RECHERCHE') ? 0 : (Number(price) || 0),
         priceMax: (mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS') && priceMax !== '' && Number(priceMax) > (Number(price) || 0) ? Number(priceMax) : undefined,
@@ -1035,6 +1058,8 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         viewsCount: 0,
       };
 
+      const updatesToUser: Partial<UserProfile> = {};
+
       if (requiresSubscription) {
         const boostsToAdd = selectedTierToBuy === 'BUSINESS' ? 6 : selectedTierToBuy === 'ELITE' ? 3 : 1;
         const currentBoosts = currentUser?.freeBoostsRemaining || 0;
@@ -1042,24 +1067,30 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         if (isBoostFeatured && !isExempt) {
           finalBoosts = Math.max(0, finalBoosts - 1);
         }
-        await onUpdateUser?.({
-          subscriptionTier: selectedTierToBuy,
-          subscriptionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
-          freeBoostsRemaining: finalBoosts,
-        });
-      } else if (hasFreeBoost && isBoostFeatured) {
-        await onUpdateUser?.({ freeBoostsRemaining: Math.max(0, (currentUser?.freeBoostsRemaining || 1) - 1) });
+        updatesToUser.subscriptionTier = selectedTierToBuy;
+        updatesToUser.subscriptionExpiresAt = new Date(Date.now() + 30 * 86400000).toISOString();
+        updatesToUser.freeBoostsRemaining = finalBoosts;
+        updatesToUser.consumedFreeAdsCount = (currentUser?.consumedFreeAdsCount || 0) + 1;
+      } else {
+        if (hasFreeBoost && isBoostFeatured) {
+          updatesToUser.freeBoostsRemaining = Math.max(0, (currentUser?.freeBoostsRemaining || 1) - 1);
+        }
+        if (isBasePostingCovered && !isExempt) {
+          updatesToUser.consumedFreeAdsCount = (currentUser?.consumedFreeAdsCount || 0) + 1;
+        }
       }
 
       // Point 4: If advertiser chose to remember their neighborhood in profile
       if (saveNeighborhoodToProfile && neighborhood.trim() && currentUser?.id) {
-        await onUpdateUser?.({
-          location: {
-            province,
-            city,
-            neighborhood: neighborhood.trim(),
-          },
-        });
+        updatesToUser.location = {
+          province,
+          city,
+          neighborhood: neighborhood.trim(),
+        };
+      }
+
+      if (Object.keys(updatesToUser).length > 0) {
+        await onUpdateUser?.(updatesToUser);
       }
 
       await onAdPublished(newAd);
@@ -2197,7 +2228,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
               {mainCategory !== 'NECROLOGIE' && mainCategory !== 'AVIS_DE_RECHERCHE' && (() => {
                 const isJob = mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS';
                 const isSeeker = (mainCategory === 'EMPLOI' && (jobKind === 'DEMANDE_EMPLOI' || transactionType === 'CHERCHE_EMPLOI')) ||
-                  (mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === "Demandeur d'emploi");
+                  (mainCategory === 'AUTRES_EMPLOIS' && (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI' || transactionType === 'CHERCHE_EMPLOI'));
                 const isEmployerOffer = isJob && !isSeeker;
 
                 return (
@@ -2206,7 +2237,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       <div>
                         <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
                           {isSeeker
-                            ? 'Salaire demandé (en FCFA) *'
+                            ? 'Salaire désiré (en FCFA) *'
                             : isEmployerOffer
                             ? 'Salaire proposé (en FCFA) *'
                             : 'Prix (en FCFA) *'}
@@ -2347,11 +2378,11 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                           }
                         }
                       }}
-                      rows={mainCategory === 'NECROLOGIE' ? 6 : 4}
+                      rows={6}
                       placeholder={
                         mainCategory === 'NECROLOGIE'
                           ? "Rédigez l'avis d'obsèques, l'hommage de la famille, le parcours du défunt et les modalités de recueillement (jusqu'à 1000 caractères)..."
-                          : "Description détaillée obligatoire (au moins 50 caractères) : décrivez précisément l'article, ses caractéristiques techniques, dimensions, commodités (climatiseur, bâche d'eau, groupe...), situation géographique exacte, conditions de vente ou de location."
+                          : "Description détaillée obligatoire (au moins 50 caractères, jusqu'à 1000 caractères) : décrivez précisément l'article, ses caractéristiques techniques, dimensions, commodités (climatiseur, bâche d'eau, groupe...), situation géographique exacte, conditions de vente, location ou recrutement."
                       }
                       className={`w-full bg-slate-50 border rounded-xl p-3 text-xs text-slate-800 focus:bg-white focus:ring-2 transition-all ${
                         description.trim().length > 0 && description.trim().length < 50
@@ -2363,7 +2394,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       id="publish-desc-input"
                     />
                     <p className="text-[11px] text-slate-500 mt-1">
-                      * La description est obligatoire et doit comporter au moins 50 caractères afin d'offrir des informations fiables et précises aux acquéreurs.
+                      * La description est obligatoire et doit comporter entre 50 et 1000 caractères afin d'offrir des informations fiables et précises.
                     </p>
                   </div>
                 );
@@ -2448,6 +2479,85 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </div>
               )}
 
+              {/* OPTION FICHE DE POSTE POUR DONNEUR D'EMPLOI / OFFRE D'EMPLOI (Point 2 - Optionnel) */}
+              {mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory !== 'DEMANDE_EMPLOI' && (
+                <div className="bg-teal-50/70 border border-teal-300 rounded-2xl p-4 space-y-3 shadow-2xs animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-teal-700" />
+                      <div>
+                        <span className="font-black text-xs text-teal-950 uppercase tracking-wide block">
+                          Fiche de poste / Descriptif de l'emploi (Optionnel)
+                        </span>
+                        <span className="text-[11px] text-teal-800">
+                          Formats acceptés : <strong>.pdf</strong>, <strong>.docx</strong> ou <strong>.md</strong> (≤ 15 Mo)
+                        </span>
+                      </div>
+                    </div>
+                    <span className="bg-teal-100 text-teal-800 text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase border border-teal-200">
+                      Optionnel
+                    </span>
+                  </div>
+
+                  {cvFile || cvDataUrl ? (
+                    <div className="bg-white border border-teal-300 rounded-xl p-3 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-teal-100 text-teal-800 flex items-center justify-center shrink-0 font-bold text-xs uppercase">
+                          {cvFileType || 'DOC'}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">
+                            {cvFileName || 'Fiche_poste_jointe'}
+                          </p>
+                          <p className="text-[10px] text-slate-500">
+                            {cvFileSize ? `${(cvFileSize / 1024).toFixed(0)} Ko` : 'Document prêt'} • {cvFileType ? `.${cvFileType}` : 'Fichier joint'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <label className="cursor-pointer text-xs font-bold text-teal-700 hover:text-teal-800 bg-teal-50 px-2.5 py-1.5 rounded-lg border border-teal-200">
+                          Remplacer
+                          <input
+                            type="file"
+                            accept=".pdf,.docx,.md"
+                            onChange={handleCvFileSelect}
+                            className="hidden"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleRemoveCv}
+                          className="text-red-600 hover:text-red-700 p-1.5 rounded-lg hover:bg-red-50 cursor-pointer"
+                          title="Supprimer le document"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="cursor-pointer border-2 border-dashed border-teal-300 bg-white hover:bg-teal-50/50 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center transition-all">
+                        <Upload className="w-6 h-6 text-teal-600" />
+                        <div>
+                          <span className="text-xs font-extrabold text-teal-950 block">
+                            Cliquez pour joindre la fiche de poste (.pdf, .docx, .md)
+                          </span>
+                          <span className="text-[11px] text-slate-500">
+                            Optionnel : permet aux candidats de télécharger votre fiche de poste complète.
+                          </span>
+                        </div>
+                        <input
+                          type="file"
+                          accept=".pdf,.docx,.md"
+                          onChange={handleCvFileSelect}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Section C-a: Choix de joindre des images (max 5) ou courte vidéo (max 30s) */}
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
@@ -2463,7 +2573,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     </span>
                   </div>
                   <span className="text-[11px] text-slate-500">
-                    5 incluses gratuites, +500 F/photo à partir de la 6e (Max {PRICING_CONFIG.maxImages || 10} photos)
+                    {bill.includedPhotos} incluses gratuites ({currentUser?.subscriptionTier ? `Forfait ${currentUser.subscriptionTier}` : 'Standard'}), +500 F/photo au-delà (Max {PRICING_CONFIG.maxImages || 10} photos)
                   </span>
                 </div>
 
@@ -2580,7 +2690,13 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       <Video className="w-4 h-4 text-purple-600" />
                       <div>
                         <span className="font-bold text-xs text-slate-800 block">
-                          Option Vidéo Descriptive (+2 000 FCFA)
+                          Option Vidéo Descriptive (
+                          {currentUser?.subscriptionTier === 'BUSINESS'
+                            ? 'GRATUITE • Offert Forfait Business'
+                            : currentUser?.subscriptionTier === 'ELITE'
+                            ? `+${formatFCFA(bill.videoCost)} • -50% Forfait Élite`
+                            : `+${formatFCFA(bill.videoCost)}`}
+                          )
                         </span>
                         <span className="text-[10px] text-slate-500">
                           Courte vidéo (max 30 secondes, ≤ 50 Mo)
@@ -3101,6 +3217,18 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 </div>
 
                 <div className="space-y-2 text-xs">
+                  {/* Point 3: Information claire sur le quota d'annonces gratuites de l'abonnement */}
+                  {isSubscriber && !hasFreeAdQuotaRemaining && !requiresSubscription && (
+                    <div className="bg-amber-950/60 border border-amber-500/50 p-2.5 rounded-xl text-[11px] text-amber-200 leading-relaxed mb-2">
+                      ⚠️ <strong>Quota gratuit atteint :</strong> Vos <strong>{maxQuota} annonces gratuites</strong> incluses dans votre forfait <strong>{currentUser?.subscriptionTier}</strong> ont été utilisées ({consumedFreeAdsCount}/{maxQuota}). À partir de cette annonce, la publication est facturée au tarif standard ({formatFCFA(bill.basePrice)}).
+                    </div>
+                  )}
+                  {isSubscriber && hasFreeAdQuotaRemaining && !requiresSubscription && (
+                    <div className="bg-emerald-950/60 border border-emerald-500/50 p-2 rounded-xl text-[11px] text-emerald-200 leading-relaxed mb-2">
+                      ✨ <strong>Annonce gratuite incluse :</strong> {maxQuota - consumedFreeAdsCount} restante{(maxQuota - consumedFreeAdsCount) > 1 ? 's' : ''} sur vos {maxQuota} annonces incluses ({currentUser?.subscriptionTier}).
+                    </div>
+                  )}
+
                   <div className="flex justify-between text-slate-300">
                     <span>Forfait durée ({durationDays} jours) :</span>
                     <span className="font-mono font-bold text-white">
@@ -3130,23 +3258,31 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
                   {bill.extraPhotosCount > 0 ? (
                     <div className="flex justify-between text-slate-300">
-                      <span>{bill.extraPhotosCount} photo(s) au-delà des 5 incluses :</span>
+                      <span>{bill.extraPhotosCount} photo(s) au-delà des {bill.includedPhotos} incluses :</span>
                       <span className="font-mono font-bold text-white">
                         {isExempt ? '0 FCFA' : formatFCFA(bill.extraPhotosCost)}
                       </span>
                     </div>
                   ) : (
                     <div className="flex justify-between text-slate-400 text-[11px]">
-                      <span>Photos descriptives ({photos.length}/5 incluses gratuites) :</span>
+                      <span>Photos descriptives ({photos.length}/{bill.includedPhotos} incluses gratuites) :</span>
                       <span className="font-mono text-emerald-400 font-bold">0 FCFA</span>
                     </div>
                   )}
 
                   {hasVideo && (
                     <div className="flex justify-between text-slate-300">
-                      <span>Option courte vidéo descriptive :</span>
+                      <span>
+                        Option courte vidéo descriptive :
+                        {currentUser?.subscriptionTier === 'BUSINESS' && (
+                          <span className="text-emerald-400 font-bold ml-1.5">(Gratuit • Business)</span>
+                        )}
+                        {currentUser?.subscriptionTier === 'ELITE' && (
+                          <span className="text-purple-400 font-bold ml-1.5">(-50% • Élite)</span>
+                        )}
+                      </span>
                       <span className="font-mono font-bold text-white">
-                        {isExempt ? '0 FCFA' : formatFCFA(bill.videoCost)}
+                        {isExempt || currentUser?.subscriptionTier === 'BUSINESS' ? '0 FCFA' : formatFCFA(bill.videoCost)}
                       </span>
                     </div>
                   )}
@@ -3271,17 +3407,14 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   />
                   <div className="overflow-hidden">
                     <div className="flex items-center gap-2 mb-1">
-                      <span
-                        className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${
-                          createdAd.transactionType === 'EMPLOYER' || createdAd.mainCategory === 'EMPLOI'
-                            ? 'bg-purple-100 text-purple-900 border border-purple-200'
-                            : createdAd.transactionType === 'VENTE'
-                            ? 'bg-amber-100 text-amber-900'
-                            : 'bg-emerald-100 text-emerald-900'
-                        }`}
-                      >
-                        {createdAd.mainCategory === 'EMPLOI' || createdAd.transactionType === 'EMPLOYER' ? 'À EMPLOYER' : (createdAd.transactionType ? (createdAd.transactionType === 'VENTE' ? 'À VENDRE' : 'À LOUER') : createdAd.mainCategory)}
-                      </span>
+                      {(() => {
+                        const badge = getAdTransactionBadge(createdAd);
+                        return (
+                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${badge.badgeClass}`}>
+                            {badge.label}
+                          </span>
+                        );
+                      })()}
                       <span className="text-[10px] text-amber-800 font-extrabold bg-amber-100 px-1.5 py-0.2 rounded">
                         En attente d'approbation
                       </span>
@@ -3355,11 +3488,11 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   setStep(2);
                 } else if (step === 2) {
                   // Price validation (Point 4: cannot be empty or 0, except for NECROLOGIE & AVIS_DE_RECHERCHE)
-                  if (mainCategory !== 'NECROLOGIE' && mainCategory !== 'AVIS_DE_RECHERCHE') {
+                    if (mainCategory !== 'NECROLOGIE' && mainCategory !== 'AVIS_DE_RECHERCHE') {
                     if (price === '' || price === null || price === undefined || String(price).trim() === '') {
                       setMediaError(
                         mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS'
-                          ? 'Veuillez renseigner le montant du salaire proposé ou souhaité.'
+                          ? 'Veuillez renseigner le montant du salaire désiré ou proposé.'
                           : 'Le prix de votre annonce est obligatoire. Veuillez renseigner le montant en FCFA.'
                       );
                       const el = document.getElementById('publish-price-input');
@@ -3371,11 +3504,16 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     if (isNaN(numPrice) || numPrice <= 0) {
                       setMediaError(
                         mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS'
-                          ? 'Le salaire proposé ou souhaité ne peut pas être égal à 0 FCFA. Veuillez indiquer un montant supérieur à 0.'
-                          : 'Le prix de votre annonce ne peut pas être égal à 0 FCFA. Veuillez indiquer un montant supérieur à 0.'
+                          ? 'Le salaire désiré ou proposé ne peut pas être égal à 0 FCFA ou négatif. Veuillez indiquer un montant strictement supérieur à 0.'
+                          : 'Le prix de votre annonce ne peut pas être égal à 0 FCFA ou négatif. Veuillez indiquer un montant supérieur à 0.'
                       );
                       const el = document.getElementById('publish-price-input');
                       if (el) el.focus();
+                      return;
+                    }
+
+                    if ((mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS') && priceMax !== '' && (isNaN(Number(priceMax)) || Number(priceMax) <= 0)) {
+                      setMediaError('La tranche maximale de salaire ne peut pas être égale à 0 FCFA ou négative.');
                       return;
                     }
                   }
@@ -3391,15 +3529,16 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   }
 
                   // Point 2: CV obligatoire pour Demandeur d'emploi à l'étape 2
-                  const isDemandeurEmploi = mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === 'DEMANDE_EMPLOI';
+                  const isDemandeurEmploi = mainCategory === 'AUTRES_EMPLOIS' && (autresEmploisSubCategory === 'DEMANDE_EMPLOI' || autresEmploisSubCategory === "Demandeur d'emploi");
                   if (isDemandeurEmploi && !cvFile && !cvDataUrl) {
                     setMediaError("L'attachement d'un CV (.pdf, .docx ou .md) est obligatoire pour les demandeurs d'emploi à l'étape 2.");
                     return;
                   }
 
-                  // Photos obligatoires (sauf pour Demandeur d'emploi où le CV fait foi)
-                  if (!isDemandeurEmploi && photos.length === 0) {
-                    setMediaError('Veuillez ajouter au moins une photo pour votre annonce.');
+                  // Photos obligatoires (sauf pour Demandeur d'emploi ou Donneur d'emploi ayant joint une fiche de poste)
+                  const hasAttachedJobDoc = mainCategory === 'AUTRES_EMPLOIS' && (cvFile || cvDataUrl);
+                  if (!isDemandeurEmploi && !hasAttachedJobDoc && photos.length === 0) {
+                    setMediaError('Veuillez ajouter au moins une photo pour votre annonce (ou joindre la fiche de poste).');
                     return;
                   }
 

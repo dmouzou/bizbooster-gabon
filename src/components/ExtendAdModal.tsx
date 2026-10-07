@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, RefreshCw, Clock, ShieldCheck, CheckCircle2, Crown, AlertTriangle } from 'lucide-react';
 import { Ad, PaymentOperator, UserProfile } from '../types';
-import { formatFCFA, formatRemainingTime } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
 
 interface ExtendAdModalProps {
@@ -150,17 +150,14 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
               />
               <div className="overflow-hidden flex-1">
                 <div className="flex items-center gap-2 mb-1">
-                  <span
-                    className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${
-                      ad.mainCategory === 'EMPLOI' || ad.transactionType === 'EMPLOYER'
-                        ? 'bg-purple-100 text-purple-800'
-                        : ad.transactionType === 'VENTE'
-                        ? 'bg-amber-100 text-amber-800'
-                        : 'bg-emerald-100 text-emerald-800'
-                    }`}
-                  >
-                    {ad.mainCategory === 'EMPLOI' || ad.transactionType === 'EMPLOYER' ? 'À Employer' : (ad.transactionType === 'VENTE' ? 'À Vendre' : 'À Louer')}
-                  </span>
+                  {(() => {
+                    const badge = getAdTransactionBadge(ad);
+                    return (
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${badge.badgeClass}`}>
+                        {badge.label}
+                      </span>
+                    );
+                  })()}
                   <span className="text-[10px] text-slate-500 font-medium truncate">
                     {ad.location?.city || 'Gabon'}
                   </span>

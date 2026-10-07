@@ -37,7 +37,8 @@ const TIER_DETAILS: Record<Exclude<SubscriptionTier, 'STANDARD'>, TierInfo> = {
     boostersCount: 1,
     extensionDiscount: '-25% de remise sur chaque prolongation',
     features: [
-      "Jusqu'à 8 annonces simultanées sans frais de dépôt supplémentaires",
+      "8 annonces gratuites incluses par mois (au-delà : facturées au tarif standard)",
+      "Plafond de 8 annonces actives simultanées",
       "1 Booster 'En Tête de Liste' offert immédiatement crédité",
       "-25% de remise permanente sur toutes vos prolongations d'annonces",
       "Badge officiel 'Pro' affiché sur toutes vos annonces",
@@ -57,7 +58,8 @@ const TIER_DETAILS: Record<Exclude<SubscriptionTier, 'STANDARD'>, TierInfo> = {
     boostersCount: 3,
     extensionDiscount: '-50% de remise sur chaque prolongation',
     features: [
-      "Jusqu'à 14 annonces simultanées sans frais supplémentaires",
+      "14 annonces gratuites incluses par mois (au-delà : facturées au tarif standard)",
+      "Plafond de 14 annonces actives simultanées",
       "3 Boosters 'En Tête de Liste' offerts immédiatement crédités",
       "-50% de réduction immédiate sur toutes les prolongations",
       "Badge officiel 'Élite' doré sur toutes vos annonces",
@@ -77,7 +79,8 @@ const TIER_DETAILS: Record<Exclude<SubscriptionTier, 'STANDARD'>, TierInfo> = {
     boostersCount: 6,
     extensionDiscount: '100% GRATUIT & Illimité (Exemption totale)',
     features: [
-      "Jusqu'à 20 annonces simultanées (Plafond absolu de la plateforme)",
+      "20 annonces gratuites incluses par mois (au-delà : facturées au tarif standard)",
+      "Plafond de 20 annonces simultanées (Plafond absolu de la plateforme)",
       "6 Boosters 'En Tête de Liste' offerts immédiatement crédités",
       "Prolongations 100% GRATUITES et illimitées sur toutes vos annonces",
       "Badge officiel 'Entreprise Partenaire Business'",

@@ -29,15 +29,26 @@ import {
   Crown,
   Sparkles,
   FlaskConical,
+  Database,
+  HardDrive,
+  Send,
+  DownloadCloud,
+  Layers,
+  Coins,
+  TrendingUp,
+  RefreshCw,
+  Lock,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserSuperAdmin } from '../types';
-import { formatFCFA, formatRemainingTime } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
+import { getFirebaseQuotaComparison, trackSmsSent, trackDownloadRequest, resetSmsCounters } from '../services/platformMetrics';
 import { RealTimeAnalytics } from './RealTimeAnalytics';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
+import { BizboosterLogo } from './BizboosterLogo';
 
 interface AdminPanelProps {
   currentUser?: UserProfile | null;
@@ -202,6 +213,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Active Admin Tab: 'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY'
   const [activeTab, setActiveTab] = useState<'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY'>('MODERATION');
+
+  // Point 4: Métriques temps réel de scalabilité et comparaison quota Firebase Spark/Blaze
+  const [metricsTick, setMetricsTick] = useState(0);
+  useEffect(() => {
+    const handleMetricUpdate = () => setMetricsTick((prev) => prev + 1);
+    window.addEventListener('bizbooster_metric_updated', handleMetricUpdate);
+    return () => window.removeEventListener('bizbooster_metric_updated', handleMetricUpdate);
+  }, []);
+
+  const quotaComparison = useMemo(() => {
+    return getFirebaseQuotaComparison(ads, users);
+  }, [ads, users, metricsTick]);
 
   // Moderation filters
   type ModerationStatusFilter = 'PENDING' | 'PRIORITY' | 'ACTIVE' | 'REJECTED' | 'ALL';
@@ -520,14 +543,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               )}
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
-              BIZBOOSTER Gabon · {isSuper ? 'Super Administration' : 'Panneau de Modération'}
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl">
-              {isSuper
-                ? "Modération complète, gestion des partenaires VIP, forfaits abonnements, attribution des boosters et observatoire du marché."
-                : "Modération des annonces, contrôle d'identité KYC, observatoire marché en direct et traitement des signalements de fraude."}
-            </p>
+            <div className="flex items-center gap-3">
+              <BizboosterLogo variant="mark" iconSize={38} className="shrink-0" />
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-black tracking-tight flex items-center gap-2 flex-wrap">
+                  <span>BIZBOOSTER Gabon</span>
+                  <span className="text-xs text-emerald-400 font-bold bg-emerald-950/80 border border-emerald-700/60 px-2 py-0.5 rounded-full">
+                    {isSuper ? 'Super Administration' : 'Panneau de Modération'}
+                  </span>
+                </h1>
+                <p className="text-xs sm:text-sm text-slate-300 mt-0.5 max-w-2xl">
+                  {isSuper
+                    ? "Modération complète, gestion des partenaires VIP, forfaits abonnements, attribution des boosters et observatoire du marché."
+                    : "Modération des annonces, contrôle d'identité KYC, observatoire marché en direct et traitement des signalements de fraude."}
+                </p>
+              </div>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
@@ -655,7 +686,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {/* TAB 5: SCALABILITY AUDIT */}
           <button
             onClick={() => setActiveTab('SCALABILITY')}
-            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border ${
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border cursor-pointer ${
               activeTab === 'SCALABILITY'
                 ? 'bg-purple-500 text-white border-purple-400 shadow-md'
                 : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800'
@@ -663,9 +694,58 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           >
             <Server className="w-4 h-4" />
             <span>Capacité & Scalabilité</span>
+            {isSuper && quotaComparison.isAnyQuotaExceeded && (
+              <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full animate-pulse flex items-center gap-1">
+                <span>Dépassement</span>
+              </span>
+            )}
           </button>
         </div>
       </div>
+
+      {/* POINT 4: NOTIFICATION SUPER ADMIN EN CAS DE DÉPASSEMENT DES QUOTAS DU PLAN GRATUIT FIREBASE */}
+      {isSuper && quotaComparison.isAnyQuotaExceeded && (
+        <div className="bg-linear-to-r from-red-950 via-rose-900 to-amber-950 border-2 border-red-500/70 rounded-3xl p-5 shadow-xl text-white space-y-3">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="p-3 bg-red-500/20 rounded-2xl text-red-300 border border-red-400/50 shrink-0 mt-0.5">
+                <ShieldAlert className="w-6 h-6 text-red-300 animate-pulse" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="bg-red-600 text-white text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full tracking-wider">
+                    Dépassement Quota Firebase Spark
+                  </span>
+                  <span className="bg-amber-400/20 text-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-400/30">
+                    Facturation Blaze Requise
+                  </span>
+                  <span className="text-[11px] text-slate-300 font-bold">
+                    Super Admin Uniquement
+                  </span>
+                </div>
+                <h3 className="text-base sm:text-lg font-black text-white">
+                  Frais supplémentaires cumulés à régler : ${quotaComparison.totalAccruedCostUSD.toFixed(2)} USD ({quotaComparison.totalAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                </h3>
+                <div className="flex flex-wrap gap-2 text-xs text-rose-200 pt-0.5">
+                  {quotaComparison.alerts.map((al, idx) => (
+                    <span key={idx} className="bg-black/40 px-2 py-0.5 rounded-md border border-white/10 font-medium">
+                      ⚠️ {al}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveTab('SCALABILITY')}
+              className="px-4 py-2.5 bg-white hover:bg-slate-100 text-rose-950 rounded-xl text-xs font-black shadow-lg transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <Server className="w-4 h-4 text-rose-700" />
+              <span>Consulter l'audit Capacité & Frais</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* VIEW 1: OBSERVATOIRE MARCHÉ EN DIRECT (STRICTLY RESERVED TO ADMIN) */}
       {activeTab === 'OBSERVATOIRE' && (
@@ -980,21 +1060,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             </span>
                           )}
 
-                          {ad.mainCategory === 'EMPLOI' ? (
-                            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-sm bg-purple-50 text-purple-800 border border-purple-200">
-                              À EMPLOYER
-                            </span>
-                          ) : ad.transactionType ? (
-                            <span
-                              className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${
-                                ad.transactionType === 'VENTE'
-                                  ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                              }`}
-                            >
-                              {ad.transactionType === 'VENTE' ? 'À VENDRE' : 'À LOUER'}
-                            </span>
-                          ) : null}
+                          {(() => {
+                            const badge = getAdTransactionBadge(ad);
+                            return (
+                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${badge.badgeClass}`}>
+                                {badge.label}
+                              </span>
+                            );
+                          })()}
 
                           <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-sm">
                             {ad.mainCategory}
@@ -1860,88 +1933,586 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* VIEW 5: SCALABILITY & ARCHITECTURE AUDIT */}
+      {/* VIEW 5: SCALABILITY & ARCHITECTURE AUDIT (STRICTLY RESERVED TO SUPER ADMIN FOR FINANCIAL METRICS) */}
       {activeTab === 'SCALABILITY' && (
-        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
-          <div>
-            <span className="bg-indigo-100 text-indigo-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-sm">
-              Rapport d'Ingénierie & Capacité
-            </span>
-            <h2 className="text-xl sm:text-2xl font-black text-slate-900 mt-1">
-              Combien d'utilisateurs cette application peut-elle supporter ?
-            </h2>
-            <p className="text-xs text-slate-500 mt-1">
-              Analyse architecturale détaillée des performances en lecture (visiteurs gratuits) et en écriture (annonceurs connectés).
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-black text-sm">
-                  1
-                </div>
-                <div>
-                  <h4 className="font-extrabold text-sm text-slate-900">Visiteurs Publics (Lecture)</h4>
-                  <span className="text-[11px] text-emerald-700 font-bold">100% Gratuit sans login</span>
-                </div>
+        <div className="space-y-6">
+          {!isSuper ? (
+            /* Restriction notice for non-super admins */
+            <div className="bg-slate-900 text-white rounded-3xl p-8 sm:p-12 border border-slate-800 text-center space-y-4 shadow-xl">
+              <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
+                <Lock className="w-8 h-8 text-amber-400" />
               </div>
-
-              <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Capacité Concurrente</span>
-                <p className="text-2xl font-black text-emerald-600">100 000+ à 1 000 000+</p>
-                <span className="text-[11px] text-slate-500">visiteurs simultanés via CDN Edge</span>
-              </div>
-
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Les visiteurs consultant le catalogue d'annonces sur l'application Frontend ne sollicitent que des lectures statiques ou mises en cache. Servi via Cloud CDN, le coût est quasi nul et l'application ne sature pas même lors de pics de trafic massifs au Gabon.
+              <span className="bg-amber-400/20 text-amber-300 text-[10px] font-black uppercase px-3 py-1 rounded-full border border-amber-400/30">
+                Confidentialité Restreinte
+              </span>
+              <h3 className="text-xl sm:text-2xl font-black">
+                Rubrique Réservée Exclusivement au Super Administrateur
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-300 max-w-xl mx-auto leading-relaxed">
+                Les métriques d'infrastructure (nombre de codes SMS OTP distribués, volume stocké dans Firebase Storage, total des requêtes de téléchargement de documents) ainsi que le suivi des coûts et la comparaison avec le plan gratuit Firebase (Spark/Blaze) sont strictement confidentiels.
               </p>
             </div>
+          ) : (
+            <>
+              {/* SECTION 1: SUPER ADMIN INFRASTRUCTURE & BILLING AUDIT */}
+              <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="bg-purple-100 text-purple-900 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-sm">
+                        Super Admin · Métriques & Facturation
+                      </span>
+                      <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-sm flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping"></span>
+                        Temps Réel
+                      </span>
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-black text-slate-900 mt-1.5">
+                      Capacité, Scalabilité & Suivi des Quotas Firebase
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-1 max-w-2xl">
+                      Audit en temps réel de la consommation de la plateforme, comparaison avec le forfait gratuit Firebase (Spark) et calcul automatique des frais supplémentaires encourus (Plan Blaze).
+                    </p>
+                  </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-sm">
-                  2
+                  {/* Manual refresh action */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => setMetricsTick((prev) => prev + 1)}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-slate-200"
+                      title="Rafraîchir les métriques"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 text-slate-600" />
+                      <span>Actualiser</span>
+                    </button>
+                  </div>
                 </div>
+
+                {/* ACTIVE QUOTA ALERT BANNER FOR SUPER ADMIN */}
+                {quotaComparison.isAnyQuotaExceeded && (
+                  <div className="bg-linear-to-r from-red-950 via-rose-900 to-amber-950 border-2 border-red-500/80 rounded-2xl p-4 sm:p-5 text-white shadow-lg space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 bg-red-500/20 rounded-xl text-red-300 border border-red-400/40 shrink-0 mt-0.5">
+                        <AlertTriangle className="w-5 h-5 text-red-300 animate-pulse" />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="bg-red-500 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
+                            Alerte Dépassement Quota Gratuit
+                          </span>
+                          <span className="text-xs text-amber-300 font-bold">
+                            Plan Firebase Spark dépassé
+                          </span>
+                        </div>
+                        <h4 className="text-base font-black text-white">
+                          Frais supplémentaires accumulés requis à payer : ${quotaComparison.totalAccruedCostUSD.toFixed(2)} USD ({quotaComparison.totalAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                        </h4>
+                        <div className="space-y-1 text-xs text-rose-200 pt-1">
+                          {quotaComparison.alerts.map((alertText, idx) => (
+                            <p key={idx} className="flex items-center gap-1.5">
+                              <span className="text-amber-400 font-black">●</span>
+                              <span>{alertText}</span>
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* THE 3 RELEVANT METRICS CARDS */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  {/* METRIC A: SMS OTP CODES SENT */}
+                  <div className={`p-5 rounded-2xl border transition-all space-y-3 ${
+                    quotaComparison.isSmsQuotaExceeded
+                      ? 'bg-amber-50/60 border-amber-300 shadow-xs'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-black text-xs">
+                          <Send className="w-4 h-4 text-amber-700" />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-sm text-slate-900">Codes SMS OTP Envoyés</h4>
+                          <span className="text-[11px] text-slate-500">Authentification & Sécurité</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (window.confirm("Réinitialiser le compteur de SMS à 0 ?")) {
+                              await resetSmsCounters();
+                            }
+                          }}
+                          className="text-[10px] font-bold text-slate-500 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 px-2 py-0.5 rounded-full border border-slate-200 transition-colors cursor-pointer"
+                          title="Remettre le compteur de SMS à zéro"
+                        >
+                          🔄 Réinitialiser à 0
+                        </button>
+                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                          quotaComparison.isSmsQuotaExceeded
+                            ? 'bg-red-500 text-white animate-pulse'
+                            : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {quotaComparison.isSmsQuotaExceeded ? 'Quota Dépassé' : 'Dans le Quota'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                        Aujourd'hui (Plan Spark : 10 SMS/j inclus)
+                      </span>
+                      <div className="flex items-baseline gap-2">
+                        <p className={`text-3xl font-black ${
+                          quotaComparison.isSmsQuotaExceeded ? 'text-amber-600' : 'text-slate-900'
+                        }`}>
+                          {quotaComparison.smsSentToday}
+                        </p>
+                        <span className="text-xs text-slate-500 font-semibold">
+                          / {quotaComparison.smsDailyQuota} inclus gratuitement
+                        </span>
+                      </div>
+                      <div className="pt-1 flex items-center justify-between text-xs border-t border-slate-100 text-slate-600">
+                        <span>Total historique plateforme :</span>
+                        <span className="font-extrabold text-slate-900">{quotaComparison.smsSentAllTime} SMS</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Excédent au-delà du quota :</span>
+                        <span className={`font-black ${quotaComparison.smsExcessCount > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                          {quotaComparison.smsExcessCount > 0 ? `+${quotaComparison.smsExcessCount} SMS` : '0 SMS'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Tarif unitaire excédent :</span>
+                        <span className="font-bold text-slate-800">${quotaComparison.smsExtraUnitPriceUSD} USD / SMS</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-200/80 font-black text-slate-900">
+                        <span>Frais supplémentaires SMS :</span>
+                        <span className="text-amber-700">
+                          ${quotaComparison.smsAccruedCostUSD.toFixed(2)} USD ({quotaComparison.smsAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                        </span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 leading-tight">
+                      Le plan gratuit Spark inclut 10 SMS/jour. À partir du 11ème envoi, Firebase facture $0.21 par SMS supplémentaire délivré (+241).
+                    </p>
+                  </div>
+
+                  {/* METRIC B: TOTAL STORAGE SIZE */}
+                  <div className={`p-5 rounded-2xl border transition-all space-y-3 ${
+                    quotaComparison.isStorageQuotaExceeded
+                      ? 'bg-red-50/60 border-red-300 shadow-xs'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-800 flex items-center justify-center font-black text-xs">
+                          <HardDrive className="w-4 h-4 text-indigo-700" />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-sm text-slate-900">Volume Firebase Storage</h4>
+                          <span className="text-[11px] text-slate-500">Photos, Vidéos, Fiches & CV</span>
+                        </div>
+                      </div>
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                        quotaComparison.isStorageQuotaExceeded
+                          ? 'bg-red-500 text-white'
+                          : 'bg-emerald-100 text-emerald-800'
+                      }`}>
+                        {quotaComparison.isStorageQuotaExceeded ? 'Quota Dépassé' : 'Dans le Quota'}
+                      </span>
+                    </div>
+
+                    <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                        Taille Totale Fichiers Stockés
+                      </span>
+                      <div className="flex items-baseline gap-2">
+                        <p className={`text-3xl font-black ${
+                          quotaComparison.isStorageQuotaExceeded ? 'text-red-600' : 'text-indigo-600'
+                        }`}>
+                          {quotaComparison.totalStorageGB >= 1
+                            ? `${quotaComparison.totalStorageGB} Go`
+                            : `${(quotaComparison.totalStorageBytes / (1024 * 1024)).toFixed(1)} Mo`}
+                        </p>
+                        <span className="text-xs text-slate-500 font-semibold">
+                          / {quotaComparison.storageFreeTierGB} Go inclus
+                        </span>
+                      </div>
+                      <div className="pt-1 flex items-center justify-between text-xs border-t border-slate-100 text-slate-600">
+                        <span>Taux d'utilisation gratuit :</span>
+                        <span className="font-extrabold text-slate-900">
+                          {((quotaComparison.totalStorageGB / quotaComparison.storageFreeTierGB) * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Excédent au-delà de 5 Go :</span>
+                        <span className={`font-black ${quotaComparison.storageExcessGB > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                          {quotaComparison.storageExcessGB > 0 ? `+${quotaComparison.storageExcessGB} Go` : '0 Go'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Tarif unitaire excédent :</span>
+                        <span className="font-bold text-slate-800">${quotaComparison.storageExtraUnitPriceUSD} USD / Go / mois</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-200/80 font-black text-slate-900">
+                        <span>Frais supplémentaires stockage :</span>
+                        <span className="text-indigo-700">
+                          ${quotaComparison.storageAccruedCostUSD.toFixed(3)} USD ({quotaComparison.storageAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                        </span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 leading-tight">
+                      Comprend les photos d'annonces compressées WebP, vidéos descriptives, fiches de poste employeurs (.pdf, .docx, .md), CV candidats et documents KYC.
+                    </p>
+                  </div>
+
+                  {/* METRIC C: DOWNLOAD REQUESTS AND BANDWIDTH */}
+                  <div className={`p-5 rounded-2xl border transition-all space-y-3 ${
+                    quotaComparison.isDownloadQuotaExceeded
+                      ? 'bg-purple-50/60 border-purple-300 shadow-xs'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center font-black text-xs">
+                          <DownloadCloud className="w-4 h-4 text-purple-700" />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-sm text-slate-900">Requêtes Téléchargement</h4>
+                          <span className="text-[11px] text-slate-500">Fiches, CV, Médias & Exports</span>
+                        </div>
+                      </div>
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                        quotaComparison.isDownloadQuotaExceeded
+                          ? 'bg-red-500 text-white'
+                          : 'bg-emerald-100 text-emerald-800'
+                      }`}>
+                        {quotaComparison.isDownloadQuotaExceeded ? 'Quota Dépassé' : 'Dans le Quota'}
+                      </span>
+                    </div>
+
+                    <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                        Total Requêtes par les Utilisateurs
+                      </span>
+                      <div className="flex items-baseline gap-2">
+                        <p className={`text-3xl font-black ${
+                          quotaComparison.isDownloadQuotaExceeded ? 'text-purple-700' : 'text-slate-900'
+                        }`}>
+                          {quotaComparison.totalDownloadRequests}
+                        </p>
+                        <span className="text-xs text-slate-500 font-semibold">
+                          / {quotaComparison.downloadFreeTierOpsPerDay.toLocaleString('fr-FR')} req/j
+                        </span>
+                      </div>
+                      <div className="pt-1 flex items-center justify-between text-xs border-t border-slate-100 text-slate-600">
+                        <span>Bande passante sortante transférée :</span>
+                        <span className="font-extrabold text-slate-900">{quotaComparison.totalDownloadBandwidthGB} Go</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Quota gratuit bande passante :</span>
+                        <span className="font-bold text-slate-800">{quotaComparison.downloadFreeTierBandwidthGB} Go / jour inclus</span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Bande passante excédentaire :</span>
+                        <span className={`font-black ${quotaComparison.downloadExcessGB > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                          {quotaComparison.downloadExcessGB > 0 ? `+${quotaComparison.downloadExcessGB} Go` : '0 Go'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-200/80 font-black text-slate-900">
+                        <span>Frais supplémentaires bande passante :</span>
+                        <span className="text-purple-700">
+                          ${quotaComparison.downloadAccruedCostUSD.toFixed(3)} USD ({quotaComparison.downloadAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                        </span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 leading-tight">
+                      Comptabilise l'ensemble des clics 'Télécharger fiche de poste', 'Télécharger CV', exports PDF et affichages de médias par les visiteurs.
+                    </p>
+                  </div>
+                </div>
+
+                {/* COMPARATIVE BREAKDOWN TABLE: SPARK (FREE) VS REAL USAGE VS BLAZE (ACCRUED COSTS) */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-slate-900 text-sm">
+                        Comparatif Exhaustif : Forfait Gratuit Firebase (Spark) vs Forfait Réel (Blaze)
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        Détail des seuils gratuits et calcul des frais supplémentaires exigés par Google Cloud / Firebase en cas de dépassement.
+                      </p>
+                    </div>
+                    <span className="text-xs font-black text-slate-700 bg-white px-3 py-1 rounded-xl border border-slate-200">
+                      Taux : 1 USD = 615 FCFA
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                          <th className="py-2.5 px-3">Composant Firebase</th>
+                          <th className="py-2.5 px-3">Quota Plan Gratuit (Spark)</th>
+                          <th className="py-2.5 px-3">Consommation Réelle</th>
+                          <th className="py-2.5 px-3">Dépassement Constaté</th>
+                          <th className="py-2.5 px-3">Tarif Unitaire Dépassement</th>
+                          <th className="py-2.5 px-3 text-right">Frais Requis à Payer</th>
+                          <th className="py-2.5 px-3 text-center">Statut Quota</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 font-medium text-slate-700">
+                        {/* Row 1: SMS OTP */}
+                        <tr className="hover:bg-white/80 transition-colors">
+                          <td className="py-3 px-3">
+                            <div className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                              <Send className="w-3.5 h-3.5 text-amber-600" />
+                              <span>Authentification Téléphone (SMS OTP)</span>
+                            </div>
+                            <span className="text-[10px] text-slate-400">Firebase Phone Auth (+241)</span>
+                          </td>
+                          <td className="py-3 px-3 font-bold text-slate-800">10 SMS / jour</td>
+                          <td className="py-3 px-3 font-extrabold text-slate-900">{quotaComparison.smsSentToday} SMS aujourd'hui</td>
+                          <td className="py-3 px-3">
+                            {quotaComparison.smsExcessCount > 0 ? (
+                              <span className="font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">
+                                +{quotaComparison.smsExcessCount} SMS
+                              </span>
+                            ) : (
+                              <span className="text-emerald-700 font-bold">Aucun dépassement</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 font-bold text-slate-800">$0.21 USD / SMS</td>
+                          <td className="py-3 px-3 text-right font-black text-amber-700">
+                            ${quotaComparison.smsAccruedCostUSD.toFixed(2)} USD
+                            <span className="block text-[10px] text-slate-500 font-normal">
+                              ({quotaComparison.smsAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                              quotaComparison.isSmsQuotaExceeded
+                                ? 'bg-red-500 text-white'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}>
+                              {quotaComparison.isSmsQuotaExceeded ? 'DÉPASSÉ' : 'CONFORME'}
+                            </span>
+                          </td>
+                        </tr>
+
+                        {/* Row 2: Storage */}
+                        <tr className="hover:bg-white/80 transition-colors">
+                          <td className="py-3 px-3">
+                            <div className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                              <HardDrive className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Cloud Storage (Fichiers & Médias)</span>
+                            </div>
+                            <span className="text-[10px] text-slate-400">Photos, Vidéos, Fiches de poste, CV, KYC</span>
+                          </td>
+                          <td className="py-3 px-3 font-bold text-slate-800">5.0 Go inclus</td>
+                          <td className="py-3 px-3 font-extrabold text-slate-900">
+                            {quotaComparison.totalStorageGB >= 1
+                              ? `${quotaComparison.totalStorageGB} Go`
+                              : `${(quotaComparison.totalStorageBytes / (1024 * 1024)).toFixed(1)} Mo`}
+                          </td>
+                          <td className="py-3 px-3">
+                            {quotaComparison.storageExcessGB > 0 ? (
+                              <span className="font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">
+                                +{quotaComparison.storageExcessGB} Go
+                              </span>
+                            ) : (
+                              <span className="text-emerald-700 font-bold">Aucun dépassement</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 font-bold text-slate-800">$0.026 USD / Go / mois</td>
+                          <td className="py-3 px-3 text-right font-black text-indigo-700">
+                            ${quotaComparison.storageAccruedCostUSD.toFixed(3)} USD
+                            <span className="block text-[10px] text-slate-500 font-normal">
+                              ({quotaComparison.storageAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                              quotaComparison.isStorageQuotaExceeded
+                                ? 'bg-red-500 text-white'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}>
+                              {quotaComparison.isStorageQuotaExceeded ? 'DÉPASSÉ' : 'CONFORME'}
+                            </span>
+                          </td>
+                        </tr>
+
+                        {/* Row 3: Downloads & Bandwidth */}
+                        <tr className="hover:bg-white/80 transition-colors">
+                          <td className="py-3 px-3">
+                            <div className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                              <DownloadCloud className="w-3.5 h-3.5 text-purple-600" />
+                              <span>Requêtes de Téléchargement & Bande Passante</span>
+                            </div>
+                            <span className="text-[10px] text-slate-400">Téléchargements fiche de poste, CV et transferts</span>
+                          </td>
+                          <td className="py-3 px-3 font-bold text-slate-800">
+                            50 000 req/j & 1.0 Go/j
+                          </td>
+                          <td className="py-3 px-3 font-extrabold text-slate-900">
+                            {quotaComparison.totalDownloadRequests} req ({quotaComparison.totalDownloadBandwidthGB} Go)
+                          </td>
+                          <td className="py-3 px-3">
+                            {quotaComparison.downloadExcessGB > 0 ? (
+                              <span className="font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">
+                                +{quotaComparison.downloadExcessGB} Go
+                              </span>
+                            ) : (
+                              <span className="text-emerald-700 font-bold">Aucun dépassement</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 font-bold text-slate-800">$0.12 USD / Go sortant</td>
+                          <td className="py-3 px-3 text-right font-black text-purple-700">
+                            ${quotaComparison.downloadAccruedCostUSD.toFixed(3)} USD
+                            <span className="block text-[10px] text-slate-500 font-normal">
+                              ({quotaComparison.downloadAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                              quotaComparison.isDownloadQuotaExceeded
+                                ? 'bg-red-500 text-white'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}>
+                              {quotaComparison.isDownloadQuotaExceeded ? 'DÉPASSÉ' : 'CONFORME'}
+                            </span>
+                          </td>
+                        </tr>
+                      </tbody>
+
+                      {/* SUMMARY TOTAL ROW */}
+                      <tfoot>
+                        <tr className="bg-slate-900 text-white font-black text-xs">
+                          <td colSpan={5} className="py-3.5 px-4 rounded-l-xl uppercase tracking-wider text-right">
+                            Total Frais Supplémentaires Requis à Payer (Forfait Blaze Firebase) :
+                          </td>
+                          <td className="py-3.5 px-3 text-right text-amber-300 text-sm">
+                            ${quotaComparison.totalAccruedCostUSD.toFixed(2)} USD
+                            <span className="block text-[11px] text-emerald-300 font-extrabold">
+                              {quotaComparison.totalAccruedCostFCFA.toLocaleString('fr-FR')} FCFA
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-3 text-center rounded-r-xl">
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                              quotaComparison.isAnyQuotaExceeded
+                                ? 'bg-red-500 text-white animate-pulse'
+                                : 'bg-emerald-500 text-white'
+                            }`}>
+                              {quotaComparison.isAnyQuotaExceeded ? 'ACTION REQUISE' : 'GRATUIT'}
+                            </span>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 2: ENGINEERING ARCHITECTURE & READ/WRITE SCALABILITY */}
+              <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
                 <div>
-                  <h4 className="font-extrabold text-sm text-slate-900">Annonceurs (Authentifiés)</h4>
-                  <span className="text-[11px] text-indigo-700 font-bold">SMS OTP + Publication</span>
+                  <span className="bg-indigo-100 text-indigo-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-sm">
+                    Rapport d'Ingénierie & Capacité
+                  </span>
+                  <h2 className="text-xl sm:text-2xl font-black text-slate-900 mt-1">
+                    Combien d'utilisateurs cette application peut-elle supporter ?
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Analyse architecturale détaillée des performances en lecture (visiteurs gratuits) et en écriture (annonceurs connectés).
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-black text-sm">
+                        1
+                      </div>
+                      <div>
+                        <h4 className="font-extrabold text-sm text-slate-900">Visiteurs Publics (Lecture)</h4>
+                        <span className="text-[11px] text-emerald-700 font-bold">100% Gratuit sans login</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border border-slate-200">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">Capacité Concurrente</span>
+                      <p className="text-2xl font-black text-emerald-600">100 000+ à 1 000 000+</p>
+                      <span className="text-[11px] text-slate-500">visiteurs simultanés via CDN Edge</span>
+                    </div>
+
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Les visiteurs consultant le catalogue d'annonces sur l'application Frontend ne sollicitent que des lectures statiques ou mises en cache. Servi via Cloud CDN, le coût est quasi nul et l'application ne sature pas même lors de pics de trafic massifs au Gabon.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-sm">
+                        2
+                      </div>
+                      <div>
+                        <h4 className="font-extrabold text-sm text-slate-900">Annonceurs (Authentifiés)</h4>
+                        <span className="text-[11px] text-indigo-700 font-bold">SMS OTP + Publication</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border border-slate-200">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">Débit d'Écriture Backend</span>
+                      <p className="text-2xl font-black text-indigo-600">10 000 requêtes / sec</p>
+                      <span className="text-[11px] text-slate-500">avec Firestore ou PostgreSQL Cloud SQL</span>
+                    </div>
+
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Les annonceurs se connectant par numéro (+241) avec code OTP reçoivent un jeton de session JWT. La création d'annonce et le stockage des photos (Google Cloud Storage) s'effectuent de façon asynchrone sans bloquer l'expérience utilisateur.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center font-black text-sm">
+                        3
+                      </div>
+                      <div>
+                        <h4 className="font-extrabold text-sm text-slate-900">Passerelle SMS (+241)</h4>
+                        <span className="text-[11px] text-amber-700 font-bold">Airtel Gabon & Moov Africa</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border border-slate-200">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">Envois SMS OTP</span>
+                      <p className="text-2xl font-black text-amber-600">500 à 1 000 SMS / sec</p>
+                      <span className="text-[11px] text-slate-500">via Twilio / Infobip / Africa's Talking</span>
+                    </div>
+
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Le seul facteur limitant au Gabon est le débit de distribution des SMS par les opérateurs locaux (Airtel / Moov). Avec une route directe SMPP, la plateforme délivre le code OTP en moins de 3 secondes.
+                    </p>
+                  </div>
                 </div>
               </div>
-
-              <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Débit d'Écriture Backend</span>
-                <p className="text-2xl font-black text-indigo-600">10 000 requêtes / sec</p>
-                <span className="text-[11px] text-slate-500">avec Firestore ou PostgreSQL Cloud SQL</span>
-              </div>
-
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Les annonceurs se connectant par numéro (+241) avec code OTP reçoivent un jeton de session JWT. La création d'annonce et le stockage des photos (Google Cloud Storage) s'effectuent de façon asynchrone sans bloquer l'expérience utilisateur.
-              </p>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center font-black text-sm">
-                  3
-                </div>
-                <div>
-                  <h4 className="font-extrabold text-sm text-slate-900">Passerelle SMS (+241)</h4>
-                  <span className="text-[11px] text-amber-700 font-bold">Airtel Gabon & Moov Africa</span>
-                </div>
-              </div>
-
-              <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Envois SMS OTP</span>
-                <p className="text-2xl font-black text-amber-600">500 à 1 000 SMS / sec</p>
-                <span className="text-[11px] text-slate-500">via Twilio / Infobip / Africa's Talking</span>
-              </div>
-
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Le seul facteur limitant au Gabon est le débit de distribution des SMS par les opérateurs locaux (Airtel / Moov). Avec une route directe SMPP, la plateforme délivre le code OTP en moins de 3 secondes.
-              </p>
-            </div>
-          </div>
+            </>
+          )}
         </div>
       )}
 

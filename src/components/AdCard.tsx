@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw, Edit3, Sparkles, CheckCircle2, ShieldCheck, Heart, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Ad } from '../types';
-import { formatFCFA, formatRemainingTime, getWhatsAppUrl, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, getWhatsAppUrl, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
 import { isAdBoostFeatured, recordAdInteraction } from '../utils/personalization';
 import { isAdVipCornerEligible } from '../utils/vipCorner';
 import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
@@ -76,6 +76,16 @@ export const AdCard: React.FC<AdCardProps> = ({
   const isNecrologie = ad.mainCategory === 'NECROLOGIE';
   const isAvisRecherche = ad.mainCategory === 'AVIS_DE_RECHERCHE';
 
+  // Point 4: Description limitée au maximum à 300 caractères avec césure propre
+  const displayDescription = React.useMemo(() => {
+    if (!ad.description) return '';
+    const trimmed = ad.description.trim();
+    if (trimmed.length <= 300) return trimmed;
+    const sliced = trimmed.slice(0, 300);
+    const lastSpace = sliced.lastIndexOf(' ');
+    return (lastSpace > 240 ? sliced.slice(0, lastSpace) : sliced) + '...';
+  }, [ad.description]);
+
   const handleCardClick = () => {
     recordAdInteraction(ad);
     onSelectAd(ad);
@@ -83,7 +93,8 @@ export const AdCard: React.FC<AdCardProps> = ({
 
   return (
     <div
-      className={`group bg-white rounded-2xl border transition-all duration-200 overflow-hidden flex flex-col hover:shadow-xl hover:-translate-y-0.5 ${
+      onClick={handleCardClick}
+      className={`group cursor-pointer bg-white rounded-2xl border transition-all duration-200 overflow-hidden flex flex-col hover:shadow-xl hover:-translate-y-0.5 ${
         isNecrologie
           ? 'border-slate-800 ring-1 ring-slate-800/30 shadow-md bg-white hover:border-slate-900'
           : isAvisRecherche
@@ -123,23 +134,35 @@ export const AdCard: React.FC<AdCardProps> = ({
           )}
         </div>
       )}
-      {/* Image container with Point 6: PC arrows and mobile swipe */}
+      {/* Image container: Affichage intégral sans recadrage agressif (Point 2) */}
       <div
-        className="relative aspect-16/10 bg-slate-100 overflow-hidden cursor-pointer select-none group/img"
-        onClick={handleCardClick}
+        className="relative aspect-16/10 bg-slate-950 overflow-hidden select-none group/img"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
+        {/* Fond d'ambiance flouté pour harmoniser les marges sans bandes vides */}
+        <img
+          src={images[activeImageIndex]}
+          alt=""
+          aria-hidden="true"
+          className="absolute inset-0 w-full h-full object-cover blur-md scale-110 opacity-30 select-none pointer-events-none z-0"
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          decoding="async"
+        />
+
+        {/* Photo intégrale non rognée (object-contain) au niveau z-0 */}
         <img
           src={images[activeImageIndex]}
           alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          className="relative z-0 w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-300 drop-shadow-xs"
           referrerPolicy="no-referrer"
           loading="lazy"
+          decoding="async"
         />
 
-        {/* PC Arrows: Left and Right (Point 6) */}
+        {/* PC Arrows: Left and Right (Point 6) au niveau z-30 */}
         {hasMultipleImages && (
           <>
             <button
@@ -147,7 +170,7 @@ export const AdCard: React.FC<AdCardProps> = ({
               onClick={handlePrevImage}
               aria-label="Photo précédente"
               title="Photo précédente"
-              className="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white items-center justify-center opacity-0 group-hover:opacity-100 group-hover/img:opacity-100 transition-all duration-200 shadow-md backdrop-blur-xs z-20 hover:scale-110 cursor-pointer"
+              className="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white items-center justify-center opacity-0 group-hover:opacity-100 group-hover/img:opacity-100 transition-all duration-200 shadow-md backdrop-blur-xs z-30 hover:scale-110 cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -156,13 +179,13 @@ export const AdCard: React.FC<AdCardProps> = ({
               onClick={handleNextImage}
               aria-label="Photo suivante"
               title="Photo suivante"
-              className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white items-center justify-center opacity-0 group-hover:opacity-100 group-hover/img:opacity-100 transition-all duration-200 shadow-md backdrop-blur-xs z-20 hover:scale-110 cursor-pointer"
+              className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white items-center justify-center opacity-0 group-hover:opacity-100 group-hover/img:opacity-100 transition-all duration-200 shadow-md backdrop-blur-xs z-30 hover:scale-110 cursor-pointer"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
 
             {/* Pagination Dots indicator */}
-            <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1 z-10 pointer-events-none">
+            <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1 z-20 pointer-events-none">
               {images.map((_, idx) => (
                 <span
                   key={idx}
@@ -175,8 +198,8 @@ export const AdCard: React.FC<AdCardProps> = ({
           </>
         )}
 
-        {/* Top Badges overlay */}
-        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-start justify-between gap-1 pointer-events-none">
+        {/* Top Badges overlay: z-20 impératif pour flotter au-dessus de la photo */}
+        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-start justify-between gap-1 pointer-events-none z-20">
           {/* Transaction Type: VENTE, LOCATION or À EMPLOYER */}
           <div className="flex flex-col gap-1">
             {isVip && (
@@ -184,61 +207,17 @@ export const AdCard: React.FC<AdCardProps> = ({
                 👑 VIP
               </span>
             )}
-            {isBoosted && (
-              <span className="text-[10px] font-black tracking-wide uppercase px-2 py-0.5 rounded-lg shadow-sm bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 flex items-center gap-1 border border-amber-300">
-                <Sparkles className="w-3 h-3 fill-slate-950" />
-                <span>En Tête</span>
-              </span>
-            )}
-            {ad.mainCategory === 'EMPLOI' ? (
-              <span
-                className={`text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs ${
-                  ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
-                    ? 'bg-teal-600 text-white ring-1 ring-teal-400'
-                    : 'bg-purple-600 text-white ring-1 ring-purple-400'
-                }`}
-              >
-                {ad.jobKind === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
-                  ? "Demande d'Emploi"
-                  : "Offre d'Emploi"}
-              </span>
-            ) : ad.mainCategory === 'BRIC_A_BRAC' ? (
-              <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-amber-500 text-slate-950 ring-1 ring-amber-400">
-                À Vendre
-              </span>
-            ) : ad.mainCategory === 'COURS_A_DOMICILE' ? (
-              <span className={`text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs ${
-                ad.tutoringData?.kind === 'DEMANDE'
-                  ? 'bg-purple-600 text-white ring-1 ring-purple-400'
-                  : 'bg-indigo-600 text-white ring-1 ring-indigo-400'
-              }`}>
-                {ad.tutoringData?.kind === 'DEMANDE' ? 'Demande de Cours' : 'Offre de Cours'}
-              </span>
-            ) : ad.mainCategory === 'NECROLOGIE' ? (
-              <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-slate-950 text-white ring-1 ring-slate-700">
-                Avis d'Obsèques
-              </span>
-            ) : ad.mainCategory === 'AVIS_DE_RECHERCHE' ? (
-              <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-red-600 text-white ring-1 ring-red-400">
-                Avis de Recherche
-              </span>
-            ) : ad.mainCategory === 'AUTRES_EMPLOIS' ? (
-              <span className="text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs bg-teal-600 text-white ring-1 ring-teal-400">
-                {ad.autresEmploisData?.subCategory === 'DEMANDE_EMPLOI' || ad.transactionType === 'CHERCHE_EMPLOI'
-                  ? "Demandeur d'emploi"
-                  : "Offre d'emploi"}
-              </span>
-            ) : ad.transactionType ? (
-              <span
-                className={`text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs ${
-                  ad.transactionType === 'VENTE'
-                    ? 'bg-amber-500 text-slate-950 ring-1 ring-amber-400'
-                    : 'bg-emerald-600 text-white ring-1 ring-emerald-400'
-                }`}
-              >
-                {ad.transactionType === 'VENTE' ? 'À Vendre' : 'À Louer'}
-              </span>
-            ) : null}
+
+            {(() => {
+              const badge = getAdTransactionBadge(ad);
+              return (
+                <span
+                  className={`text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs ${badge.cardBadgeClass}`}
+                >
+                  {badge.label}
+                </span>
+              );
+            })()}
 
             {ad.propertyType && (
               <span className="text-[10px] font-bold bg-slate-900/85 text-slate-100 px-2 py-0.5 rounded-md shadow-xs">
@@ -275,11 +254,15 @@ export const AdCard: React.FC<AdCardProps> = ({
                 {ad.autresEmploisData.profession}
               </span>
             )}
-            {(ad.cvUrl || ad.cvFileName) && (
-              <span className="text-[10px] font-bold bg-indigo-700/90 text-white px-2 py-0.5 rounded-md shadow-xs flex items-center gap-1">
-                📄 CV {ad.cvFileType ? `.${ad.cvFileType.toLowerCase()}` : 'joint'}
-              </span>
-            )}
+            {(ad.cvUrl || ad.cvFileName || ad.jobDocUrl || ad.autresEmploisData?.jobDocUrl) && (() => {
+              const isSeeker = ad.autresEmploisData?.subCategory === "Demandeur d'emploi" || ad.transactionType === 'CHERCHE_EMPLOI';
+              const ext = (ad.jobDocFileType || ad.autresEmploisData?.jobDocFileType || ad.cvFileType || 'doc').toLowerCase();
+              return (
+                <span className="text-[10px] font-bold bg-indigo-700/90 text-white px-2 py-0.5 rounded-md shadow-xs flex items-center gap-1">
+                  📄 {isSeeker ? `CV .${ext}` : `Fiche poste .${ext}`}
+                </span>
+              );
+            })()}
           </div>
 
           {/* Right badges: Expiration Countdown and Favorite button */}
@@ -318,7 +301,7 @@ export const AdCard: React.FC<AdCardProps> = ({
         </div>
 
         {/* Media indicators (Photo count / Video badge) */}
-        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 pointer-events-none z-10">
+        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 pointer-events-none z-20">
           {hasMultipleImages && (
             <span className="bg-black/75 text-white text-[10px] font-bold px-2 py-0.5 rounded-md backdrop-blur-xs shadow-xs">
               📷 {activeImageIndex + 1}/{images.length}
@@ -332,7 +315,7 @@ export const AdCard: React.FC<AdCardProps> = ({
         </div>
 
         {/* Views counter */}
-        <div className="absolute bottom-2.5 right-2.5 bg-black/60 text-white/90 text-[10px] font-medium px-2 py-0.5 rounded-md flex items-center gap-1 backdrop-blur-xs">
+        <div className="absolute bottom-2.5 right-2.5 bg-black/60 text-white/90 text-[10px] font-medium px-2 py-0.5 rounded-md flex items-center gap-1 backdrop-blur-xs z-20">
           <Eye className="w-3 h-3" />
           <span>{ad.viewsCount || 0} vue{(ad.viewsCount || 0) > 1 ? 's' : ''}</span>
         </div>
@@ -383,10 +366,12 @@ export const AdCard: React.FC<AdCardProps> = ({
             {ad.title}
           </h4>
 
-          {/* Short description with max character limit respect */}
-          <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed mb-3">
-            {ad.description}
-          </p>
+          {/* Description : limitée à un maximum de 300 caractères avec espacement aéré garanti (Point 4) */}
+          {displayDescription && (
+            <p className="text-xs text-slate-600 line-clamp-4 leading-relaxed mb-3 whitespace-pre-line">
+              {displayDescription}
+            </p>
+          )}
 
           {/* Point 3: Informations Nécrologie visibles sur l'annonce en ligne */}
           {isNecrologie && (

@@ -1,7 +1,7 @@
 import React from 'react';
 import { RefreshCw, Clock, Eye, AlertCircle, PlusCircle, Calendar, ShieldCheck, Edit3 } from 'lucide-react';
 import { Ad } from '../types';
-import { formatFCFA, formatRemainingTime } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
 
 interface MyAdsManagerProps {
   ads: Ad[];
@@ -63,21 +63,14 @@ export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
               <div>
                 <div className="flex items-start justify-between gap-3 mb-2">
                   <div className="flex items-center gap-2">
-                    {ad.mainCategory === 'EMPLOI' || ad.transactionType === 'EMPLOYER' ? (
-                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-sm bg-purple-100 text-purple-900 border border-purple-300">
-                        À EMPLOYER
-                      </span>
-                    ) : ad.transactionType ? (
-                      <span
-                        className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${
-                          ad.transactionType === 'VENTE'
-                            ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                            : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                        }`}
-                      >
-                        {ad.transactionType === 'VENTE' ? 'À VENDRE' : 'À LOUER'}
-                      </span>
-                    ) : null}
+                    {(() => {
+                      const badge = getAdTransactionBadge(ad);
+                      return (
+                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${badge.badgeClass}`}>
+                          {badge.label}
+                        </span>
+                      );
+                    })()}
                     <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-sm">
                       {ad.mainCategory}
                     </span>

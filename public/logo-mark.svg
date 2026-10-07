@@ -1,0 +1,7 @@
+<svg width="100" height="96" viewBox="140 8 100 96" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>BIZBOOSTER Logo Mark</title>
+  <desc>A single angular mark combining a tapering flag shaped spine and a zigzag lightning bolt that doubles as the bowl of a B, yellow spine, green bolt, blue accent at the tip, using the official Gabonese flag colors, transparent background.</desc>
+  <polygon points="150,20 159,18 149,94" fill="#FCD116"/>
+  <path d="M150,20 L212,14 L172,48 L216,44 L150,94" fill="none" stroke="#009E60" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="150" cy="94" r="6" fill="#4664B2"/>
+</svg>

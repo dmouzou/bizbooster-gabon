@@ -21,6 +21,7 @@ import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { INITIAL_ADS } from './data/initialAds';
 import { getFrontendUrl } from './utils/navigation';
 import { AppAlertModal, AlertModalConfig } from './components/AppAlertModal';
+import { BizboosterLogo } from './components/BizboosterLogo';
 
 type AdminStatus = 'loading' | 'signedOut' | 'denied' | 'admin';
 
@@ -508,11 +509,14 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-900/95 p-4">
         <form onSubmit={handleLogin} className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-lg font-black text-slate-900">BIZBOOSTER · Back-Office</h1>
-            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Admin</span>
+          <div className="flex flex-col items-center text-center pb-2 border-b border-slate-100">
+            <BizboosterLogo variant="stacked" iconSize={48} className="mb-2" />
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-xs font-black uppercase tracking-wider text-slate-700">Back-Office Modération</span>
+              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Admin</span>
+            </div>
           </div>
-          <p className="text-xs text-slate-500">Accès réservé à l'équipe de modération et d'administration.</p>
+          <p className="text-xs text-slate-500 text-center">Accès réservé à l'équipe de modération et d'administration.</p>
           {loginError && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2.5 font-semibold">{loginError}</div>}
           <input
             type="text"

@@ -81,5 +81,5 @@ export const PRICING_CONFIG = {
   pricePerExtraImage: 500, // 500 FCFA par photo à partir de la 6e
   maxImages: 10, // Plafond maximal de photos par annonce
   videoPrice: 2000, // FCFA pour courte vidéo descriptive (30s max)
-  maxCharLength: 500 // Limite de caractères du descriptif (Point 7)
+  maxCharLength: 1000 // Limite de caractères du descriptif (1000 caractères max pour toutes les catégories)
 };

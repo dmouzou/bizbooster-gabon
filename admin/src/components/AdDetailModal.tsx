@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3 } from 'lucide-react';
+import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3, ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
 import { Ad, UserProfile } from '../types';
-import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner, getAdTransactionBadge } from '../utils/formatters';
 import { ReportAdModal } from './ReportAdModal';
 import { ShareAdModal } from './ShareAdModal';
 
@@ -19,6 +19,67 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isReportOpen, setIsReportOpen] = useState(false);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [touchEndX, setTouchEndX] = useState<number | null>(null);
+
+  const images = (ad.images && ad.images.length > 0)
+    ? ad.images
+    : ['https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1000&q=80'];
+  const currentImage = images[activeImageIndex] || images[0];
+  const hasMultipleImages = images.length > 1;
+
+  React.useEffect(() => {
+    setActiveImageIndex(0);
+    setIsLightboxOpen(false);
+  }, [ad.id]);
+
+  const handlePrevImage = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setActiveImageIndex((prev) => (prev > 0 ? prev - 1 : images.length - 1));
+  };
+
+  const handleNextImage = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setActiveImageIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0));
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStartX(e.targetTouches[0].clientX);
+    setTouchEndX(null);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    setTouchEndX(e.targetTouches[0].clientX);
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStartX === null || touchEndX === null || !hasMultipleImages) return;
+    const diff = touchStartX - touchEndX;
+    if (diff > 45) {
+      handleNextImage();
+    } else if (diff < -45) {
+      handlePrevImage();
+    }
+    setTouchStartX(null);
+    setTouchEndX(null);
+  };
+
+  React.useEffect(() => {
+    if (!isLightboxOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsLightboxOpen(false);
+      } else if (e.key === 'ArrowLeft') {
+        handlePrevImage();
+      } else if (e.key === 'ArrowRight') {
+        handleNextImage();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isLightboxOpen, hasMultipleImages, images.length]);
+
   const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
   const isOwner = isAdOwner(ad, currentUser ?? null);
 
@@ -64,21 +125,14 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
           {/* Main Title & Badges */}
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-2">
-              {ad.mainCategory === 'EMPLOI' ? (
-                <span className="text-xs font-black uppercase px-2.5 py-1 rounded-lg bg-purple-100 text-purple-900 border border-purple-300">
-                  À EMPLOYER (Emploi)
-                </span>
-              ) : ad.transactionType ? (
-                <span
-                  className={`text-xs font-black uppercase px-2.5 py-1 rounded-lg ${
-                    ad.transactionType === 'VENTE'
-                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                      : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                  }`}
-                >
-                  {ad.transactionType === 'VENTE' ? 'À VENDRE (Achat)' : 'À LOUER (Location)'}
-                </span>
-              ) : null}
+              {(() => {
+                const badge = getAdTransactionBadge(ad);
+                return (
+                  <span className={`text-xs font-black uppercase px-2.5 py-1 rounded-lg ${badge.badgeClass}`}>
+                    {badge.label}
+                  </span>
+                );
+              })()}
 
               {ad.propertyType && (
                 <span className="text-xs font-bold bg-slate-100 text-slate-800 px-2.5 py-1 rounded-lg border border-slate-200">
@@ -124,28 +178,103 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
             )}
           </div>
 
-          {/* Photo Gallery */}
-          <div>
-            <div className="aspect-16/10 sm:aspect-16/9 rounded-2xl overflow-hidden bg-slate-100 border border-slate-200">
+          {/* Photo Gallery: Présentation intégrale sans recadrage */}
+          <div className="space-y-2.5">
+            <div
+              className="relative aspect-16/10 sm:aspect-16/9 rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center select-none group/gallery cursor-pointer"
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              onClick={() => setIsLightboxOpen(true)}
+              title="Cliquer pour afficher la photo en grand écran"
+            >
+              {/* Fond d'ambiance flouté pour harmoniser les marges */}
               <img
-                src={ad.images?.[activeImageIndex] || ad.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1000&q=80'}
-                alt={ad.title || 'Annonce'}
-                className="w-full h-full object-cover"
+                src={currentImage}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-35 select-none pointer-events-none z-0"
                 referrerPolicy="no-referrer"
               />
+
+              {/* Photo intégrale non rognée (object-contain) */}
+              <img
+                src={currentImage}
+                alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
+                className="relative z-10 w-full h-full object-contain drop-shadow-md select-none transition-transform duration-300 group-hover/gallery:scale-[1.01]"
+                referrerPolicy="no-referrer"
+              />
+
+              {/* Badge compteur de photos */}
+              {hasMultipleImages && (
+                <div className="absolute bottom-3 right-3 z-20 bg-slate-950/80 backdrop-blur-xs text-white text-[11px] font-bold px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 shadow-md">
+                  <span>📷</span>
+                  <span>{activeImageIndex + 1} / {images.length}</span>
+                </div>
+              )}
+
+              {/* Bouton Agrandir / Plein écran */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsLightboxOpen(true);
+                }}
+                className="absolute top-3 right-3 z-20 p-2 rounded-xl bg-slate-950/70 hover:bg-slate-950 text-white backdrop-blur-xs border border-white/10 shadow-md transition-all hover:scale-105 cursor-pointer opacity-90 hover:opacity-100"
+                title="Agrandir la photo en plein écran"
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+
+              {/* Flèches de navigation Précédent / Suivant */}
+              {hasMultipleImages && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handlePrevImage}
+                    aria-label="Photo précédente"
+                    title="Photo précédente"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white flex items-center justify-center transition-all duration-200 shadow-lg backdrop-blur-xs z-20 hover:scale-110 cursor-pointer opacity-80 hover:opacity-100"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNextImage}
+                    aria-label="Photo suivante"
+                    title="Photo suivante"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white flex items-center justify-center transition-all duration-200 shadow-lg backdrop-blur-xs z-20 hover:scale-110 cursor-pointer opacity-80 hover:opacity-100"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                </>
+              )}
             </div>
 
-            {(ad.images?.length || 0) > 1 && (
-              <div className="flex gap-2 mt-2.5 overflow-x-auto pb-1">
-                {(ad.images || []).map((img, idx) => (
+            {/* Vignettes sous la photo principale */}
+            {hasMultipleImages && (
+              <div className="flex gap-2.5 overflow-x-auto pb-1 scrollbar-thin">
+                {images.map((img, idx) => (
                   <button
                     key={idx}
+                    type="button"
                     onClick={() => setActiveImageIndex(idx)}
-                    className={`w-16 h-14 rounded-xl overflow-hidden border-2 shrink-0 transition-all ${
-                      activeImageIndex === idx ? 'border-emerald-600 ring-2 ring-emerald-400' : 'border-slate-200 opacity-70 hover:opacity-100'
+                    className={`relative w-16 h-14 rounded-xl overflow-hidden border-2 shrink-0 transition-all bg-slate-900 cursor-pointer ${
+                      activeImageIndex === idx
+                        ? 'border-emerald-500 ring-2 ring-emerald-400/40 opacity-100 scale-102'
+                        : 'border-slate-200 opacity-60 hover:opacity-100 hover:border-slate-400'
                     }`}
+                    title={`Afficher la photo ${idx + 1}`}
                   >
-                    <img src={img} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <img
+                      src={img}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    {activeImageIndex === idx && (
+                      <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none" />
+                    )}
                   </button>
                 ))}
               </div>
@@ -330,6 +459,109 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({ ad, onClose, onOpe
         onClose={() => setIsShareModalOpen(false)}
         ad={ad}
       />
+
+      {/* Lightbox Plein Écran */}
+      {isLightboxOpen && (
+        <div
+          className="fixed inset-0 z-70 bg-slate-950/95 backdrop-blur-md flex flex-col justify-between p-3 sm:p-5 animate-in fade-in duration-200"
+          onClick={() => setIsLightboxOpen(false)}
+        >
+          {/* Header Lightbox */}
+          <div
+            className="flex items-center justify-between text-white shrink-0 pb-2 z-80"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 min-w-0 pr-4">
+              <span className="text-xs font-black uppercase text-amber-400 bg-amber-950/80 px-2.5 py-1 rounded-lg border border-amber-500/30 shrink-0">
+                REF: {ad.id.toUpperCase()}
+              </span>
+              <span className="text-xs font-semibold text-slate-300 truncate">
+                {ad.title}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0">
+              {hasMultipleImages && (
+                <span className="text-xs font-bold text-slate-300 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700">
+                  📷 {activeImageIndex + 1} / {images.length}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsLightboxOpen(false)}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white transition-colors cursor-pointer"
+                title="Fermer le plein écran (Échap)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Corps Image Plein Écran */}
+          <div
+            className="relative flex-1 flex items-center justify-center p-2 min-h-0 select-none"
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={currentImage}
+              alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
+              className="max-w-full max-h-[80vh] object-contain rounded-xl drop-shadow-2xl select-none"
+              referrerPolicy="no-referrer"
+            />
+
+            {/* Flèches de navigation en plein écran */}
+            {hasMultipleImages && (
+              <>
+                <button
+                  type="button"
+                  onClick={handlePrevImage}
+                  aria-label="Photo précédente"
+                  title="Photo précédente"
+                  className="absolute left-2 sm:left-6 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/80 hover:bg-slate-900 text-white flex items-center justify-center transition-all duration-200 shadow-xl backdrop-blur-xs z-30 hover:scale-110 cursor-pointer"
+                >
+                  <ChevronLeft className="w-6 h-6" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNextImage}
+                  aria-label="Photo suivante"
+                  title="Photo suivante"
+                  className="absolute right-2 sm:right-6 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/80 hover:bg-slate-900 text-white flex items-center justify-center transition-all duration-200 shadow-xl backdrop-blur-xs z-30 hover:scale-110 cursor-pointer"
+                >
+                  <ChevronRight className="w-6 h-6" />
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Vignettes Lightbox */}
+          {hasMultipleImages && (
+            <div
+              className="flex justify-center gap-2 overflow-x-auto py-2 shrink-0 z-80"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {images.map((img, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setActiveImageIndex(idx)}
+                  className={`w-14 h-12 rounded-xl overflow-hidden border-2 shrink-0 transition-all bg-slate-900 cursor-pointer ${
+                    activeImageIndex === idx
+                      ? 'border-emerald-500 ring-2 ring-emerald-400 opacity-100 scale-105'
+                      : 'border-slate-700 opacity-60 hover:opacity-100 hover:border-slate-500'
+                  }`}
+                  title={`Photo ${idx + 1}`}
+                >
+                  <img src={img} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

@@ -7,6 +7,7 @@ import {
   LogOut,
 } from 'lucide-react';
 import { MainCategory, UserProfile, isUserAdmin } from '../types';
+import { BizboosterLogo } from './BizboosterLogo';
 
 interface HeaderProps {
   currentTab: 'catalog' | 'user-dashboard';
@@ -63,26 +64,21 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Logo and Brand */}
         <div className="flex items-center justify-between w-full md:w-auto min-w-0">
           <div
-            onClick={() => setCurrentTab('catalog')}
-            className="cursor-pointer flex items-center gap-1.5 sm:gap-3 group shrink-0 min-w-0"
+            onClick={() => {
+              setCurrentTab('catalog');
+              try {
+                window.scrollTo({ top: 0, behavior: 'instant' });
+              } catch {
+                window.scrollTo(0, 0);
+              }
+              document.documentElement.scrollTop = 0;
+              document.body.scrollTop = 0;
+            }}
+            className="cursor-pointer group shrink-0 min-w-0"
             id="brand-logo"
+            title="BIZBOOSTER Gabon - Accueil"
           >
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-900 flex items-center justify-center text-white font-black text-base sm:text-xl shadow-md shadow-emerald-700/20 group-hover:scale-105 transition-transform border border-emerald-500/30 shrink-0">
-              <span className="text-amber-400">B</span>Z
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1">
-                <span className="font-extrabold text-base sm:text-xl tracking-tight text-slate-900 whitespace-nowrap">
-                  BIZ<span className="text-emerald-600">BOOSTER</span>
-                </span>
-                <span className="bg-amber-100 text-amber-800 text-[8px] sm:text-[10px] font-bold px-1 sm:px-1.5 py-0.2 sm:py-0.5 rounded-sm uppercase tracking-wider shrink-0 hidden min-[360px]:inline-block">
-                  Gabon
-                </span>
-              </div>
-              <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium hidden xs:block truncate">
-                Vente & Location • Annonces Commerciales
-              </p>
-            </div>
+            <BizboosterLogo variant="horizontal" iconSize={36} />
           </div>
 
           {/* Mobile Actions: Phone login & Publish */}
@@ -183,9 +179,9 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {currentUser ? (
-            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl">
-              <div className="text-right">
-                <span className="block text-xs font-bold text-slate-800 leading-tight">
+            <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 px-3.5 py-1.5 rounded-xl">
+              <div className="text-center min-w-0">
+                <span className="block text-xs font-bold text-slate-800 leading-tight truncate">
                   {currentUser.name}
                 </span>
                 <span className="text-[10px] text-slate-500 font-medium">
@@ -194,7 +190,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <button
                 onClick={onLogout}
-                className="bg-red-600 hover:bg-red-700 active:bg-red-800 text-white p-1.5 rounded-lg transition-all shadow-xs cursor-pointer flex items-center justify-center"
+                className="bg-red-600 hover:bg-red-700 active:bg-red-800 text-white p-1.5 rounded-lg transition-all shadow-xs cursor-pointer flex items-center justify-center shrink-0"
                 title="Se déconnecter"
               >
                 <LogOut className="w-3.5 h-3.5" />
