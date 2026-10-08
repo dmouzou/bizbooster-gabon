@@ -253,24 +253,24 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
             type="button"
             onClick={() => onOpenMobileCategoryMenu?.()}
             id="open-mobile-category-menu-btn"
-            className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 active:bg-slate-950 text-white shadow-md transition-all active:scale-[0.99] cursor-pointer group border border-slate-800"
+            className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-900 shadow-sm transition-all active:scale-[0.99] cursor-pointer group border border-slate-200"
           >
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0 border border-emerald-100">
                 <Grid className="w-4 h-4" />
               </div>
               <div className="text-left min-w-0">
-                <span className="text-xs font-black text-white tracking-wide block truncate">
+                <span className="text-xs font-black text-slate-900 tracking-wide block truncate">
                   Sélectionner une catégorie
                 </span>
-                <span className="text-[10px] text-slate-300 block truncate">
+                <span className="text-[10px] text-slate-500 block truncate">
                   {activeCategory === 'ALL'
                     ? 'Choisir parmi les 8 rubriques'
                     : `Sélection : ${categories.find((c) => c.id === activeCategory)?.label || activeCategory}`}
                 </span>
               </div>
             </div>
-            <div className="flex items-center gap-1 text-emerald-400 font-bold text-xs group-hover:translate-x-0.5 transition-transform shrink-0">
+            <div className="flex items-center gap-1 text-emerald-600 font-bold text-xs group-hover:translate-x-0.5 transition-transform shrink-0">
               <span>Parcourir</span>
               <ChevronRight className="w-4 h-4" />
             </div>

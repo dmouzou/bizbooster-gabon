@@ -172,8 +172,8 @@ export interface Ad {
   jobDocFileType?: 'pdf' | 'docx' | 'md' | string;
   jobDocFileSize?: number;
 
-  // Point 4: Corner VIP
-  isVipCorner?: boolean; // Éligible et affiché dans le Corner VIP sans frais
+  // Point 4: Coin VIP
+  isVipCorner?: boolean; // Éligible et affiché dans le Coin VIP sans frais
 
   price: number; // in FCFA (XAF)
   priceMax?: number; // Point 1: Tranche de salaire / prix (ex: 150 000 - 250 000 FCFA)

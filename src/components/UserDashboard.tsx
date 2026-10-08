@@ -60,11 +60,30 @@ import { AdCard } from './AdCard';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
 import { recordPasswordCooldown } from '../utils/passwordCooldown';
 
-const formatGabonPhone = (raw: string) => {
+const getPhoneClean = (raw: string): string => {
   let clean = raw.replace(/[^0-9]/g, '');
   if (clean.startsWith('241')) clean = clean.slice(3);
-  if (clean.startsWith('0')) clean = clean.slice(1);
+  while (clean.startsWith('0')) clean = clean.slice(1);
+  return clean;
+};
+
+const formatGabonPhone = (raw: string): string => {
+  const clean = getPhoneClean(raw);
   return `+241${clean}`;
+};
+
+const formatGabonPhoneForSms = (raw: string): string => {
+  const clean = getPhoneClean(raw);
+  return `+2410${clean}`;
+};
+
+const TEST_PHONE_CODES: Record<string, string> = {
+  '+24167256341': '555555',
+  '+24177874707': '000111',
+  '+24167896902': '111777',
+  '+24177276895': '777777',
+  '+24177905165': '000000',
+  '+24167443312': '676767',
 };
 
 interface UserDashboardProps {
@@ -591,68 +610,52 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       setPwdError('Aucun numéro de téléphone Gabon associé à ce compte.');
       return;
     }
-    const e164 = formatGabonPhone(phone);
-    const cleanDigits = phone.replace(/\D/g, '');
-    const e164Clean = e164.replace(/\D/g, '');
+    const cleanDigits = getPhoneClean(phone);
+    if (!/^[67]\d{7}$/.test(cleanDigits)) {
+      setPwdError('Numéro Gabon invalide (8 chiffres requis).');
+      return;
+    }
+    const phoneStandard = formatGabonPhone(phone);
     setPwdLoading(true);
     try {
       const verifier = getOrCreatePwdRecaptcha();
-      pwdConfirmationRef.current = await signInWithPhoneNumber(auth, e164, verifier);
-      await trackSmsSent(e164);
+      pwdConfirmationRef.current = await signInWithPhoneNumber(auth, phoneStandard, verifier);
+      await trackSmsSent(phoneStandard);
       setPwdStep('OTP');
       setPwdResendTimer(45);
-      setPwdSuccess(`Code de confirmation SMS envoyé au ${e164}.`);
+      const testCode = TEST_PHONE_CODES[phoneStandard];
+      setPwdSuccess(
+        testCode
+          ? `Code de confirmation SMS envoyé au ${phoneStandard} (Numéro de test : code ${testCode}).`
+          : `Code de confirmation SMS envoyé avec succès au ${phoneStandard}.`
+      );
     } catch (err: any) {
       console.warn('Password OTP Firebase signInWithPhoneNumber returned:', err);
       const errStr = ((err?.message || '') + ' ' + (err?.code || '')).toLowerCase();
-      const isCode39OrQuota =
-        errStr.includes('-39') ||
-        errStr.includes('error code: -39') ||
-        errStr.includes('code: -39') ||
-        err?.code === 'auth/internal-error' ||
-        err?.code === 'auth/quota-exceeded' ||
-        err?.code === 'auth/operation-not-allowed' ||
-        errStr.includes('quota') ||
-        errStr.includes('billing');
-
-      if (isCode39OrQuota) {
-        try {
-          const fallbackOtp = Math.floor(100000 + Math.random() * 900000).toString();
-          const docData = {
-            phoneNumber: e164,
-            cleanDigits,
-            e164Clean,
-            otpCode: fallbackOtp,
-            createdAt: new Date().toISOString(),
-            expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-            verified: false,
-            channel: 'GABON_SMS_GATEWAY',
-          };
-          await setDoc(doc(db, 'phone_verifications', cleanDigits), docData);
-          await setDoc(doc(db, 'phone_verifications', e164Clean), docData);
-          await trackSmsSent(e164);
-          pwdConfirmationRef.current = {
-            verificationId: `pwd_otp_${cleanDigits}_${Date.now()}`,
-            confirm: async (enteredCode: string): Promise<any> => {
-              if (enteredCode.trim() !== fallbackOtp) {
-                const vSnap = await getDoc(doc(db, 'phone_verifications', cleanDigits));
-                if (!vSnap.exists() || vSnap.data().otpCode !== enteredCode.trim()) {
-                  throw new Error('Code SMS incorrect ou expiré.');
-                }
-              }
-              return {} as any;
-            },
-          } as ConfirmationResult;
-          setPwdStep('OTP');
-          setPwdResendTimer(45);
-          setPwdSuccess(`Code de confirmation SMS envoyé au ${e164}.`);
-          return;
-        } catch (fsErr) {
-          console.warn('Could not set fallback OTP:', fsErr);
+      if (errStr.includes('error-code:-39') || err?.code === 'auth/error-code:-39') {
+        const testCode = TEST_PHONE_CODES[phoneStandard];
+        if (testCode) {
+          setPwdError(
+            `L'envoi de SMS réel a été temporairement restreint par Google anti-abus. Ce numéro est un numéro test : utilisez le code ${testCode}.`
+          );
+        } else {
+          setPwdError(
+            "L'envoi de SMS est temporairement limité par le système de sécurité anti-abus de Google pour ce numéro ou cet opérateur. Connectez-vous avec votre mot de passe ou réessayez ultérieurement."
+          );
         }
+      } else {
+        const messages: Record<string, string> = {
+          'auth/invalid-phone-number': 'Numéro de téléphone Gabon invalide (+241 requis, 8 chiffres).',
+          'auth/too-many-requests': 'Trop de tentatives d\'envoi de SMS. Veuillez patienter quelques minutes.',
+          'auth/quota-exceeded': 'Le quota d\'envoi de SMS est temporairement saturé. Réessayez plus tard.',
+          'auth/captcha-check-failed': 'Vérification anti-robot échouée. Veuillez réessayer.',
+          'auth/operation-not-allowed': 'La connexion par SMS n\'est pas activée pour la région Gabon (+241).',
+          'auth/unauthorized-domain': 'Ce domaine web n\'est pas autorisé pour l\'envoi de SMS dans Firebase.',
+          'auth/internal-error': 'Impossible d\'expédier le SMS vers cet opérateur gabonais. Vérifiez votre couverture réseau ou réessayez plus tard.',
+          'auth/error-code:-39': 'L\'envoi de SMS est temporairement restreint par la sécurité anti-abus de Google.',
+        };
+        setPwdError(messages[err?.code] ?? (err?.message || "Impossible d'envoyer le code SMS OTP. Réessayez dans un instant."));
       }
-
-      setPwdError("Impossible d'envoyer le code SMS OTP. Réessayez dans un instant.");
     } finally {
       setPwdLoading(false);
     }
@@ -681,11 +684,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
       if (!isVerified) {
         const phone = currentUser.contactPhone || currentUser.phoneNumber || '';
-        const cleanDigits = phone.replace(/\D/g, '');
-        const e164 = formatGabonPhone(phone);
-        const e164Clean = e164.replace(/\D/g, '');
+        const cleanDigits = getPhoneClean(phone);
+        const phoneWithoutZero = `+241${cleanDigits}`;
+        const phoneForSms = `+2410${cleanDigits}`;
 
-        for (const key of [cleanDigits, e164Clean].filter(Boolean)) {
+        for (const key of [cleanDigits, phoneWithoutZero, phoneForSms].filter(Boolean)) {
           const vSnap = await getDoc(doc(db, 'phone_verifications', key));
           if (vSnap.exists() && vSnap.data().otpCode === trimmed) {
             const expiresAt = vSnap.data().expiresAt ? new Date(vSnap.data().expiresAt).getTime() : Infinity;
@@ -725,11 +728,16 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setPwdLoading(true);
     try {
       const nowIso = new Date().toISOString();
-      await recordPasswordCooldown(currentUser.contactPhone || currentUser.phoneNumber || '', nowIso);
+      const phone = currentUser.contactPhone || currentUser.phoneNumber || '';
+      const cleanDigits = getPhoneClean(phone);
+      const phoneWithoutZero = `+241${cleanDigits}`;
+      await recordPasswordCooldown(phoneWithoutZero, nowIso);
       if (onUpdateUser) {
         await onUpdateUser({
           password: newPassword.trim(),
           lastPasswordChangeDate: nowIso,
+          contactPhone: phoneWithoutZero,
+          phoneNumber: phoneWithoutZero,
         });
       }
       if (auth.currentUser) {
@@ -2097,6 +2105,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   <div className="text-xs text-slate-700 font-bold">
                     Entrez le code SMS à 6 chiffres envoyé au {currentUser.contactPhone || currentUser.phoneNumber} :
                   </div>
+                  {TEST_PHONE_CODES[formatGabonPhone(currentUser.contactPhone || currentUser.phoneNumber || '')] && (
+                    <div className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold px-3 py-1 rounded-xl">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>Numéro de test — Code : <span className="font-mono text-sm underline">{TEST_PHONE_CODES[formatGabonPhone(currentUser.contactPhone || currentUser.phoneNumber || '')]}</span></span>
+                    </div>
+                  )}
 
 
                   <input

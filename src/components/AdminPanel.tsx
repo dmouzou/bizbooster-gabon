@@ -247,25 +247,48 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [gatewaySaveSuccess, setGatewaySaveSuccess] = useState(false);
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'settings', 'payment_gateway'), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setGatewayConfig({
-          singpayClientId: data.singpayClientId || '',
-          singpayClientSecret: data.singpayClientSecret || '',
-          singpayWalletId: data.singpayWalletId || '',
-          moovDisbursementNumber: data.moovDisbursementNumber || '62 18 87 34',
-          airtelDisbursementNumber: data.airtelDisbursementNumber || '',
-          isLive: data.isLive ?? true,
-          updatedAt: data.updatedAt,
-        });
+    if (!isSuper) return;
+    const unsub = onSnapshot(
+      doc(db, 'settings', 'payment_gateway'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          setGatewayConfig({
+            singpayClientId: data.singpayClientId || '',
+            singpayClientSecret: data.singpayClientSecret || '',
+            singpayWalletId: data.singpayWalletId || '',
+            moovDisbursementNumber: data.moovDisbursementNumber || '62 18 87 34',
+            airtelDisbursementNumber: data.airtelDisbursementNumber || '',
+            isLive: data.isLive ?? true,
+            updatedAt: data.updatedAt,
+          });
+        }
+      },
+      (err) => {
+        console.warn('payment_gateway snapshot notice:', err);
       }
-    });
+    );
     return () => unsub();
-  }, []);
+  }, [isSuper]);
+
+  // Si un non-super admin se retrouve sur l'onglet PAYMENTS, redirection automatique vers MODERATION
+  useEffect(() => {
+    if (!isSuper && activeTab === 'PAYMENTS') {
+      setActiveTab('MODERATION');
+    }
+  }, [isSuper, activeTab]);
 
   const handleSaveGatewayConfig = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isSuper) {
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'error',
+        title: 'Accès Refusé',
+        message: 'Seul le Super Administrateur est autorisé à configurer les clés de la passerelle de paiement SingPay.',
+      });
+      return;
+    }
     setIsSavingGateway(true);
     try {
       const configRef = doc(db, 'settings', 'payment_gateway');
@@ -285,7 +308,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setGatewaySaveSuccess(true);
       setTimeout(() => setGatewaySaveSuccess(false), 4000);
     } catch (err: any) {
-      alert('Erreur lors de l\'enregistrement des clés SingPay: ' + err.message);
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'error',
+        title: 'Erreur',
+        message: "Erreur lors de l'enregistrement des clés SingPay: " + (err?.message || 'Permission refusée.'),
+      });
     } finally {
       setIsSavingGateway(false);
     }
@@ -809,25 +837,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             )}
           </button>
 
-          {/* TAB 6: PASSERELLE SINGPAY */}
-          <button
-            onClick={() => setActiveTab('PAYMENTS')}
-            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border cursor-pointer ${
-              activeTab === 'PAYMENTS'
-                ? 'bg-blue-600 text-white border-blue-500 shadow-md'
-                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800'
-            }`}
-          >
-            <Smartphone className="w-4 h-4" />
-            <span>Passerelle SingPay</span>
-            <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
-              gatewayConfig.singpayClientId && gatewayConfig.singpayClientSecret
-                ? 'bg-emerald-400 text-slate-950'
-                : 'bg-amber-400 text-slate-950 animate-pulse'
-            }`}>
-              {gatewayConfig.singpayClientId && gatewayConfig.singpayClientSecret ? 'Moov Actif' : 'À configurer'}
-            </span>
-          </button>
+          {/* TAB 6: PASSERELLE SINGPAY (SUPER ADMIN UNIQUEMENT) */}
+          {isSuper && (
+            <button
+              onClick={() => setActiveTab('PAYMENTS')}
+              className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border cursor-pointer ${
+                activeTab === 'PAYMENTS'
+                  ? 'bg-blue-600 text-white border-blue-500 shadow-md'
+                  : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800'
+              }`}
+            >
+              <Smartphone className="w-4 h-4" />
+              <span>Passerelle SingPay</span>
+              <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
+                gatewayConfig.singpayClientId && gatewayConfig.singpayClientSecret
+                  ? 'bg-emerald-400 text-slate-950'
+                  : 'bg-amber-400 text-slate-950 animate-pulse'
+              }`}>
+                {gatewayConfig.singpayClientId && gatewayConfig.singpayClientSecret ? 'Moov Actif' : 'À configurer'}
+              </span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -2661,8 +2691,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* VIEW 6: PASSERELLE DE PAIEMENT SINGPAY GABON */}
-      {activeTab === 'PAYMENTS' && (
+      {/* VIEW 6: PASSERELLE DE PAIEMENT SINGPAY GABON (SUPER ADMIN UNIQUEMENT) */}
+      {activeTab === 'PAYMENTS' && isSuper && (
         <div className="space-y-6">
           {/* Header */}
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-4">
@@ -2676,15 +2706,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
                     Moov Money Actif
                   </span>
-                  <span className="bg-amber-100 text-amber-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-amber-300">
-                    Airtel Money en standby
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+                    Airtel Money Actif
                   </span>
                 </div>
                 <h2 className="text-xl sm:text-2xl font-black text-slate-900 mt-2">
                   Passerelle de Paiement SingPay Gabon
                 </h2>
                 <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-                  Intégration directe de l'API SingPay pour le prélèvement USSD Push sur mobile. Les fonds réglés par les annonceurs via Moov Money sont transférés vers le compte marchand <strong>62 18 87 34</strong>.
+                  Intégration directe de l'API SingPay pour le prélèvement USSD Push sur mobile. Support officiel de Moov Money (route 62) et Airtel Money (route 74).
                 </p>
               </div>
 
@@ -2812,24 +2843,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <span className="text-[10px] text-slate-400">Numéro Moov Money recevant les fonds collectés (62 18 87 34).</span>
                 </div>
 
-                {/* Airtel Money Disbursement Phone (Standby) */}
-                <div className="space-y-1.5 opacity-60">
+                {/* Airtel Money Disbursement Phone */}
+                <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Numéro Airtel Récepteur (Standby)
+                      Numéro Airtel Récepteur (<code className="text-red-600 lowercase">disbursement</code>)
                     </label>
-                    <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.2 rounded-full">
-                      En standby
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.2 rounded-full">
+                      Actif
                     </span>
                   </div>
                   <input
                     type="text"
-                    disabled
-                    value={gatewayConfig.airtelDisbursementNumber || 'En attente du numéro Airtel'}
-                    placeholder="Standby..."
-                    className="w-full bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-500 cursor-not-allowed"
+                    value={gatewayConfig.airtelDisbursementNumber}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, airtelDisbursementNumber: e.target.value })}
+                    placeholder="74 00 00 00"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-red-500 focus:outline-hidden"
                   />
-                  <span className="text-[10px] text-slate-400">Airtel Money est mis en pause jusqu'à communication du numéro de réception.</span>
+                  <span className="text-[10px] text-slate-400">Numéro Airtel Money recevant les fonds collectés (074, 076 ou 077).</span>
                 </div>
               </div>
 

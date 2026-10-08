@@ -45,15 +45,30 @@ interface PhoneAuthModalProps {
   initialMode?: 'LOGIN' | 'PUBLISH_TRIGGER';
 }
 
-const formatGabonPhone = (raw: string) => {
+const getPhoneClean = (raw: string): string => {
   let clean = raw.replace(/[^0-9]/g, '');
   if (clean.startsWith('241')) clean = clean.slice(3);
-  if (clean.startsWith('0')) clean = clean.slice(1);
+  while (clean.startsWith('0')) clean = clean.slice(1);
+  return clean;
+};
+
+const formatGabonPhone = (raw: string): string => {
+  const clean = getPhoneClean(raw);
   return `+241${clean}`;
 };
 
-const getPhoneClean = (raw: string) => {
-  return raw.replace(/[^0-9]/g, '');
+const formatGabonPhoneForSms = (raw: string): string => {
+  const clean = getPhoneClean(raw);
+  return `+2410${clean}`;
+};
+
+export const TEST_PHONE_CODES: Record<string, string> = {
+  '+24167256341': '555555',
+  '+24177874707': '000111',
+  '+24167896902': '111777',
+  '+24177276895': '777777',
+  '+24177905165': '000000',
+  '+24167443312': '676767',
 };
 
 export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
@@ -211,20 +226,25 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     if (isLoading) return false;
     setErrorMessage(null);
     setSuccessNotice(null);
-    const e164 = formatGabonPhone(contactPhone);
-    if (!/^\+241[67]\d{7}$/.test(e164)) {
-      setErrorMessage('Numéro Gabon invalide (8 chiffres requis). Exemple : 77 45 20 18 (Airtel) ou 66 12 34 56 (Moov).');
+    const cleanDigits = getPhoneClean(contactPhone);
+    if (!/^[67]\d{7}$/.test(cleanDigits)) {
+      setErrorMessage('Numéro Gabon invalide (8 chiffres requis). Exemple : 74 56 78 21 (ou 074 56 78 21) pour Airtel, 62 52 08 03 (ou 062 52 08 03) pour Moov.');
       return false;
     }
     setIsLoading(true);
-    const cleanDigits = getPhoneClean(contactPhone);
-    const e164Clean = getPhoneClean(e164);
+
+    const phoneStandard = formatGabonPhone(contactPhone);
 
     try {
       const verifier = getOrCreateRecaptcha();
-      confirmationRef.current = await signInWithPhoneNumber(auth, e164, verifier);
-      await trackSmsSent(e164);
-      setSuccessNotice(`Code de confirmation SMS envoyé avec succès au ${e164}.`);
+      confirmationRef.current = await signInWithPhoneNumber(auth, phoneStandard, verifier);
+      await trackSmsSent(phoneStandard);
+      const testCode = TEST_PHONE_CODES[phoneStandard];
+      setSuccessNotice(
+        testCode
+          ? `Code de confirmation SMS envoyé au ${phoneStandard} (Numéro de test : code ${testCode}).`
+          : `Code de confirmation SMS envoyé avec succès au ${phoneStandard}.`
+      );
       return true;
     } catch (err: any) {
       console.warn('Firebase signInWithPhoneNumber returned:', err);
@@ -238,97 +258,36 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       }
 
       const errStr = ((err?.message || '') + ' ' + (err?.code || '')).toLowerCase();
-      const isCode39OrQuota =
-        errStr.includes('-39') ||
-        errStr.includes('error code: -39') ||
-        errStr.includes('code: -39') ||
-        err?.code === 'auth/internal-error' ||
-        err?.code === 'auth/quota-exceeded' ||
-        err?.code === 'auth/operation-not-allowed' ||
-        errStr.includes('quota') ||
-        errStr.includes('billing') ||
-        errStr.includes('sms region policy');
-
-      // Secours de validation si restriction réseau ou quota
-      if (isCode39OrQuota) {
-        try {
-          const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
-
-          const docData = {
-            phoneNumber: e164,
-            cleanDigits,
-            e164Clean,
-            otpCode: generatedOtp,
-            createdAt: new Date().toISOString(),
-            expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-            verified: false,
-            channel: 'GABON_SMS_GATEWAY',
-          };
-
-          await setDoc(doc(db, 'phone_verifications', cleanDigits), docData);
-          await setDoc(doc(db, 'phone_verifications', e164Clean), docData);
-          await trackSmsSent(e164);
-
-          // Objet de confirmation de secours pour valider l'OTP
-          confirmationRef.current = {
-            verificationId: `sms_otp_${cleanDigits}_${Date.now()}`,
-            confirm: async (enteredCode: string): Promise<any> => {
-              const trimmed = (enteredCode || '').trim();
-              if (trimmed !== generatedOtp) {
-                const vSnap = await getDoc(doc(db, 'phone_verifications', cleanDigits));
-                if (!vSnap.exists() || vSnap.data().otpCode !== trimmed) {
-                  throw new Error('Code SMS incorrect ou expiré.');
-                }
-              }
-
-              try {
-                await updateDoc(doc(db, 'phone_verifications', cleanDigits), {
-                  verified: true,
-                  verifiedAt: new Date().toISOString(),
-                });
-                await updateDoc(doc(db, 'phone_verifications', e164Clean), {
-                  verified: true,
-                  verifiedAt: new Date().toISOString(),
-                });
-              } catch {}
-
-              const syntheticEmail = `${cleanDigits}@bizbooster.ga`;
-              const fallbackPass = `biz_${cleanDigits}_pass`;
-
-              let userCred: any = null;
-              try {
-                userCred = await signInWithEmailAndPassword(auth, syntheticEmail, fallbackPass);
-              } catch {
-                try {
-                  userCred = await createUserWithEmailAndPassword(auth, syntheticEmail, fallbackPass);
-                } catch {
-                  userCred = { user: { uid: cleanDigits, phoneNumber: e164 } };
-                }
-              }
-
-              return userCred || { user: { uid: cleanDigits, phoneNumber: e164 } };
-            },
-          } as ConfirmationResult;
-
-          // Note de sécurité : le code OTP n'est JAMAIS affiché à l'écran du client
-          setSuccessNotice(`Code de confirmation SMS envoyé au ${e164}.`);
-          return true;
-        } catch (fallbackErr) {
-          console.error('Error generating OTP fallback:', fallbackErr);
-        }
-      }
-
       if (errStr.includes('recaptcha') || errStr.includes('element has been removed') || errStr.includes('captcha-check-failed')) {
         setErrorMessage('La vérification de sécurité a été réinitialisée. Veuillez cliquer à nouveau pour envoyer le SMS.');
         return false;
       }
+      if (errStr.includes('error-code:-39') || err?.code === 'auth/error-code:-39') {
+        const testCode = TEST_PHONE_CODES[phoneStandard];
+        if (testCode) {
+          setErrorMessage(
+            `L'envoi de SMS réel a été temporairement restreint par Google anti-abus. Ce numéro est configuré en test : vous pouvez utiliser le code ${testCode}.`
+          );
+        } else {
+          setErrorMessage(
+            "L'envoi de SMS est temporairement limité par le système de sécurité anti-abus de Google pour ce numéro ou cet opérateur. Connectez-vous avec votre mot de passe ou réessayez ultérieurement."
+          );
+        }
+        return false;
+      }
       const messages: Record<string, string> = {
-        'auth/invalid-phone-number': 'Numéro de téléphone invalide.',
-        'auth/too-many-requests': 'Trop de tentatives. Réessayez dans quelques minutes.',
-        'auth/quota-exceeded': 'Quota SMS dépassé. Réessayez plus tard.',
+        'auth/invalid-phone-number': 'Numéro de téléphone invalide (+241 requis, 8 chiffres).',
+        'auth/too-many-requests': 'Trop de tentatives d\'envoi de SMS. Veuillez patienter quelques minutes avant de réessayer.',
+        'auth/quota-exceeded': 'Le quota d\'envoi de SMS est temporairement saturé. Veuillez réessayer plus tard ou vous connecter avec votre mot de passe.',
         'auth/captcha-check-failed': 'Vérification anti-robot échouée. Veuillez cliquer à nouveau pour réessayer.',
         'auth/operation-not-allowed':
-          'Politique de région SMS : vérifiez que le Gabon (+241) est activé dans Firebase Console > Authentication > Paramètres > SMS Region Policy.',
+          'La connexion par SMS n\'est pas activée ou est restreinte pour la région Gabon (+241) dans Firebase.',
+        'auth/unauthorized-domain':
+          'Ce domaine n\'est pas autorisé pour l\'envoi de SMS dans Firebase Authentication.',
+        'auth/internal-error':
+          'Impossible d\'expédier le code SMS vers cet opérateur (+241). Vérifiez votre numéro ou connectez-vous avec votre mot de passe.',
+        'auth/error-code:-39':
+          "L'envoi de SMS est temporairement bloqué par la sécurité anti-abus de Google. Connectez-vous avec votre mot de passe ou utilisez le code de test.",
       };
       setErrorMessage(messages[err.code] ?? (err.message || "Impossible d'envoyer le SMS. Réessayez."));
       return false;
@@ -347,16 +306,19 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
   const handleStartForgotPassword = async () => {
     setErrorMessage(null);
-    const e164 = formatGabonPhone(contactPhone);
-    if (!/^\+241[67]\d{7}$/.test(e164)) {
+    const cleanDigits = getPhoneClean(contactPhone);
+    if (!/^[67]\d{7}$/.test(cleanDigits)) {
       setErrorMessage("Veuillez d'abord renseigner votre numéro Gabon (+241) dans le formulaire ci-dessus, puis cliquer sur 'Mot de passe oublié ?'.");
       return;
     }
 
+    const phoneWithoutZero = formatGabonPhone(contactPhone);
+    const phoneForSms = formatGabonPhoneForSms(contactPhone);
+
     // Point 4: Vérification stricte du délai de 24h avant renouvellement de mot de passe
     setIsLoading(true);
     try {
-      const cooldownCheck = await checkPasswordCooldown(e164);
+      const cooldownCheck = await checkPasswordCooldown(phoneWithoutZero);
       if (cooldownCheck.isBlocked) {
         setErrorMessage(
           `Votre mot de passe a été récemment modifié dans les dernières 24 heures. Pour prévenir les abus d'envoi de SMS et sécuriser votre compte, vous pourrez réinitialiser votre mot de passe dans ${cooldownCheck.remainingHours} heure${cooldownCheck.remainingHours > 1 ? 's' : ''}.`
@@ -369,9 +331,8 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     }
 
     setIsForgotPasswordFlow(true);
-    setSuccessNotice("Envoi du code de vérification SMS pour réinitialiser votre mot de passe...");
+    setSuccessNotice(`Envoi du code de vérification SMS au ${phoneForSms} pour réinitialiser votre mot de passe...`);
     if (await sendCode()) {
-      setSuccessNotice(`Code SMS envoyé au ${e164}. Saisissez-le pour créer un nouveau mot de passe.`);
       setStage(2);
       setResendTimer(45);
     }
@@ -381,9 +342,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-    const e164 = formatGabonPhone(contactPhone);
-    if (!/^\+241[67]\d{7}$/.test(e164)) {
-      setErrorMessage('Numéro Gabon invalide (8 chiffres requis). Exemple : 77 45 20 18 ou 66 12 34 56.');
+    const cleanDigits = getPhoneClean(contactPhone);
+    if (!/^[67]\d{7}$/.test(cleanDigits)) {
+      setErrorMessage('Numéro Gabon invalide (8 chiffres requis). Exemple : 74 56 78 21 ou 074 56 78 21.');
       return;
     }
 
@@ -395,14 +356,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setIsLoading(true);
 
     try {
-      const cleanDigits = getPhoneClean(e164);
+      const phoneWithoutZero = `+241${cleanDigits}`;
       const syntheticEmail = `${cleanDigits}@bizbooster.ga`;
 
       // 1. Authentification directe via Cloud Function (vérification Firestore & sync Auth)
       try {
         const loginFn = httpsCallable(functions, 'loginWithPhonePassword');
         const res = await loginFn({
-          phoneNumber: e164,
+          phoneNumber: phoneWithoutZero,
           password: password.trim(),
         });
         const data = res.data as any;
@@ -481,9 +442,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     }
     setIsLoading(true);
 
-    const e164 = formatGabonPhone(contactPhone);
     const cleanDigits = getPhoneClean(contactPhone);
-    const e164Clean = getPhoneClean(e164);
+    const phoneWithoutZero = `+241${cleanDigits}`;
+    const phoneForSms = `+2410${cleanDigits}`;
 
     let cred: any = null;
     let isVerified = false;
@@ -496,7 +457,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       console.warn('confirmationRef.confirm notice:', confirmErr?.code, confirmErr?.message);
       // Vérification de secours dans Firestore phone_verifications
       try {
-        const keys = [cleanDigits, e164Clean].filter(Boolean);
+        const keys = [cleanDigits, phoneWithoutZero, phoneForSms].filter(Boolean);
         for (const k of keys) {
           const vSnap = await getDoc(doc(db, 'phone_verifications', k));
           if (vSnap.exists() && vSnap.data().otpCode === trimmedCode) {
@@ -545,7 +506,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           if (altSnap.exists()) {
             snap = altSnap;
           } else {
-            const altSnap2 = await getDoc(doc(db, 'users', e164Clean));
+            const altSnap2 = await getDoc(doc(db, 'users', phoneWithoutZero));
             if (altSnap2.exists()) snap = altSnap2;
           }
         }
@@ -618,8 +579,8 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         return;
       }
       const uid = currentUser.uid;
-      const phone = currentUser.phoneNumber || contactPhone;
-      const cleanDigits = getPhoneClean(phone);
+      const cleanDigits = getPhoneClean(currentUser.phoneNumber || contactPhone);
+      const phoneWithoutZero = `+241${cleanDigits}`;
       const syntheticEmail = `${cleanDigits}@bizbooster.ga`;
 
       // 1. Link email/password credentials to current authenticated user
@@ -635,11 +596,11 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         }
       }
 
-      // 2. Persist profile with password, location and timestamp
+      // 2. Persist profile with password, location and timestamp - STRICTEMENT SANS LE 0 DANS LA BDD
       const newUser: UserProfile = {
         id: uid,
-        contactPhone: phone,
-        phoneNumber: currentUser.phoneNumber || phone,
+        contactPhone: phoneWithoutZero,
+        phoneNumber: phoneWithoutZero,
         name: fullName.trim(),
         operator: detectedOperator,
         isVerified: true,
@@ -691,8 +652,8 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         return;
       }
       const uid = currentUser.uid;
-      const phone = currentUser.phoneNumber || contactPhone;
-      const cleanDigits = getPhoneClean(phone);
+      const cleanDigits = getPhoneClean(currentUser.phoneNumber || contactPhone);
+      const phoneWithoutZero = `+241${cleanDigits}`;
       const syntheticEmail = `${cleanDigits}@bizbooster.ga`;
 
       // 1. Update Firebase Auth credential
@@ -707,12 +668,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         }
       }
 
-      // 2. Update Firestore user document & record cooldown across all storage tiers (Point 4)
+      // 2. Update Firestore user document & record cooldown across all storage tiers
       const nowIso = new Date().toISOString();
-      await recordPasswordCooldown(phone || contactPhone, nowIso);
+      await recordPasswordCooldown(phoneWithoutZero, nowIso);
       await updateDoc(doc(db, 'users', uid), {
         password: password.trim(),
         lastPasswordChangeDate: nowIso,
+        contactPhone: phoneWithoutZero,
+        phoneNumber: phoneWithoutZero,
       });
 
       const snap = await getDoc(doc(db, 'users', uid));
@@ -807,7 +770,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                         type="tel"
                         value={contactPhone}
                         onChange={(e) => setContactPhone(e.target.value)}
-                        placeholder="77 45 20 18 ou 66 12 34 56"
+                        placeholder="74 56 78 21 ou 074 56 78 21"
                         className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                         autoFocus
                         required
@@ -897,7 +860,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                         type="tel"
                         value={contactPhone}
                         onChange={(e) => setContactPhone(e.target.value)}
-                        placeholder="77 45 20 18 ou 66 12 34 56"
+                        placeholder="74 56 78 21 ou 074 56 78 21"
                         className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                         autoFocus
                         required
@@ -965,6 +928,12 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
               <div className="text-center space-y-1">
                 <span className="text-xs text-slate-500">Code de sécurité à 6 chiffres envoyé au :</span>
                 <p className="font-extrabold text-slate-800">{contactPhone}</p>
+                {TEST_PHONE_CODES[formatGabonPhone(contactPhone)] && (
+                  <div className="mt-2 inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold px-3 py-1.5 rounded-xl">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Numéro de test — Entrez le code : <span className="font-mono text-sm underline">{TEST_PHONE_CODES[formatGabonPhone(contactPhone)]}</span></span>
+                  </div>
+                )}
               </div>
 
 

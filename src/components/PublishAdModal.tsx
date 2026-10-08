@@ -351,15 +351,17 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   // Newly created ad for verification view
   const [createdAd, setCreatedAd] = useState<Ad | null>(null);
 
-  // Point 4: Corner VIP Eligibility check for Real Estate & Rolling Stock
+  // Point 4: Coin VIP Eligibility check for Real Estate & Rolling Stock
   const isVipEligible = useMemo(() => {
     return isAdVipCornerEligible({
       mainCategory,
       transactionType,
       price: Number(price) || 0,
       priceUnit,
+      propertyType,
+      vehicleData: { category: vehicleCategory },
     });
-  }, [mainCategory, transactionType, price, priceUnit]);
+  }, [mainCategory, transactionType, price, priceUnit, propertyType, vehicleCategory]);
 
   const handleCvFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -1055,7 +1057,10 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         description: description || 'Annonce vérifiée et publiée sur BIZBOOSTER Gabon.',
         images: finalImageUrls.length > 0 ? finalImageUrls : [SAMPLE_IMAGE_PRESETS[mainCategory][0]],
         videoUrl: finalVideoUrl,
-        contactPhone: contactPhone,
+        contactPhone: (() => {
+          const rawClean = (contactPhone || '').replace(/[^0-9]/g, '').replace(/^241/, '').replace(/^0+/, '');
+          return rawClean ? `+241${rawClean}` : contactPhone;
+        })(),
         hasWhatsapp: true,
         contactName: contactName || 'Annonceur BIZBOOSTER',
         durationDays,
@@ -2332,7 +2337,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 );
               })()}
 
-              {/* Notification Corner VIP (Point 4) */}
+              {/* Notification Coin VIP (Point 4) */}
               {isVipEligible && (
                 <div className="bg-gradient-to-r from-amber-500/15 via-amber-400/25 to-yellow-500/15 border-2 border-amber-400 rounded-2xl p-4 text-amber-950 flex items-start gap-3 shadow-xs animate-in fade-in">
                   <div className="p-2 bg-gradient-to-br from-amber-500 to-yellow-600 text-slate-950 rounded-xl font-black text-base shrink-0 shadow-xs">
@@ -2341,14 +2346,14 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                   <div className="text-xs space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-black text-amber-950 text-sm tracking-wide">
-                        Félicitations ! Votre annonce intègre le Corner VIP
+                        Félicitations ! Votre annonce intègre le Coin VIP
                       </span>
                       <span className="bg-emerald-600 text-white font-black text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">
                         100% Inclus sans aucun frais
                       </span>
                     </div>
                     <p className="text-amber-900 leading-relaxed">
-                      Compte tenu de la valeur de votre bien ({Number(price).toLocaleString('fr-FR')} FCFA), votre annonce est classée bien de prestige et sera mise en avant dans le <strong>Corner VIP</strong> du catalogue.
+                      Compte tenu de la valeur de votre bien ({Number(price).toLocaleString('fr-FR')} FCFA), votre annonce est classée bien de prestige et sera mise en avant dans le <strong>Coin VIP</strong> du catalogue.
                     </p>
                     <p className="text-[11px] text-amber-800 font-semibold">
                       ✨ <em>Avantage exclusif : Visibilité prioritaire auprès des acquéreurs et investisseurs haut de gamme, sans aucun frais supplémentaire.</em>
@@ -2992,7 +2997,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       )}
                       {isVipEligible && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-black bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 px-2 py-0.5 rounded-md shadow-xs">
-                          👑 Corner VIP (Inclus sans frais)
+                          👑 Coin VIP (Inclus sans frais)
                         </span>
                       )}
                       {(isOwnerVerified || isExempt) && (

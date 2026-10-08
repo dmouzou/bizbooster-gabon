@@ -399,13 +399,8 @@ export const initiateSingPayPayment = onCall(
       );
     }
 
-    const requestedOperator = operator || "MOOV_MONEY";
-    if (requestedOperator === "AIRTEL_MONEY") {
-      throw new HttpsError(
-        "failed-precondition",
-        "Airtel Money est en standby. Veuillez régler via Moov Money."
-      );
-    }
+    const requestedOperator =
+      operator === "AIRTEL_MONEY" ? "AIRTEL_MONEY" : "MOOV_MONEY";
 
     const {e164, rawDigits} = normalizeGabonPhone(String(phoneNumber));
     const isMoov =
@@ -414,10 +409,24 @@ export const initiateSingPayPayment = onCall(
       rawDigits.startsWith("65") ||
       rawDigits.startsWith("66");
 
-    if (!isMoov) {
+    const isAirtel =
+      rawDigits.startsWith("74") ||
+      rawDigits.startsWith("76") ||
+      rawDigits.startsWith("77") ||
+      rawDigits.startsWith("70") ||
+      rawDigits.startsWith("7");
+
+    if (requestedOperator === "MOOV_MONEY" && !isMoov) {
       throw new HttpsError(
         "invalid-argument",
         "Numéro Moov Money invalide (préfixes requis: 060, 062, 065, 066)."
+      );
+    }
+
+    if (requestedOperator === "AIRTEL_MONEY" && !isAirtel) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Numéro Airtel Money invalide (préfixes requis: 074, 076, 077)."
       );
     }
 
@@ -439,11 +448,33 @@ export const initiateSingPayPayment = onCall(
       process.env.SINGPAY_WALLET_ID ||
       (settingsData.singpayWalletId as string) ||
       "";
-    // Numéro Moov de destination (disbursement) fourni par l'administrateur
-    const disbursement =
-      (settingsData.moovDisbursementNumber as string) ||
-      process.env.SINGPAY_MOOV_DISBURSEMENT ||
-      "24162188734"; // 62 18 87 34
+
+    // Numéro de destination (disbursement) configuré dans l'admin panel
+    let rawDisbursement = "";
+    if (requestedOperator === "AIRTEL_MONEY") {
+      rawDisbursement =
+        (settingsData.airtelDisbursementNumber as string) ||
+        process.env.SINGPAY_AIRTEL_DISBURSEMENT ||
+        (settingsData.moovDisbursementNumber as string) ||
+        process.env.SINGPAY_MOOV_DISBURSEMENT ||
+        "24174000000";
+    } else {
+      rawDisbursement =
+        (settingsData.moovDisbursementNumber as string) ||
+        process.env.SINGPAY_MOOV_DISBURSEMENT ||
+        "24162188734"; // 62 18 87 34
+    }
+
+    // Formatage du numéro de versement au format MSISDN (ex: 241XXXXXXXX)
+    const disbDigits = (rawDisbursement || "").replace(/\D/g, "");
+    let disbursement = disbDigits;
+    if (disbDigits.startsWith("241")) {
+      disbursement = disbDigits;
+    } else if (disbDigits.startsWith("0")) {
+      disbursement = `241${disbDigits.slice(1)}`;
+    } else if (disbDigits.length === 8) {
+      disbursement = `241${disbDigits}`;
+    }
 
     if (!clientId || !clientSecret || !walletId) {
       throw new HttpsError(
@@ -461,8 +492,12 @@ export const initiateSingPayPayment = onCall(
       isTransfer: false,
     };
 
+    const operatorEndpointCode =
+      requestedOperator === "AIRTEL_MONEY" ? "74" : "62";
+    const paymentUrl = `https://gateway.singpay.ga/v1/${operatorEndpointCode}/paiement`;
+
     try {
-      const resp = await fetch("https://gateway.singpay.ga/v1/62/paiement", {
+      const resp = await fetch(paymentUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -497,7 +532,7 @@ export const initiateSingPayPayment = onCall(
         reference: String(reference),
         singpayTransactionId: singpayTxId,
         amount: Number(amount),
-        operator: "MOOV_MONEY",
+        operator: requestedOperator,
         clientPhone: e164,
         clientMsisdn,
         disbursementPhone: disbursement,
@@ -509,12 +544,14 @@ export const initiateSingPayPayment = onCall(
         updatedAt: new Date().toISOString(),
       });
 
+      const operatorLabel =
+        requestedOperator === "AIRTEL_MONEY" ? "Airtel Money" : "Moov Money";
       return {
         success: true,
         reference: String(reference),
         transactionId: singpayTxId,
         status: "PENDING",
-        message: "Demande USSD Push envoyée sur le mobile Moov Money.",
+        message: `Demande USSD Push envoyée sur le mobile ${operatorLabel}.`,
       };
     } catch (err: unknown) {
       if (err instanceof HttpsError) {

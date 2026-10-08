@@ -171,7 +171,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
 
               {isVip && (
                 <span className="inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 text-xs font-black px-2.5 py-1 rounded-lg border border-amber-300 shadow-xs">
-                  <span>👑 CORNER VIP</span>
+                  <span>👑 COIN VIP</span>
                 </span>
               )}
 

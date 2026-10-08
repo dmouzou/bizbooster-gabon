@@ -376,7 +376,7 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
   const [emploiProvince, setEmploiProvince] = useState('');
   const [emploiCity, setEmploiCity] = useState('');
 
-  // Corner VIP (Point 4)
+  // Coin VIP (Point 4)
   const [isVipCornerActive, setIsVipCornerActive] = useState(false);
 
   // Avis de recherche specific filters (Point 2)
@@ -411,16 +411,48 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
   const [adPendingEditConfirm, setAdPendingEditConfirm] = useState<Ad | null>(null);
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
 
+  // Scroll position retention for catalogue (restores position when returning from advertiser space)
+  const catalogScrollPosRef = useRef(0);
+  const prevFrontendTabRef = useRef(frontendTab);
+
   // Point 6: Bouton retour en haut de page dans l'espace catalogue
   const [showScrollTop, setShowScrollTop] = useState(false);
   useEffect(() => {
     const handleScroll = () => {
-      // Déclenchement après avoir défilé 3 à 5 annonces (~750px)
-      setShowScrollTop(window.scrollY > 750);
+      if (frontendTab === 'catalog') {
+        catalogScrollPosRef.current = window.scrollY;
+        // Déclenchement après avoir défilé 3 à 5 annonces (~750px)
+        setShowScrollTop(window.scrollY > 750);
+      }
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+  }, [frontendTab]);
+
+  // Restore scroll position when returning to catalogue
+  useEffect(() => {
+    if (prevFrontendTabRef.current !== 'catalog' && frontendTab === 'catalog') {
+      const targetPos = catalogScrollPosRef.current;
+      if (targetPos > 0) {
+        requestAnimationFrame(() => {
+          window.scrollTo({ top: targetPos, behavior: 'instant' });
+          document.documentElement.scrollTop = targetPos;
+          document.body.scrollTop = targetPos;
+        });
+        const timer1 = setTimeout(() => {
+          window.scrollTo({ top: targetPos, behavior: 'instant' });
+        }, 40);
+        const timer2 = setTimeout(() => {
+          window.scrollTo({ top: targetPos, behavior: 'instant' });
+        }, 120);
+        return () => {
+          clearTimeout(timer1);
+          clearTimeout(timer2);
+        };
+      }
+    }
+    prevFrontendTabRef.current = frontendTab;
+  }, [frontendTab]);
 
   // Retour immédiat en haut de page sans traverser tout le site
   const scrollToTopInstant = () => {
@@ -676,7 +708,7 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
         return false;
       }
 
-      // Point 4: Corner VIP filter (strictly Immobilier & Matériel Roulant)
+      // Point 4: Coin VIP filter (strictly Immobilier & Matériel Roulant)
       if (isVipCornerActive) {
         const isEligible = isAdVipCornerEligible(ad) && (ad.mainCategory === 'IMMOBILIER' || ad.mainCategory === 'MATERIEL_ROULANT');
         if (!isEligible) {
@@ -1395,9 +1427,8 @@ function cleanUndefined(obj: any): any {
 
       <main className="flex-1 max-w-7xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 w-full space-y-5 sm:space-y-6 pb-28 md:pb-8">
         {/* TAB 1: PUBLIC CATALOGUE (100% LIBRE, GRATUIT, VÉRIFIÉ) */}
-        {frontendTab === 'catalog' && (
-          <div className="space-y-5 sm:space-y-6 animate-in fade-in duration-150">
-            {/* Hero Banner for Public Visitors (Optimized for mobile & desktop) */}
+        <div className={`space-y-5 sm:space-y-6 ${frontendTab === 'catalog' ? 'block animate-in fade-in duration-150' : 'hidden'}`}>
+          {/* Hero Banner for Public Visitors (Optimized for mobile & desktop) */}
             <div className="relative rounded-3xl overflow-hidden bg-gradient-to-r from-emerald-900 via-teal-950 to-slate-900 text-white p-5 sm:p-8 lg:p-10 shadow-xl border border-emerald-700/30">
               <div className="relative z-10 max-w-2xl space-y-2 sm:space-y-3">
                 <div className="inline-flex items-center gap-1.5 sm:gap-2 bg-emerald-500/20 text-emerald-300 text-[11px] sm:text-xs font-bold px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full border border-emerald-400/30 backdrop-blur-xs">
@@ -1495,7 +1526,7 @@ function cleanUndefined(obj: any): any {
                 </div>
               </div>
 
-              {/* Corner VIP Dedicated Bar & Toggle */}
+              {/* Coin VIP Dedicated Bar & Toggle */}
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-gradient-to-r from-amber-500/10 via-yellow-400/15 to-amber-600/10 border border-amber-300/80 rounded-2xl px-4 py-2.5 shadow-2xs">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500 to-yellow-600 text-slate-950 flex items-center justify-center font-black text-sm shrink-0 shadow-2xs">
@@ -1503,13 +1534,13 @@ function cleanUndefined(obj: any): any {
                   </div>
                   <div className="min-w-0">
                     <span className="text-xs font-black text-amber-950 flex items-center gap-1.5">
-                      <span>Corner VIP Gabon</span>
+                      <span>Coin VIP Gabon</span>
                       <span className="text-[10px] bg-amber-500 text-slate-950 px-1.5 py-0.2 rounded font-extrabold uppercase">
                         Haut Standing
                       </span>
                     </span>
                     <p className="text-[11px] text-amber-900/80 truncate">
-                      Villas d'exception, résidences haut standing & véhicules de prestige (Immobilier & Roulant)
+                      Villas, maisons, appartements, terrains & voitures et motos de prestige
                     </p>
                   </div>
                 </div>
@@ -1523,7 +1554,7 @@ function cleanUndefined(obj: any): any {
                   }`}
                 >
                   <Crown className="w-3.5 h-3.5 text-amber-700" />
-                  <span>{isVipCornerActive ? '✓ Mode VIP Actif' : 'Entrer dans le Corner VIP'}</span>
+                  <span>{isVipCornerActive ? '✓ Mode VIP Actif' : 'Entrer dans le Coin VIP'}</span>
                   <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
                     isVipCornerActive ? 'bg-slate-950 text-amber-400' : 'bg-amber-100 text-amber-900'
                   }`}>
@@ -1542,7 +1573,7 @@ function cleanUndefined(obj: any): any {
               />
             </div>
 
-            {/* Explanatory Banner when user enters the VIP Corner (Point 4) */}
+            {/* Explanatory Banner when user enters the VIP Coin (Point 4) */}
             {isVipCornerActive && (
               <div className="bg-gradient-to-r from-amber-500/15 via-yellow-400/20 to-amber-600/15 border-2 border-amber-400 rounded-3xl p-4 sm:p-5 text-amber-950 shadow-sm animate-in fade-in">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -1553,14 +1584,14 @@ function cleanUndefined(obj: any): any {
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="text-sm sm:text-base font-black text-amber-950 tracking-tight">
-                          Corner VIP — Biens d'Exception au Gabon
+                          Coin VIP — Biens d'Exception au Gabon
                         </h3>
                         <span className="bg-amber-500 text-slate-950 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
                           Placement 100% Gratuit
                         </span>
                       </div>
                       <p className="text-xs text-amber-900 mt-1 max-w-2xl leading-relaxed">
-                        Le <strong>Corner VIP</strong> regroupe les annonces les plus prestigieuses du Gabon. Réservé pour le moment à l'<strong>Immobilier</strong> (villas, domaines dès 75M FCFA ou locations dès 1M FCFA/mois) et au <strong>Matériel Roulant</strong> (véhicules de luxe dès 25M FCFA ou locations dès 50k FCFA/jour). Les annonceurs dont le prix atteint ce seuil y sont automatiquement mis en avant <em>sans aucun frais</em>.
+                        Le <strong>Coin VIP</strong> regroupe les annonces les plus prestigieuses du Gabon. Réservé à l'<strong>Immobilier</strong> (villas, maisons, appartements, terrains dès 75M FCFA ou locations dès 1M FCFA/mois) et au <strong>Matériel Roulant</strong> (voitures et motos de luxe dès 25M FCFA ou locations dès 50k FCFA/jour). Les annonces qualifiées y sont automatiquement mises en avant <em>sans aucun frais</em>.
                       </p>
                     </div>
                   </div>
@@ -1569,7 +1600,7 @@ function cleanUndefined(obj: any): any {
                     onClick={() => setIsVipCornerActive(false)}
                     className="text-xs font-bold text-amber-900 hover:text-amber-950 bg-white/90 hover:bg-white border border-amber-300 px-3 py-1.5 rounded-xl transition-all shrink-0 cursor-pointer shadow-2xs"
                   >
-                    Quitter le Corner VIP ✕
+                    Quitter le Coin VIP ✕
                   </button>
                 </div>
               </div>
@@ -1778,7 +1809,7 @@ function cleanUndefined(obj: any): any {
                 <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
                   <span>
                     {isVipCornerActive
-                      ? '👑 Sélection Prestige • Corner VIP Gabon'
+                      ? '👑 Sélection Prestige • Coin VIP Gabon'
                       : activeCategory === 'ALL'
                       ? 'Toutes les annonces en ligne'
                       : activeCategory === 'IMMOBILIER'
@@ -1895,7 +1926,6 @@ function cleanUndefined(obj: any): any {
               </div>
             )}
           </div>
-        )}
 
         {/* TAB 2: USER DEDICATED DASHBOARD ("MON ESPACE ANNONCEUR") */}
         {frontendTab === 'user-dashboard' && (
@@ -2091,7 +2121,7 @@ function cleanUndefined(obj: any): any {
         onOpenExtendModal={(ad) => setSelectedAdForExtend(ad)}
         onEditAd={(ad) => handleTriggerEdit(ad)}
         onOpenSubscriptions={() => {
-          setFrontendTab('dashboard');
+          setFrontendTab('user-dashboard');
         }}
       />
 
@@ -2113,8 +2143,9 @@ function cleanUndefined(obj: any): any {
         {/* Tab 1: Catalogue */}
         <button
           onClick={() => {
-            setFrontendTab('catalog');
-            scrollToTopInstant();
+            if (frontendTab !== 'catalog') {
+              setFrontendTab('catalog');
+            }
           }}
           className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
             frontendTab === 'catalog'
@@ -2145,6 +2176,9 @@ function cleanUndefined(obj: any): any {
         <button
           onClick={() => {
             if (currentUser) {
+              if (frontendTab === 'catalog') {
+                catalogScrollPosRef.current = window.scrollY;
+              }
               setFrontendTab('user-dashboard');
               scrollToTopInstant();
             } else {

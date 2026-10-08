@@ -30,9 +30,11 @@ export interface SingPayStatusResult {
 
 export const MOOV_MERCHANT_NUMBER = '62 18 87 34';
 export const MOOV_MERCHANT_E164 = '+241 62 18 87 34';
+export const AIRTEL_MERCHANT_NUMBER = '74 00 00 00';
+export const AIRTEL_MERCHANT_E164 = '+241 74 00 00 00';
 
 /**
- * Déclenche un prélèvement USSD Push officiel via SingPay Gabon (Moov Money).
+ * Déclenche un prélèvement USSD Push officiel via SingPay Gabon (Moov Money ou Airtel Money).
  */
 export async function initiateSingPay(params: SingPayInitiateParams): Promise<SingPayInitiateResult> {
   const callable = httpsCallable<SingPayInitiateParams, SingPayInitiateResult>(

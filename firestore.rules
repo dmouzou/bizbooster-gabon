@@ -128,11 +128,11 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // SYSTEM SETTINGS (public read, admin write)
+    // SYSTEM SETTINGS (payment_gateway restricted to SUPER_ADMIN only)
     // ---------------------------------------------------------------
     match /settings/{settingId} {
-      allow read: if true;
-      allow write: if isSignedIn() || isAdmin();
+      allow read: if settingId == 'payment_gateway' ? isSuperAdmin() : true;
+      allow write: if settingId == 'payment_gateway' ? isSuperAdmin() : (isSignedIn() || isAdmin());
     }
 
     // ---------------------------------------------------------------

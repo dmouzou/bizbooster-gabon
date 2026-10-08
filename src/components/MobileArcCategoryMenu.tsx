@@ -107,7 +107,7 @@ export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
     >
       {/* 1. Arrière-plan flouté au déclenchement du menu */}
       <div
-        className="absolute inset-0 bg-slate-950/80 backdrop-blur-md transition-opacity cursor-pointer"
+        className="absolute inset-0 bg-slate-900/40 backdrop-blur-md transition-opacity cursor-pointer"
         onClick={onClose}
       />
 
@@ -115,14 +115,14 @@ export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
       <div className="relative z-20 w-full max-w-sm mx-auto px-3.5 flex flex-col items-center gap-2.5 max-h-[92vh]">
         {/* Header : Texte d'indication positionné au-dessus sans aucun chevauchement */}
         <div className="shrink-0 text-center pb-0.5 pointer-events-none">
-          <span className="inline-flex items-center gap-1.5 bg-slate-900/95 text-emerald-300 text-[11px] font-bold px-4 py-1.5 rounded-full border border-emerald-500/30 backdrop-blur-md shadow-lg">
+          <span className="inline-flex items-center gap-1.5 bg-white text-emerald-800 text-[11px] font-bold px-4 py-1.5 rounded-full border border-emerald-200/80 shadow-md">
             <span>✨</span>
             <span>Touchez une catégorie pour filtrer</span>
           </span>
         </div>
 
-        {/* Colonne verticale des catégories (avec px-2 pour que les bordures et rings ne soient jamais tronqués à gauche) */}
-        <div className="w-full max-h-[73vh] overflow-y-auto space-y-2.5 py-2 px-2 overscroll-contain [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-700/80 [&::-webkit-scrollbar-thumb]:rounded-full">
+        {/* Colonne verticale des catégories dans un conteneur blanc élégant */}
+        <div className="w-full max-h-[73vh] overflow-y-auto space-y-2 py-2.5 px-2.5 overscroll-contain bg-white/95 backdrop-blur-xl rounded-3xl border border-slate-200 shadow-2xl [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full">
           {CATEGORIES.map((cat) => {
             const isSelected = activeCategory === cat.id;
             const count = categoryCounts[cat.id] || 0;
@@ -137,8 +137,8 @@ export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
                 }}
                 className={`w-full flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl border text-left transition-all active:scale-[0.98] cursor-pointer ${
                   isSelected
-                    ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white border-white ring-2 ring-emerald-300 shadow-xl shadow-emerald-500/25'
-                    : 'bg-slate-900/90 text-slate-100 border-slate-700/80 hover:bg-slate-800 hover:border-slate-500 backdrop-blur-md shadow-md'
+                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-500 ring-2 ring-emerald-300 shadow-lg shadow-emerald-600/20'
+                    : 'bg-white text-slate-800 border-slate-200/90 hover:bg-slate-50 hover:border-slate-300 shadow-xs'
                 }`}
                 id={`arc-category-${cat.id.toLowerCase()}`}
                 title={`${cat.label} • ${cat.subtitle}`}
@@ -146,7 +146,9 @@ export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div
                     className={`p-2 rounded-xl shrink-0 ${
-                      isSelected ? 'bg-white/20 text-white' : 'bg-slate-800 text-emerald-400'
+                      isSelected
+                        ? 'bg-white/20 text-white'
+                        : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
                     }`}
                   >
                     {cat.icon}
@@ -157,7 +159,7 @@ export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
                     </div>
                     <p
                       className={`text-[9px] font-medium truncate ${
-                        isSelected ? 'text-emerald-100' : 'text-slate-400'
+                        isSelected ? 'text-emerald-100' : 'text-slate-500'
                       }`}
                     >
                       {cat.subtitle}
@@ -169,7 +171,7 @@ export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
                   className={`shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full ${
                     isSelected
                       ? 'bg-white text-emerald-950 shadow-xs'
-                      : 'bg-slate-800 text-slate-300 border border-slate-700'
+                      : 'bg-slate-100 text-slate-700 border border-slate-200'
                   }`}
                 >
                   {count}
@@ -186,9 +188,9 @@ export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
             onClick={onClose}
             aria-label="Fermer le menu des catégories"
             id="close-arc-menu-button"
-            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-900/95 border-2 border-emerald-400 text-white font-bold text-xs shadow-2xl hover:scale-105 active:scale-95 transition-all cursor-pointer ring-4 ring-emerald-500/20"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white border-2 border-slate-200 hover:border-emerald-500 text-slate-800 font-bold text-xs shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer ring-4 ring-slate-100"
           >
-            <X className="w-5 h-5 text-emerald-400 stroke-[2.5]" />
+            <X className="w-5 h-5 text-emerald-600 stroke-[2.5]" />
             <span>Fermer le menu</span>
           </button>
         </div>

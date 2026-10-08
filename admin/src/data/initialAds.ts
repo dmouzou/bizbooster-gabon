@@ -373,7 +373,7 @@ export const INITIAL_ADS: Ad[] = [
     viewsCount: 450,
     isOwnerVerified: true
   },
-  // 12. IMMOBILIER - CORNER VIP (VENTE PRESTIGE)
+  // 12. IMMOBILIER - COIN VIP (VENTE PRESTIGE)
   {
     id: 'ad-immo-vip-1',
     isTest: true,
@@ -407,7 +407,7 @@ export const INITIAL_ADS: Ad[] = [
     viewsCount: 520,
     isOwnerVerified: true
   },
-  // 13. MATÉRIEL ROULANT - CORNER VIP (VENTE VÉHICULE DE LUXE)
+  // 13. MATÉRIEL ROULANT - COIN VIP (VENTE VÉHICULE DE LUXE)
   {
     id: 'ad-auto-vip-1',
     isTest: true,
@@ -444,7 +444,7 @@ export const INITIAL_ADS: Ad[] = [
     viewsCount: 680,
     isOwnerVerified: true
   },
-  // 14. MATÉRIEL ROULANT - CORNER VIP (LOCATION HAUT DE GAMME)
+  // 14. MATÉRIEL ROULANT - COIN VIP (LOCATION HAUT DE GAMME)
   {
     id: 'ad-auto-vip-2',
     isTest: true,

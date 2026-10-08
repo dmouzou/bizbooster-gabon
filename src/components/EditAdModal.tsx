@@ -398,21 +398,30 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
         neighborhood: selectedNeighborhood,
       },
       contactName: contactName.trim() || 'Annonceur BizBooster',
-      contactPhone: contactPhone.trim(),
+      contactPhone: (() => {
+        const rawClean = (contactPhone || '').replace(/[^0-9]/g, '').replace(/^241/, '').replace(/^0+/, '');
+        return rawClean ? `+241${rawClean}` : contactPhone.trim();
+      })(),
       images,
       videoUrl: videoUrl.trim() || undefined,
     };
 
     if (mainCategory === 'IMMOBILIER') {
       updatedData.propertyType = propertyType;
-      updatedData.isVipCorner = isAdVipCornerEligible({ mainCategory, transactionType, price: numPrice, priceUnit });
+      updatedData.isVipCorner = isAdVipCornerEligible({ mainCategory, transactionType, price: numPrice, priceUnit, propertyType });
     } else if (mainCategory === 'MATERIEL_ROULANT') {
       updatedData.vehicleData = {
         category: vehicleCategory,
         brand: vehicleBrand.trim() || undefined,
         model: vehicleModel.trim() || undefined,
       };
-      updatedData.isVipCorner = isAdVipCornerEligible({ mainCategory, transactionType, price: numPrice, priceUnit });
+      updatedData.isVipCorner = isAdVipCornerEligible({
+        mainCategory,
+        transactionType,
+        price: numPrice,
+        priceUnit,
+        vehicleData: { category: vehicleCategory },
+      });
     } else if (mainCategory === 'BRIC_A_BRAC') {
       updatedData.bricCategory = bricCategory;
     } else if (mainCategory === 'EMPLOI') {
@@ -1435,19 +1444,26 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                   );
                 })()}
 
-                {/* Point 4: Corner VIP notification if eligible */}
+                {/* Point 4: Coin VIP notification if eligible */}
                 {(mainCategory === 'IMMOBILIER' || mainCategory === 'MATERIEL_ROULANT') &&
-                  isAdVipCornerEligible({ mainCategory, transactionType, price: Number(price) || 0, priceUnit }) && (
+                  isAdVipCornerEligible({
+                    mainCategory,
+                    transactionType,
+                    price: Number(price) || 0,
+                    priceUnit,
+                    propertyType,
+                    vehicleData: { category: vehicleCategory },
+                  }) && (
                     <div className="p-3 bg-gradient-to-r from-amber-50 to-amber-100/60 border border-amber-300 rounded-xl flex items-center gap-2.5 text-amber-950 text-xs shadow-xs animate-in fade-in">
                       <div className="p-1.5 rounded-lg bg-amber-500 text-slate-950 font-black shrink-0">
                         <Crown className="w-4 h-4" />
                       </div>
                       <div>
                         <span className="font-extrabold block text-amber-900">
-                          👑 Annonce éligible au Corner VIP (Inclus sans aucun frais)
+                          👑 Annonce éligible au Coin VIP (Inclus sans aucun frais)
                         </span>
                         <span className="text-[11px] text-amber-800">
-                          En raison de son standing d'exception, votre annonce sera mise en avant dans le Corner VIP sans frais supplémentaires.
+                          En raison de son standing d'exception, votre annonce sera mise en avant dans le Coin VIP sans frais supplémentaires.
                         </span>
                       </div>
                     </div>
