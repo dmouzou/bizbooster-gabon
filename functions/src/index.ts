@@ -190,8 +190,274 @@ export const loginWithPhonePassword = onCall(
     throw new HttpsError(
       "not-found",
       "Aucun compte associé à ce numéro de téléphone. " +
-        "Veuillez vous inscrire ou vérifier via code SMS OTP."
+        "Veuillez vous inscrire ou vérifier votre saisie."
     );
+  }
+);
+
+/**
+ * 1b. Inscription directe par Téléphone + Mot de passe
+ * Crée instantanément l'utilisateur dans Firebase Auth et Firestore
+ * sans dépendre des passerelles SMS sujettes aux restrictions internationales.
+ */
+export const registerWithPhonePassword = onCall(
+  {cors: true},
+  async (request) => {
+    const {phoneNumber, password, name, province, city, operator} =
+      request.data || {};
+
+    if (!phoneNumber || !password || !name) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Numéro de téléphone, nom et mot de passe requis."
+      );
+    }
+
+    const {e164, rawDigits} = normalizeGabonPhone(String(phoneNumber));
+    if (rawDigits.length < 8) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Numéro gabonais invalide (8 chiffres requis après +241)."
+      );
+    }
+
+    if (String(password).length < 6) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Le mot de passe doit comporter au moins 6 caractères."
+      );
+    }
+
+    const db = getFirestore();
+    const authAdmin = getAuth();
+
+    // Vérifier si un compte existe déjà dans Firestore
+    let snap = await db
+      .collection("users")
+      .where("contactPhone", "==", e164)
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      snap = await db
+        .collection("users")
+        .where("phoneNumber", "==", e164)
+        .limit(1)
+        .get();
+    }
+
+    if (snap.empty) {
+      snap = await db
+        .collection("users")
+        .where("contactPhone", "==", rawDigits)
+        .limit(1)
+        .get();
+    }
+
+    if (!snap.empty) {
+      throw new HttpsError(
+        "already-exists",
+        "Ce numéro de téléphone est déjà associé à un compte annonceur. " +
+          "Veuillez vous connecter avec votre mot de passe."
+      );
+    }
+
+    const syntheticEmail = `${rawDigits}@bizbooster.ga`;
+    let uid = "";
+
+    // Créer ou synchroniser dans Firebase Auth
+    try {
+      const fbUser = await authAdmin.getUserByEmail(syntheticEmail);
+      uid = fbUser.uid;
+      await authAdmin.updateUser(uid, {
+        password: String(password).trim(),
+      });
+    } catch (getErr: unknown) {
+      const errCode = (getErr as { code?: string })?.code;
+      if (errCode === "auth/user-not-found") {
+        const createdUser = await authAdmin.createUser({
+          email: syntheticEmail,
+          password: String(password).trim(),
+          displayName: String(name).trim(),
+        });
+        uid = createdUser.uid;
+      } else {
+        throw new HttpsError(
+          "internal",
+          `Erreur Auth: ${(getErr as Error)?.message || getErr}`
+        );
+      }
+    }
+
+    const detectedOp =
+      operator || (rawDigits.startsWith("7") ? "AIRTEL" : "MOOV");
+
+    const newUser = {
+      id: uid,
+      contactPhone: e164,
+      phoneNumber: e164,
+      name: String(name).trim(),
+      operator: detectedOp,
+      isVerified: true,
+      termsAccepted: true,
+      termsAcceptedAt: new Date().toISOString(),
+      role: "USER",
+      exemptFromPaymentAndKyc: false,
+      idVerificationStatus: "NOT_SUBMITTED",
+      createdAt: new Date().toISOString(),
+      password: String(password).trim(),
+      lastPasswordChangeDate: new Date().toISOString(),
+      location: {
+        province: province || "Estuaire",
+        city: city || "Libreville",
+      },
+    };
+
+    await db.collection("users").doc(uid).set(newUser, {merge: true});
+
+    let customToken: string | null = null;
+    try {
+      customToken = await authAdmin.createCustomToken(uid);
+    } catch {
+      // ignore
+    }
+
+    return {
+      success: true,
+      customToken,
+      syntheticEmail,
+      user: newUser,
+    };
+  }
+);
+
+/**
+ * 1c. Réinitialisation sécurisée de mot de passe par code de vérification
+ */
+export const resetPasswordWithPhone = onCall(
+  {cors: true},
+  async (request) => {
+    const {phoneNumber, newPassword, otpCode} = request.data || {};
+
+    if (!phoneNumber || !newPassword || !otpCode) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Numéro, code de vérification et nouveau mot de passe requis."
+      );
+    }
+
+    if (String(newPassword).length < 6) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Le mot de passe doit comporter au moins 6 caractères."
+      );
+    }
+
+    const {e164, rawDigits} = normalizeGabonPhone(String(phoneNumber));
+    const db = getFirestore();
+    const authAdmin = getAuth();
+
+    // 1. Validation du code de vérification
+    let isValidOtp = false;
+    for (const key of [rawDigits, e164]) {
+      const vSnap = await db.collection("phone_verifications").doc(key).get();
+      if (vSnap.exists) {
+        const vData = vSnap.data() || {};
+        if (vData.otpCode === String(otpCode).trim()) {
+          const expiresAt = vData.expiresAt ?
+            new Date(vData.expiresAt).getTime() :
+            Infinity;
+          if (Date.now() <= expiresAt) {
+            isValidOtp = true;
+            await vSnap.ref
+              .update({
+                verified: true,
+                verifiedAt: new Date().toISOString(),
+              })
+              .catch(() => {});
+            break;
+          }
+        }
+      }
+    }
+
+    if (!isValidOtp) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Code de vérification incorrect ou expiré."
+      );
+    }
+
+    // 2. Recherche du compte
+    let snap = await db
+      .collection("users")
+      .where("contactPhone", "==", e164)
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      snap = await db
+        .collection("users")
+        .where("phoneNumber", "==", e164)
+        .limit(1)
+        .get();
+    }
+
+    if (snap.empty) {
+      snap = await db
+        .collection("users")
+        .where("contactPhone", "==", rawDigits)
+        .limit(1)
+        .get();
+    }
+
+    if (snap.empty) {
+      throw new HttpsError(
+        "not-found",
+        "Aucun compte annonceur associé à ce numéro."
+      );
+    }
+
+    const userDoc = snap.docs[0];
+    const uid = userDoc.id;
+    const nowIso = new Date().toISOString();
+
+    // 3. Sync Firebase Auth
+    const syntheticEmail = `${rawDigits}@bizbooster.ga`;
+    try {
+      await authAdmin.updateUser(uid, {
+        password: String(newPassword).trim(),
+      });
+    } catch {
+      try {
+        const fbUser = await authAdmin.getUserByEmail(syntheticEmail);
+        await authAdmin.updateUser(fbUser.uid, {
+          password: String(newPassword).trim(),
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    // 4. Sync Firestore
+    await userDoc.ref.update({
+      password: String(newPassword).trim(),
+      lastPasswordChangeDate: nowIso,
+    });
+
+    let customToken: string | null = null;
+    try {
+      customToken = await authAdmin.createCustomToken(uid);
+    } catch {
+      // ignore
+    }
+
+    return {
+      success: true,
+      customToken,
+      syntheticEmail,
+      message: "Mot de passe réinitialisé avec succès.",
+    };
   }
 );
 
