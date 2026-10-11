@@ -33,6 +33,7 @@ import { CguModal } from './CguModal';
 import {
   normalizeGabonPhone,
   toE164,
+  toSmsE164,
   toSyntheticEmail,
   detectOperator,
   isValidGabonMobile,
@@ -246,7 +247,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
     const rawDigits = normalizeGabonPhone(contactPhone);
     if (!isValidGabonMobile(rawDigits)) {
-      setErrorMessage('Numéro gabonais invalide (8 chiffres). Exemple : 074 56 78 21 ou 062 18 87 34.');
+      setErrorMessage('Numéro gabonais invalide. Exemple : 074 56 78 21 ou 062 18 87 34.');
       return false;
     }
 
@@ -255,13 +256,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setErrorMessage(null);
     setSuccessNotice(null);
 
-    const e164 = toE164(rawDigits);
+    // Format SMS à 9 chiffres avec le 0 (+2410XXXXXXXX) pour routage télécom
+    const smsE164 = toSmsE164(contactPhone);
 
     try {
       const verifier = getOrCreateRecaptcha();
-      confirmationRef.current = await signInWithPhoneNumber(auth, e164, verifier);
-      await trackSmsSent(e164);
-      setSuccessNotice(`Code de confirmation SMS envoyé au ${e164}.`);
+      confirmationRef.current = await signInWithPhoneNumber(auth, smsE164, verifier);
+      await trackSmsSent(smsE164);
+      setSuccessNotice(`Code de confirmation SMS envoyé au ${smsE164}.`);
       return true;
     } catch (err: unknown) {
       console.error('Erreur envoi SMS Firebase:', err);
@@ -575,10 +577,10 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           <p className="text-xs text-slate-300 mt-1">
             {authMode === 'LOGIN' && 'Connectez-vous avec votre numéro gabonais et votre mot de passe.'}
             {authMode === 'REGISTER' && stage === 1 && 'Entrez votre numéro pour recevoir un code de vérification SMS sécurisé.'}
-            {authMode === 'REGISTER' && stage === 2 && `Saisissez le code SMS à 6 chiffres envoyé au ${contactPhone}.`}
+            {authMode === 'REGISTER' && stage === 2 && `Saisissez le code SMS à 6 chiffres envoyé au ${toSmsE164(contactPhone)}.`}
             {authMode === 'REGISTER' && stage === 3 && 'Complétez votre profil pour finaliser la création de votre compte.'}
             {authMode === 'FORGOT_PASSWORD' && stage === 1 && 'Entrez votre numéro pour recevoir un code de réinitialisation par SMS.'}
-            {authMode === 'FORGOT_PASSWORD' && stage === 2 && `Saisissez le code SMS reçu au ${contactPhone}.`}
+            {authMode === 'FORGOT_PASSWORD' && stage === 2 && `Saisissez le code SMS reçu au ${toSmsE164(contactPhone)}.`}
             {authMode === 'FORGOT_PASSWORD' && stage === 4 && 'Définissez votre nouveau mot de passe sécurisé.'}
           </p>
 
@@ -625,7 +627,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                     type="tel"
                     value={contactPhone}
                     onChange={(e) => setContactPhone(e.target.value)}
-                    placeholder="74 56 78 21 ou 62 18 87 34"
+                    placeholder="074 56 78 21 ou 062 18 87 34"
                     className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                     autoFocus
                     required
@@ -723,7 +725,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                     type="tel"
                     value={contactPhone}
                     onChange={(e) => setContactPhone(e.target.value)}
-                    placeholder="74 56 78 21 ou 62 18 87 34"
+                    placeholder="074 56 78 21 ou 062 18 87 34"
                     className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                     autoFocus
                     required
@@ -793,7 +795,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                     type="tel"
                     value={contactPhone}
                     onChange={(e) => setContactPhone(e.target.value)}
-                    placeholder="74 56 78 21 ou 62 18 87 34"
+                    placeholder="074 56 78 21 ou 062 18 87 34"
                     className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                     autoFocus
                     required

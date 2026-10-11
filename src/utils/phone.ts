@@ -41,6 +41,7 @@ export function normalizeGabonPhone(raw?: string | null): string {
 
 /**
  * Convertit 8 chiffres en format international E.164 (+241XXXXXXXX).
+ * Ne contient jamais le 0 local. Utilisé pour l'enregistrement du compte en base.
  */
 export function toE164(digits: string): string {
   const clean = normalizeGabonPhone(digits);
@@ -48,7 +49,25 @@ export function toE164(digits: string): string {
 }
 
 /**
+ * Convertit un numéro gabonais en format international SMS à 9 chiffres (+2410XXXXXXXX).
+ * Ajoute un '0' si le numéro a 8 chiffres, le conserve s'il est déjà présent.
+ *
+ * Exemple : '66780104'    -> '+241066780104'
+ *           '066780104'   -> '+241066780104'
+ *           '+24166780104' -> '+241066780104'
+ *
+ * Utilisé UNIQUEMENT pour l'envoi du SMS OTP (signInWithPhoneNumber).
+ * Le compte utilisateur dans Firebase (Auth, Firestore, e-mail synthétique)
+ * est quant à lui TOUJOURS enregistré sur 8 chiffres sans le 0 (+241XXXXXXXX).
+ */
+export function toSmsE164(raw?: string | null): string {
+  const clean = normalizeGabonPhone(raw);
+  return `+2410${clean}`;
+}
+
+/**
  * Convertit 8 chiffres en e-mail synthétique unique (<8chiffres>@bizbooster.ga).
+ * Ne contient jamais le 0 local.
  */
 export function toSyntheticEmail(digits: string): string {
   const clean = normalizeGabonPhone(digits);

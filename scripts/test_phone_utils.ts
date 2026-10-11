@@ -1,6 +1,7 @@
 import {
   normalizeGabonPhone,
   toE164,
+  toSmsE164,
   toSyntheticEmail,
   detectOperator,
   isValidGabonMobile,
@@ -23,9 +24,15 @@ assert(normalizeGabonPhone('060-11-22-33') === '60112233', 'Normalisation 0 loca
 assert(normalizeGabonPhone('66112233') === '66112233', 'Normalisation déjà 8 chiffres sans 0');
 assert(normalizeGabonPhone('077123456') === '77123456', 'Normalisation Airtel avec 0 initial');
 
-// 2. Conversion E.164 & e-mail synthétique
-assert(toE164('62188734') === '+24162188734', 'toE164');
-assert(toSyntheticEmail('62188734') === '62188734@bizbooster.ga', 'toSyntheticEmail');
+// 2. Conversion E.164, SMS 9 chiffres & e-mail synthétique
+assert(toE164('62188734') === '+24162188734', 'toE164 (sans 0)');
+assert(toE164('062188734') === '+24162188734', 'toE164 avec 0 en entrée doit retirer le 0');
+assert(toSyntheticEmail('62188734') === '62188734@bizbooster.ga', 'toSyntheticEmail (sans 0)');
+assert(toSyntheticEmail('062188734') === '62188734@bizbooster.ga', 'toSyntheticEmail avec 0 en entrée doit retirer le 0');
+assert(toSmsE164('66780104') === '+241066780104', 'toSmsE164 ajoute un 0 sur 8 chiffres');
+assert(toSmsE164('066780104') === '+241066780104', 'toSmsE164 conserve le 0 existant');
+assert(toSmsE164('+24166780104') === '+241066780104', 'toSmsE164 sur +241 à 8 chiffres');
+assert(toSmsE164('+241066780104') === '+241066780104', 'toSmsE164 sur +241 à 9 chiffres');
 
 // 3. Détection opérateur Moov (60, 62, 65, 66)
 assert(detectOperator('60123456') === 'MOOV', 'Moov 60');
