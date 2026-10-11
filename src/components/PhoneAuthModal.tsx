@@ -107,8 +107,6 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
   // Initialiseur paresseux de RecaptchaVerifier invisible (Section 3.3)
   const getOrCreateRecaptcha = (): RecaptchaVerifier => {
-    const container = document.getElementById('recaptcha-container');
-
     if (recaptchaRef.current) {
       try {
         recaptchaRef.current.clear();
@@ -118,12 +116,30 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       recaptchaRef.current = null;
     }
 
-    if (container) {
-      container.innerHTML = '';
+    const oldContainer = document.getElementById('recaptcha-container');
+    const wrapper = document.getElementById('recaptcha-wrapper');
+
+    let targetElement: HTMLElement;
+    if (oldContainer && oldContainer.parentNode) {
+      const freshContainer = document.createElement('div');
+      freshContainer.id = 'recaptcha-container';
+      oldContainer.parentNode.replaceChild(freshContainer, oldContainer);
+      targetElement = freshContainer;
+    } else if (wrapper) {
+      wrapper.innerHTML = '';
+      const freshContainer = document.createElement('div');
+      freshContainer.id = 'recaptcha-container';
+      wrapper.appendChild(freshContainer);
+      targetElement = freshContainer;
+    } else {
+      const freshContainer = document.createElement('div');
+      freshContainer.id = 'recaptcha-container';
+      document.body.appendChild(freshContainer);
+      targetElement = freshContainer;
     }
 
     auth.languageCode = 'fr';
-    recaptchaRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
+    recaptchaRef.current = new RecaptchaVerifier(auth, targetElement, {
       size: 'invisible',
       callback: () => {
         setErrorMessage(null);
@@ -142,6 +158,24 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
     return recaptchaRef.current;
   };
+
+  // Réinitialisation de reCAPTCHA lors du basculement de mode
+  useEffect(() => {
+    if (recaptchaRef.current) {
+      try {
+        recaptchaRef.current.clear();
+      } catch (e) {
+        console.error('Erreur clear reCAPTCHA mode switch:', e);
+      }
+      recaptchaRef.current = null;
+    }
+    const oldContainer = document.getElementById('recaptcha-container');
+    if (oldContainer && oldContainer.parentNode) {
+      const freshContainer = document.createElement('div');
+      freshContainer.id = 'recaptcha-container';
+      oldContainer.parentNode.replaceChild(freshContainer, oldContainer);
+    }
+  }, [authMode]);
 
   // Nettoyage au démontage
   useEffect(() => {
@@ -508,7 +542,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
       {/* Conteneur unique invisible pour reCAPTCHA monté à la racine du modal */}
-      <div id="recaptcha-container" />
+      <div id="recaptcha-wrapper">
+        <div id="recaptcha-container" />
+      </div>
 
       <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative my-auto">
         {/* En-tête */}

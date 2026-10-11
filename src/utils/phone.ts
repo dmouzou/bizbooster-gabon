@@ -156,6 +156,9 @@ export function getAuthErrorMessage(err: unknown): string {
       return 'Service momentanément indisponible. (Ne jamais l\'afficher comme "aucun compte".)';
 
     default:
+      if (rawMessage.includes('already been rendered in this element')) {
+        return 'Contrôle de sécurité reCAPTCHA réinitialisé. Veuillez renvoyer le code.';
+      }
       if (code.includes('error-code:-39') || rawMessage.includes('error-code:-39')) {
         return 'Erreur inattendue (error-code:-39). Journalisez l\'erreur complète dans la console et vérifiez la configuration d\'App Check et de reCAPTCHA.';
       }
