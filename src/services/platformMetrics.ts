@@ -1,5 +1,6 @@
 import { doc, getDoc, setDoc, increment } from 'firebase/firestore';
-import { db } from './firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from './firebase';
 import { Ad, UserProfile } from '../types';
 
 export interface FirebaseQuotaComparison {
@@ -92,23 +93,18 @@ export async function trackSmsSent(phoneNumber?: string): Promise<{ today: numbe
   }
 
   const today = getTodayString();
-  const metricsRef = doc(db, 'system_counters', 'scalability_metrics');
-  let finalToday = Number(localStorage.getItem(SMS_SENT_TODAY_KEY) || '0') + 1;
-  let finalAllTime = Number(localStorage.getItem(SMS_SENT_ALL_TIME_KEY) || '0') + 1;
+  const finalToday = Number(localStorage.getItem(SMS_SENT_TODAY_KEY) || '0') + 1;
+  const finalAllTime = Number(localStorage.getItem(SMS_SENT_ALL_TIME_KEY) || '0') + 1;
 
+  // Enregistrement atomique côté serveur (Phase 8)
   try {
-    await setDoc(
-      metricsRef,
-      {
-        todayDate: today,
-        smsSentToday: increment(1),
-        smsSentAllTime: increment(1),
-        lastSmsSentAt: new Date().toISOString(),
-      },
-      { merge: true }
+    const recordFn = httpsCallable<{ phoneNumber?: string }, { success: boolean }>(
+      functions,
+      'recordSmsSent'
     );
+    await recordFn({ phoneNumber });
   } catch (err) {
-    console.warn('Could not sync SMS metric to Firestore:', err);
+    console.warn('Could not sync SMS metric to Firestore via server function:', err);
   }
 
   localStorage.setItem(SMS_SENT_DATE_KEY, today);

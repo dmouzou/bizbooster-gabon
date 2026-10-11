@@ -914,7 +914,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-slate-600 mt-1">
-                    Votre compte bénéficie d'une dispense spéciale accordée par l'administration BizBooster (0 FCFA facturé, max 10 annonces simultanées).
+                    Votre compte bénéficie d'une dispense spéciale accordée par l'administration BizBooster (0 FCFA facturé, max 20 annonces simultanées).
                   </p>
                 </div>
               </div>

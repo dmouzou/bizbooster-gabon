@@ -2,7 +2,7 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 import {onDocumentWritten} from "firebase-functions/v2/firestore";
 import {onCall, onRequest, HttpsError} from "firebase-functions/v2/https";
 import {defineSecret} from "firebase-functions/params";
-import {getFirestore} from "firebase-admin/firestore";
+import {getFirestore, AggregateField, FieldValue} from "firebase-admin/firestore";
 import {getAuth, UserRecord} from "firebase-admin/auth";
 import {initializeApp} from "firebase-admin/app";
 
@@ -84,16 +84,38 @@ export async function resolveAuthUser(
   );
 }
 
+// Table des quotas partagée (Phase 7)
+export const SUBSCRIPTION_QUOTAS: Record<string, number> = {
+  STANDARD: 3,
+  PRO: 8,
+  ELITE: 14,
+  BUSINESS: 20,
+  VIP_EXEMPT: 20,
+};
+
+// Numéros de test Firebase Auth (Phase 8) sans code secret
+export const FIREBASE_TEST_PHONE_NUMBERS = [
+  "+24167256341",
+  "+24167896902",
+  "+24177276895",
+  "+24177905165",
+  "+24177000000",
+  "+24166000000",
+  "+24174000000",
+];
+
 /**
- * 2. Expiration automatique des annonces et gestion des dépassements de quota :
+ * 2. Expiration automatique des annonces et gestion des dépassements de quota (Phase 7) :
  * - Expire les annonces actives dont la date de validité est passée.
+ * - Découpe les écritures en batches de 500 opérations max.
+ * - Ignore les utilisateurs avec isExempt ou exemptFromPaymentAndKyc lors des rétrogradations et suspensions.
  * - Rétrograde les abonnements expirés (PRO/ELITE/BUSINESS vers STANDARD).
- * - Suspend automatiquement les annonces excédentaires (les plus récentes)
- *   au-delà du quota de 3 annonces du forfait Standard.
+ * - Suspend automatiquement les annonces excédentaires au-delà du quota Standard (3 annonces).
  */
 export const expireAds = onSchedule("every 60 minutes", async () => {
   const db = getFirestore();
   const now = new Date().toISOString();
+  const CHUNK_SIZE = 500;
 
   // A. Expirer les annonces dont expiresAt <= now
   const expiredAdsSnap = await db
@@ -102,9 +124,15 @@ export const expireAds = onSchedule("every 60 minutes", async () => {
     .where("expiresAt", "<=", now)
     .get();
 
-  const batch = db.batch();
-  expiredAdsSnap.forEach((doc) => batch.update(doc.ref, {status: "EXPIRED"}));
-  await batch.commit();
+  const expiredDocs = expiredAdsSnap.docs;
+  for (let i = 0; i < expiredDocs.length; i += CHUNK_SIZE) {
+    const chunk = expiredDocs.slice(i, i + CHUNK_SIZE);
+    const batch = db.batch();
+    chunk.forEach((doc) =>
+      batch.update(doc.ref, {status: "EXPIRED", updatedAt: now})
+    );
+    await batch.commit();
+  }
 
   // B. Détecter les utilisateurs dont l'abonnement mensuel a expiré
   const expiredUsersSnap = await db
@@ -114,23 +142,31 @@ export const expireAds = onSchedule("every 60 minutes", async () => {
     .get();
 
   for (const userDoc of expiredUsersSnap.docs) {
+    const userData = userDoc.data() || {};
+
+    // Ignore les partenaires exemptés lors des rétrogradations et suspensions (Phase 7)
+    if (userData.isExempt || userData.exemptFromPaymentAndKyc) {
+      continue;
+    }
+
     const userId = userDoc.id;
 
     // Rétrograde en STANDARD
     await userDoc.ref.update({
       subscriptionTier: "STANDARD",
       subscriptionExpiredAt: now,
+      updatedAt: now,
     });
 
-    // Quota Standard = 3 annonces actives max
+    // Quota Standard partagé (3 annonces actives max)
+    const standardQuota = SUBSCRIPTION_QUOTAS.STANDARD || 3;
     const activeAdsSnap = await db
       .collection("ads")
       .where("userId", "==", userId)
       .where("status", "==", "ACTIVE")
       .get();
 
-    if (activeAdsSnap.size > 3) {
-      // Trier par date croissante (les plus anciennes restent actives)
+    if (activeAdsSnap.size > standardQuota) {
       const sortedDocs = [...activeAdsSnap.docs].sort((a, b) => {
         const tA = new Date(
           a.data().createdAt || a.data().publishedAt || 0
@@ -141,41 +177,80 @@ export const expireAds = onSchedule("every 60 minutes", async () => {
         return tA - tB;
       });
 
-      // Les 3 premières restent actives, les excédentaires sont suspendues
-      const excessDocs = sortedDocs.slice(3);
-      const quotaBatch = db.batch();
-      excessDocs.forEach((doc) => {
-        quotaBatch.update(doc.ref, {
-          status: "SUSPENDED",
-          suspensionReason: "FORFAIT_EXPIRE_QUOTA",
-          suspendedAt: now,
+      const excessDocs = sortedDocs.slice(standardQuota);
+      for (let i = 0; i < excessDocs.length; i += CHUNK_SIZE) {
+        const chunk = excessDocs.slice(i, i + CHUNK_SIZE);
+        const quotaBatch = db.batch();
+        chunk.forEach((doc) => {
+          quotaBatch.update(doc.ref, {
+            status: "SUSPENDED",
+            suspensionReason: "FORFAIT_EXPIRE_QUOTA",
+            suspendedAt: now,
+            updatedAt: now,
+          });
         });
-      });
-      await quotaBatch.commit();
+        await quotaBatch.commit();
+      }
     }
   }
 });
 
 /**
  * 3. Mise à jour des compteurs de l'Observatoire (system_counters)
- * à chaque écriture sur la collection ads.
+ * Optimisé Phase 7 :
+ * - Ignore les écritures limitées à l'incrément de vues (viewsCount) ou signalements.
+ * - Utilise des requêtes d'agrégation count() et sum() natives O(1).
  */
-export const updateCounters = onDocumentWritten("ads/{adId}", async () => {
-  const db = getFirestore();
-  const activeSnap = await db
-    .collection("ads")
-    .where("status", "==", "ACTIVE")
-    .get();
+export const updateCounters = onDocumentWritten("ads/{adId}", async (event) => {
+  const before = event.data?.before;
+  const after = event.data?.after;
 
-  const totalValue = activeSnap.docs.reduce(
-    (sum, d) => sum + (d.data().price || 0),
-    0
-  );
+  // Si modification d'annonce existante : ignorer si seules viewsCount ou reportsCount ont changé
+  if (before?.exists && after?.exists) {
+    const beforeData = before.data() || {};
+    const afterData = after.data() || {};
+
+    const allKeys = new Set([
+      ...Object.keys(beforeData),
+      ...Object.keys(afterData),
+    ]);
+    let onlyViewsOrReports = true;
+    for (const key of allKeys) {
+      if (
+        key !== "viewsCount" &&
+        key !== "reportsCount" &&
+        key !== "updatedAt"
+      ) {
+        if (
+          JSON.stringify(beforeData[key]) !== JSON.stringify(afterData[key])
+        ) {
+          onlyViewsOrReports = false;
+          break;
+        }
+      }
+    }
+    if (onlyViewsOrReports) {
+      return;
+    }
+  }
+
+  const db = getFirestore();
+  const activeQuery = db.collection("ads").where("status", "==", "ACTIVE");
+
+  const countSnap = await activeQuery.count().get();
+  const totalActiveAds = countSnap.data().count;
+
+  const aggregateSnap = await activeQuery
+    .aggregate({
+      totalValue: AggregateField.sum("price"),
+    })
+    .get();
+  const totalCatalogValue = aggregateSnap.data().totalValue || 0;
 
   await db.doc("system_counters/global").set(
     {
-      totalActiveAds: activeSnap.size,
-      totalCatalogValueFCFA: totalValue,
+      totalActiveAds,
+      totalCatalogValueFCFA: totalCatalogValue,
       updatedAt: new Date().toISOString(),
     },
     {merge: true}
@@ -1085,6 +1160,36 @@ export const claimPaymentBenefits = onCall(
     }
     const attributed = await applyPaymentAttribution(String(reference));
     return {success: attributed};
+  }
+);
+
+/**
+ * 7. Enregistrement atomique des SMS envoyés côté serveur (Phase 8).
+ * Utilise FieldValue.increment(1) et ignore les numéros de test Firebase.
+ */
+export const recordSmsSent = onCall(
+  {cors: true},
+  async (request) => {
+    const {phoneNumber} = request.data || {};
+    const {e164} = normalizeGabonPhone(phoneNumber);
+
+    if (e164 && FIREBASE_TEST_PHONE_NUMBERS.includes(e164)) {
+      return {success: true, test: true};
+    }
+
+    const db = getFirestore();
+    const today = new Date().toISOString().split("T")[0];
+    await db.doc("system_counters/scalability_metrics").set(
+      {
+        todayDate: today,
+        smsSentToday: FieldValue.increment(1),
+        smsSentAllTime: FieldValue.increment(1),
+        lastSmsSentAt: new Date().toISOString(),
+      },
+      {merge: true}
+    );
+
+    return {success: true};
   }
 );
 
