@@ -2,7 +2,11 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 import {onDocumentWritten} from "firebase-functions/v2/firestore";
 import {onCall, onRequest, HttpsError} from "firebase-functions/v2/https";
 import {defineSecret} from "firebase-functions/params";
-import {getFirestore, AggregateField, FieldValue} from "firebase-admin/firestore";
+import {
+  getFirestore,
+  AggregateField,
+  FieldValue,
+} from "firebase-admin/firestore";
 import {getAuth, UserRecord} from "firebase-admin/auth";
 import {initializeApp} from "firebase-admin/app";
 
@@ -105,12 +109,15 @@ export const FIREBASE_TEST_PHONE_NUMBERS = [
 ];
 
 /**
- * 2. Expiration automatique des annonces et gestion des dépassements de quota (Phase 7) :
+ * 2. Expiration automatique des annonces et gestion des dépassements de
+ * quota (Phase 7) :
  * - Expire les annonces actives dont la date de validité est passée.
  * - Découpe les écritures en batches de 500 opérations max.
- * - Ignore les utilisateurs avec isExempt ou exemptFromPaymentAndKyc lors des rétrogradations et suspensions.
+ * - Ignore les partenaires avec isExempt ou exemptFromPaymentAndKyc lors
+ *   des rétrogradations et suspensions.
  * - Rétrograde les abonnements expirés (PRO/ELITE/BUSINESS vers STANDARD).
- * - Suspend automatiquement les annonces excédentaires au-delà du quota Standard (3 annonces).
+ * - Suspend automatiquement les annonces excédentaires au-delà du quota
+ *   Standard (3 annonces).
  */
 export const expireAds = onSchedule("every 60 minutes", async () => {
   const db = getFirestore();
@@ -144,7 +151,8 @@ export const expireAds = onSchedule("every 60 minutes", async () => {
   for (const userDoc of expiredUsersSnap.docs) {
     const userData = userDoc.data() || {};
 
-    // Ignore les partenaires exemptés lors des rétrogradations et suspensions (Phase 7)
+    // Ignore les partenaires exemptés lors des rétrogradations et
+    // suspensions (Phase 7)
     if (userData.isExempt || userData.exemptFromPaymentAndKyc) {
       continue;
     }
@@ -198,64 +206,66 @@ export const expireAds = onSchedule("every 60 minutes", async () => {
 /**
  * 3. Mise à jour des compteurs de l'Observatoire (system_counters)
  * Optimisé Phase 7 :
- * - Ignore les écritures limitées à l'incrément de vues (viewsCount) ou signalements.
+ * - Ignore les écritures limitées à l'incrément de vues ou signalements.
  * - Utilise des requêtes d'agrégation count() et sum() natives O(1).
  */
-export const updateCounters = onDocumentWritten("ads/{adId}", async (event) => {
-  const before = event.data?.before;
-  const after = event.data?.after;
+export const updateCounters = onDocumentWritten(
+  "ads/{adId}",
+  async (event) => {
+    const before = event.data?.before;
+    const after = event.data?.after;
 
-  // Si modification d'annonce existante : ignorer si seules viewsCount ou reportsCount ont changé
-  if (before?.exists && after?.exists) {
-    const beforeData = before.data() || {};
-    const afterData = after.data() || {};
+    // Si modification : ignorer si seules views ou reports ont changé
+    if (before?.exists && after?.exists) {
+      const beforeData = before.data() || {};
+      const afterData = after.data() || {};
 
-    const allKeys = new Set([
-      ...Object.keys(beforeData),
-      ...Object.keys(afterData),
-    ]);
-    let onlyViewsOrReports = true;
-    for (const key of allKeys) {
-      if (
-        key !== "viewsCount" &&
+      const allKeys = new Set([
+        ...Object.keys(beforeData),
+        ...Object.keys(afterData),
+      ]);
+      let onlyViewsOrReports = true;
+      for (const key of allKeys) {
+        if (
+          key !== "viewsCount" &&
         key !== "reportsCount" &&
         key !== "updatedAt"
-      ) {
-        if (
-          JSON.stringify(beforeData[key]) !== JSON.stringify(afterData[key])
         ) {
-          onlyViewsOrReports = false;
-          break;
+          if (
+            JSON.stringify(beforeData[key]) !== JSON.stringify(afterData[key])
+          ) {
+            onlyViewsOrReports = false;
+            break;
+          }
         }
       }
+      if (onlyViewsOrReports) {
+        return;
+      }
     }
-    if (onlyViewsOrReports) {
-      return;
-    }
-  }
 
-  const db = getFirestore();
-  const activeQuery = db.collection("ads").where("status", "==", "ACTIVE");
+    const db = getFirestore();
+    const activeQuery = db.collection("ads").where("status", "==", "ACTIVE");
 
-  const countSnap = await activeQuery.count().get();
-  const totalActiveAds = countSnap.data().count;
+    const countSnap = await activeQuery.count().get();
+    const totalActiveAds = countSnap.data().count;
 
-  const aggregateSnap = await activeQuery
-    .aggregate({
-      totalValue: AggregateField.sum("price"),
-    })
-    .get();
-  const totalCatalogValue = aggregateSnap.data().totalValue || 0;
+    const aggregateSnap = await activeQuery
+      .aggregate({
+        totalValue: AggregateField.sum("price"),
+      })
+      .get();
+    const totalCatalogValue = aggregateSnap.data().totalValue || 0;
 
-  await db.doc("system_counters/global").set(
-    {
-      totalActiveAds,
-      totalCatalogValueFCFA: totalCatalogValue,
-      updatedAt: new Date().toISOString(),
-    },
-    {merge: true}
-  );
-});
+    await db.doc("system_counters/global").set(
+      {
+        totalActiveAds,
+        totalCatalogValueFCFA: totalCatalogValue,
+        updatedAt: new Date().toISOString(),
+      },
+      {merge: true}
+    );
+  });
 
 interface SingPayTransactionData {
   id?: string;
@@ -317,6 +327,8 @@ const EXTENSION_PRICES: Record<number, number> = {
 /**
  * Récupère les secrets SingPay depuis Secret Manager / environnement.
  * Aucun secret n'est lu depuis Firestore.
+ *
+ * @return {Record<string, string>} Configuration et secrets SingPay.
  */
 function getSingPayConfig() {
   const clientId =
@@ -351,6 +363,11 @@ function getSingPayConfig() {
 /**
  * Calcule le tarif garanti d'un produit côté serveur.
  * Ne fait jamais confiance au montant fourni par le client.
+ *
+ * @param {string} [productId] Identifiant du produit.
+ * @param {Record<string, unknown>} [metadata] Métadonnées associées.
+ * @param {string} [userTier] Niveau d'abonnement actuel de l'utilisateur.
+ * @return {number} Prix garanti calculé en FCFA.
  */
 export function calculateServerPrice(
   productId?: string,
@@ -409,6 +426,9 @@ export function calculateServerPrice(
 /**
  * Attribution sécurisée des avantages après paiement validé SUCCESS.
  * Exécutée exclusivement côté serveur avec le SDK Admin.
+ *
+ * @param {string} paymentRefOrId Référence ou ID du document paiement.
+ * @return {Promise<boolean>} Indique si l'attribution a réussi.
  */
 export async function applyPaymentAttribution(
   paymentRefOrId: string
@@ -417,14 +437,16 @@ export async function applyPaymentAttribution(
   const paymentDocRef = db.collection("payments").doc(paymentRefOrId);
   const paymentSnap = await paymentDocRef.get();
   if (!paymentSnap.exists) {
-    console.warn(`applyPaymentAttribution: Paiement ${paymentRefOrId} introuvable.`);
+    console.warn(
+      `applyPaymentAttribution: Paiement ${paymentRefOrId} introuvable.`
+    );
     return false;
   }
 
   const payment = paymentSnap.data() || {};
   if (payment.status !== "SUCCESS") {
     console.warn(
-      `applyPaymentAttribution: Statut non SUCCESS (${payment.status}) pour ${paymentRefOrId}.`
+      `applyPaymentAttribution: Statut non SUCCESS pour ${paymentRefOrId}.`
     );
     return false;
   }
@@ -436,14 +458,18 @@ export async function applyPaymentAttribution(
 
   const userId = payment.userId as string;
   if (!userId) {
-    console.warn(`applyPaymentAttribution: Aucun userId sur le paiement ${paymentRefOrId}.`);
+    console.warn(
+      `applyPaymentAttribution: Aucun userId sur ${paymentRefOrId}.`
+    );
     return false;
   }
 
   const userRef = db.collection("users").doc(userId);
   const userSnap = await userRef.get();
   if (!userSnap.exists) {
-    console.warn(`applyPaymentAttribution: Utilisateur ${userId} introuvable.`);
+    console.warn(
+      `applyPaymentAttribution: Utilisateur ${userId} introuvable.`
+    );
     return false;
   }
   const userData = userSnap.data() || {};
@@ -458,7 +484,9 @@ export async function applyPaymentAttribution(
     await userRef.update({
       subscriptionTier: "PRO",
       subscriptionStartedAt: now.toISOString(),
-      subscriptionExpiresAt: new Date(now.getTime() + 30 * 86400000).toISOString(),
+      subscriptionExpiresAt: new Date(
+        now.getTime() + 30 * 86400000
+      ).toISOString(),
       freeBoostsRemaining: Math.min(20, currentBoosts + 1),
       updatedAt: now.toISOString(),
     });
@@ -467,7 +495,9 @@ export async function applyPaymentAttribution(
     await userRef.update({
       subscriptionTier: "ELITE",
       subscriptionStartedAt: now.toISOString(),
-      subscriptionExpiresAt: new Date(now.getTime() + 30 * 86400000).toISOString(),
+      subscriptionExpiresAt: new Date(
+        now.getTime() + 30 * 86400000
+      ).toISOString(),
       freeBoostsRemaining: Math.min(20, currentBoosts + 3),
       updatedAt: now.toISOString(),
     });
@@ -476,7 +506,9 @@ export async function applyPaymentAttribution(
     await userRef.update({
       subscriptionTier: "BUSINESS",
       subscriptionStartedAt: now.toISOString(),
-      subscriptionExpiresAt: new Date(now.getTime() + 30 * 86400000).toISOString(),
+      subscriptionExpiresAt: new Date(
+        now.getTime() + 30 * 86400000
+      ).toISOString(),
       freeBoostsRemaining: Math.min(20, currentBoosts + 6),
       updatedAt: now.toISOString(),
     });
@@ -589,7 +621,9 @@ export async function applyPaymentAttribution(
       await userRef.update({
         subscriptionTier: tier,
         subscriptionStartedAt: now.toISOString(),
-        subscriptionExpiresAt: new Date(now.getTime() + 30 * 86400000).toISOString(),
+        subscriptionExpiresAt: new Date(
+          now.getTime() + 30 * 86400000
+        ).toISOString(),
         freeBoostsRemaining: finalBoosts,
         updatedAt: now.toISOString(),
       });
@@ -647,7 +681,7 @@ export const initiateSingPayPayment = onCall(
 
     const {e164, rawDigits} = normalizeGabonPhone(String(phoneNumber));
 
-    // Validation stricte des opérateurs (Phase 6 : Moov 60, 62, 65, 66 ; Airtel 74, 76, 77)
+    // Validation stricte des opérateurs (Phase 6 : Moov / Airtel)
     const isMoov = MOOV_PREFIXES.some((p) => rawDigits.startsWith(p));
     const isAirtel = AIRTEL_PREFIXES.some((p) => rawDigits.startsWith(p));
 
@@ -691,7 +725,10 @@ export const initiateSingPayPayment = onCall(
     }
 
     // Référence générée côté serveur, unique par UID et horodatée
-    const serverReference = `BZB_${request.auth.uid.slice(0, 8)}_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+    const uidPrefix = request.auth.uid.slice(0, 8);
+    const randSuffix = Math.floor(1000 + Math.random() * 9000);
+    const serverReference =
+      `BZB_${uidPrefix}_${Date.now()}_${randSuffix}`;
 
     const clientMsisdn = `241${rawDigits}`;
 
@@ -704,7 +741,7 @@ export const initiateSingPayPayment = onCall(
     if (!clientId || !clientSecret || !walletId) {
       throw new HttpsError(
         "failed-precondition",
-        "Identifiants SingPay non configurés dans Secret Manager (Client ID, Secret, Wallet ID)."
+        "Identifiants SingPay manquants dans Secret Manager."
       );
     }
 
@@ -717,7 +754,7 @@ export const initiateSingPayPayment = onCall(
     if (!rawDisbursement) {
       throw new HttpsError(
         "failed-precondition",
-        `Numéro de reversement non configuré dans les secrets SingPay pour ${requestedOperator}.`
+        `Reversement non configuré dans les secrets pour ${requestedOperator}.`
       );
     }
 
@@ -776,7 +813,7 @@ export const initiateSingPayPayment = onCall(
       const singpayTx = responseJson.transaction || {};
       const singpayTxId = singpayTx.id || singpayTx._id || "";
 
-      // Création du document payment avec l'UID du propriétaire (create pour interdire écrasement)
+      // Document payment avec UID propriétaire (.create() anti-écrasement)
       await db.collection("payments").doc(serverReference).create({
         reference: serverReference,
         userId: request.auth.uid,
@@ -1112,7 +1149,7 @@ export const singpayWebhook = onRequest(
 
 /**
  * Déclencheur Firestore sur écriture de paiement :
- * Si le statut devient SUCCESS et n'est pas encore attribué, applique l'attribution.
+ * Si statut SUCCESS et non encore attribué, applique l'attribution.
  */
 export const onPaymentStatusChange = onDocumentWritten(
   "payments/{paymentId}",
@@ -1141,10 +1178,16 @@ export const claimPaymentBenefits = onCall(
     }
     const {reference} = request.data || {};
     if (!reference) {
-      throw new HttpsError("invalid-argument", "Référence de paiement requise.");
+      throw new HttpsError(
+        "invalid-argument",
+        "Référence de paiement requise."
+      );
     }
     const db = getFirestore();
-    const paySnap = await db.collection("payments").doc(String(reference)).get();
+    const paySnap = await db
+      .collection("payments")
+      .doc(String(reference))
+      .get();
     if (!paySnap.exists) {
       throw new HttpsError("not-found", "Paiement introuvable.");
     }
