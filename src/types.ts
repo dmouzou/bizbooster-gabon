@@ -231,10 +231,11 @@ export type UserRole = 'USER' | 'ADMIN' | 'SUPER_ADMIN';
 
 export interface UserProfile {
   id: string;
-  contactPhone?: string; // Gabon format: +241 XX XX XX XX
+  contactPhone?: string; // Format international E.164 (+241... ou +91...)
   phoneNumber?: string;
   name: string;
-  operator: 'AIRTEL' | 'MOOV';
+  country?: 'GA' | 'IN';
+  operator?: 'AIRTEL' | 'MOOV' | 'OTHER' | null;
   isVerified: boolean;
   termsAccepted: boolean;
   termsAcceptedAt: string;

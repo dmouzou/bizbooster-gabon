@@ -29,16 +29,23 @@ import {
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { GABON_PROVINCES } from '../data/gabonLocations';
+import { INDIA_STATES } from '../data/indiaLocations';
 import { CguModal } from './CguModal';
 import {
   normalizeGabonPhone,
+  normalizeIndiaPhone,
+  normalizePhone,
   toE164,
   toSmsE164,
   toSyntheticEmail,
   detectOperator,
   isValidGabonMobile,
+  isValidIndiaMobile,
+  isValidPhone,
   getAuthErrorMessage,
   GabonOperator,
+  SupportedCountry,
+  COUNTRIES,
 } from '../utils/phone';
 
 interface PhoneAuthModalProps {
@@ -57,6 +64,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const [authMode, setAuthMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD'>(
     initialMode === 'REGISTER' ? 'REGISTER' : 'LOGIN'
   );
+
+  // Pays sélectionné (Gabon par défaut, ou Inde)
+  const [selectedCountry, setSelectedCountry] = useState<SupportedCountry>('GA');
 
   // Étapes :
   // REGISTER: 1 = Saisie numéro -> 2 = Code SMS OTP -> 3 = Profil & Mot de passe
@@ -86,12 +96,49 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Villes associées à la province
-  const availableCities = GABON_PROVINCES.find((p) => p.name === selectedProvince)?.cities || [];
+  // Villes associées à la province / état selon le pays
+  const availableCities = selectedCountry === 'IN'
+    ? INDIA_STATES.find((s) => s.name === selectedProvince)?.cities || []
+    : GABON_PROVINCES.find((p) => p.name === selectedProvince)?.cities || [];
 
-  // Détection opérateur dynamique pour information visuelle
-  const digits = normalizeGabonPhone(contactPhone);
-  const detectedOp: GabonOperator | null = detectOperator(digits);
+  // Détection opérateur dynamique pour Gabon
+  const digits = normalizePhone(contactPhone, selectedCountry);
+  const detectedOp: GabonOperator | null = selectedCountry === 'GA' ? detectOperator(digits) : null;
+  const isIndiaValid = selectedCountry === 'IN' && isValidIndiaMobile(contactPhone);
+
+  // Basculement de pays
+  const handleSelectCountry = (country: SupportedCountry) => {
+    if (country === selectedCountry) return;
+    setSelectedCountry(country);
+    setContactPhone('');
+    setErrorMessage(null);
+    setSuccessNotice(null);
+    if (country === 'IN') {
+      setSelectedProvince(INDIA_STATES[0]?.name || 'Maharashtra');
+      setSelectedCity(INDIA_STATES[0]?.cities[0]?.name || 'Mumbai');
+    } else {
+      setSelectedProvince(GABON_PROVINCES[0]?.name || 'Estuaire');
+      setSelectedCity(GABON_PROVINCES[0]?.cities[0]?.name || 'Libreville');
+    }
+  };
+
+  // Détection automatique lors de la saisie / collage
+  const handlePhoneChange = (val: string) => {
+    if (val.startsWith('+91') || val.startsWith('0091')) {
+      if (selectedCountry !== 'IN') {
+        setSelectedCountry('IN');
+        setSelectedProvince(INDIA_STATES[0]?.name || 'Maharashtra');
+        setSelectedCity(INDIA_STATES[0]?.cities[0]?.name || 'Mumbai');
+      }
+    } else if (val.startsWith('+241') || val.startsWith('00241')) {
+      if (selectedCountry !== 'GA') {
+        setSelectedCountry('GA');
+        setSelectedProvince(GABON_PROVINCES[0]?.name || 'Estuaire');
+        setSelectedCity(GABON_PROVINCES[0]?.cities[0]?.name || 'Libreville');
+      }
+    }
+    setContactPhone(val);
+  };
 
   // Gestion du compte à rebours de renvoi SMS (Hygiène : ReturnType<typeof setInterval>)
   useEffect(() => {
@@ -217,6 +264,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     confirmationRef.current = null;
     setIsLoading(false);
     sendLockRef.current = false;
+    setSelectedCountry('GA');
+    setSelectedProvince(GABON_PROVINCES[0]?.name || 'Estuaire');
+    setSelectedCity(GABON_PROVINCES[0]?.cities[0]?.name || 'Libreville');
 
     if (recaptchaRef.current) {
       try {
@@ -245,9 +295,13 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const sendCode = async (): Promise<boolean> => {
     if (sendLockRef.current || isLoading) return false;
 
-    const rawDigits = normalizeGabonPhone(contactPhone);
-    if (!isValidGabonMobile(rawDigits)) {
-      setErrorMessage('Numéro gabonais invalide. Exemple : 074 56 78 21 ou 062 18 87 34.');
+    const rawDigits = normalizePhone(contactPhone, selectedCountry);
+    if (!isValidPhone(rawDigits, selectedCountry)) {
+      setErrorMessage(
+        selectedCountry === 'IN'
+          ? 'Numéro indien invalide (10 chiffres). Exemple : 98765 43210.'
+          : 'Numéro gabonais invalide. Exemple : 074 56 78 21 ou 062 18 87 34.'
+      );
       return false;
     }
 
@@ -256,8 +310,8 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setErrorMessage(null);
     setSuccessNotice(null);
 
-    // Format SMS à 9 chiffres avec le 0 (+2410XXXXXXXX) pour routage télécom
-    const smsE164 = toSmsE164(contactPhone);
+    // Format SMS : +2410XXXXXXXX pour le Gabon (routage télécom local), +91XXXXXXXXXX pour l'Inde
+    const smsE164 = toSmsE164(contactPhone, selectedCountry);
 
     try {
       const verifier = getOrCreateRecaptcha();
@@ -275,7 +329,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         }
         recaptchaRef.current = null;
       }
-      setErrorMessage(getAuthErrorMessage(err));
+      setErrorMessage(getAuthErrorMessage(err, selectedCountry));
       return false;
     } finally {
       setIsLoading(false);
@@ -285,16 +339,21 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
   /**
    * FLUX DE CONNEXION DIRECTE (Section 3.5)
-   * signInWithEmailAndPassword(auth, toSyntheticEmail(digits), password)
+   * signInWithEmailAndPassword(auth, toSyntheticEmail(digits, country), password)
    */
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setSuccessNotice(null);
 
-    const rawDigits = normalizeGabonPhone(contactPhone);
-    if (!rawDigits || rawDigits.length < 8) {
-      setErrorMessage('Numéro gabonais invalide (8 chiffres).');
+    const rawDigits = normalizePhone(contactPhone, selectedCountry);
+    const minDigits = selectedCountry === 'IN' ? 10 : 8;
+    if (!rawDigits || rawDigits.length < minDigits) {
+      setErrorMessage(
+        selectedCountry === 'IN'
+          ? 'Numéro indien invalide (10 chiffres).'
+          : 'Numéro gabonais invalide (8 chiffres).'
+      );
       return;
     }
 
@@ -306,14 +365,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setIsLoading(true);
 
     try {
-      const syntheticEmail = toSyntheticEmail(rawDigits);
+      const syntheticEmail = toSyntheticEmail(rawDigits, selectedCountry);
       // Ne jamais appliquer trim() aux mots de passe
       await signInWithEmailAndPassword(auth, syntheticEmail, password);
       // Ne pas construire de profil à la main : fermer le modal et laisser l'écouteur Firestore charger le profil
       handleModalClose();
     } catch (err: unknown) {
       console.error('Erreur connexion:', err);
-      setErrorMessage(getAuthErrorMessage(err));
+      setErrorMessage(getAuthErrorMessage(err, selectedCountry));
     } finally {
       setIsLoading(false);
     }
@@ -396,7 +455,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       }
     } catch (err: unknown) {
       console.error('Erreur confirmation OTP:', err);
-      setErrorMessage(getAuthErrorMessage(err));
+      setErrorMessage(getAuthErrorMessage(err, selectedCountry));
     } finally {
       setIsLoading(false);
     }
@@ -438,8 +497,11 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         throw new Error('SESSION_LOST');
       }
 
-      const rawDigits = normalizeGabonPhone(contactPhone);
-      const emailCred = EmailAuthProvider.credential(toSyntheticEmail(rawDigits), password);
+      const rawDigits = normalizePhone(contactPhone, selectedCountry);
+      const emailCred = EmailAuthProvider.credential(
+        toSyntheticEmail(rawDigits, selectedCountry),
+        password
+      );
 
       try {
         await linkWithCredential(user, emailCred);
@@ -463,14 +525,15 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       // Création du profil Firestore (sans password, sans lastPasswordChangeDate, sans idVerificationStatus)
       await setDoc(doc(db, 'users', user.uid), {
         name: fullName.trim(),
-        operator: detectOperator(rawDigits),
+        country: selectedCountry,
+        operator: selectedCountry === 'GA' ? detectOperator(rawDigits) : null,
         role: 'USER',
         isVerified: true,
         termsAccepted: true,
         termsAcceptedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
-        contactPhone: toE164(rawDigits),
-        phoneNumber: toE164(rawDigits),
+        contactPhone: toE164(rawDigits, selectedCountry),
+        phoneNumber: toE164(rawDigits, selectedCountry),
         location: {
           province: selectedProvince,
           city: selectedCity,
@@ -480,7 +543,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       handleModalClose();
     } catch (err: unknown) {
       console.error('Erreur finalisation inscription:', err);
-      setErrorMessage(getAuthErrorMessage(err));
+      setErrorMessage(getAuthErrorMessage(err, selectedCountry));
     } finally {
       setIsLoading(false);
     }
@@ -533,11 +596,51 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       }, 1200);
     } catch (err: unknown) {
       console.error('Erreur mise à jour mot de passe:', err);
-      setErrorMessage(getAuthErrorMessage(err));
+      setErrorMessage(getAuthErrorMessage(err, selectedCountry));
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Sélecteur de pays réutilisable pour LOGIN, REGISTER et FORGOT_PASSWORD
+  const renderCountrySelector = () => (
+    <div className="mb-4">
+      <div className="flex items-center justify-between mb-1.5">
+        <label className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
+          Pays d'authentification
+        </label>
+        <span className="text-[11px] font-bold text-emerald-700">
+          {COUNTRIES[selectedCountry].flag} {COUNTRIES[selectedCountry].name} ({COUNTRIES[selectedCountry].dialCode})
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
+        <button
+          type="button"
+          onClick={() => handleSelectCountry('GA')}
+          className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            selectedCountry === 'GA'
+              ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span className="text-base leading-none">🇬🇦</span>
+          <span>Gabon (+241)</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => handleSelectCountry('IN')}
+          className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            selectedCountry === 'IN'
+              ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span className="text-base leading-none">🇮🇳</span>
+          <span>Inde (+91)</span>
+        </button>
+      </div>
+    </div>
+  );
 
   if (!isOpen) return null;
 
@@ -559,8 +662,10 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           </button>
 
           <div className="flex items-center gap-2 mb-2">
-            <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
-              Authentification Annonceur Gabon
+            <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1.5">
+              <span>Authentification Annonceur</span>
+              <span className="opacity-60">•</span>
+              <span>{selectedCountry === 'GA' ? '🇬🇦 Gabon (+241)' : '🇮🇳 Inde (+91)'}</span>
             </span>
           </div>
 
@@ -575,12 +680,12 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           </h2>
 
           <p className="text-xs text-slate-300 mt-1">
-            {authMode === 'LOGIN' && 'Connectez-vous avec votre numéro gabonais et votre mot de passe.'}
+            {authMode === 'LOGIN' && `Connectez-vous avec votre numéro (${COUNTRIES[selectedCountry].label}) et mot de passe.`}
             {authMode === 'REGISTER' && stage === 1 && 'Entrez votre numéro pour recevoir un code de vérification SMS sécurisé.'}
-            {authMode === 'REGISTER' && stage === 2 && `Saisissez le code SMS à 6 chiffres envoyé au ${toSmsE164(contactPhone)}.`}
+            {authMode === 'REGISTER' && stage === 2 && `Saisissez le code SMS à 6 chiffres envoyé au ${toSmsE164(contactPhone, selectedCountry)}.`}
             {authMode === 'REGISTER' && stage === 3 && 'Complétez votre profil pour finaliser la création de votre compte.'}
             {authMode === 'FORGOT_PASSWORD' && stage === 1 && 'Entrez votre numéro pour recevoir un code de réinitialisation par SMS.'}
-            {authMode === 'FORGOT_PASSWORD' && stage === 2 && `Saisissez le code SMS reçu au ${toSmsE164(contactPhone)}.`}
+            {authMode === 'FORGOT_PASSWORD' && stage === 2 && `Saisissez le code SMS reçu au ${toSmsE164(contactPhone, selectedCountry)}.`}
             {authMode === 'FORGOT_PASSWORD' && stage === 4 && 'Définissez votre nouveau mot de passe sécurisé.'}
           </p>
 
@@ -613,21 +718,23 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           {/* 1. FLUX DE CONNEXION (Formulaire direct en une étape) */}
           {authMode === 'LOGIN' && (
             <form onSubmit={handleLogin} className="space-y-4">
+              {renderCountrySelector()}
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Numéro de téléphone au Gabon (+241)
+                  Numéro de téléphone ({COUNTRIES[selectedCountry].label})
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                    <span className="text-xs font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
-                      🇬🇦 +241
+                    <span className="text-xs font-black text-slate-700 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                      {COUNTRIES[selectedCountry].flag} {COUNTRIES[selectedCountry].dialCode}
                     </span>
                   </div>
                   <input
                     type="tel"
                     value={contactPhone}
-                    onChange={(e) => setContactPhone(e.target.value)}
-                    placeholder="074 56 78 21 ou 062 18 87 34"
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    placeholder={COUNTRIES[selectedCountry].placeholder}
                     className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                     autoFocus
                     required
@@ -711,21 +818,23 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           {/* 2. FLUX D'INSCRIPTION : ÉTAPE 1 (Saisie du numéro) */}
           {authMode === 'REGISTER' && stage === 1 && (
             <form onSubmit={handleStartRegister} className="space-y-4">
+              {renderCountrySelector()}
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Numéro de téléphone au Gabon (+241)
+                  Numéro de téléphone ({COUNTRIES[selectedCountry].label})
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                    <span className="text-xs font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
-                      🇬🇦 +241
+                    <span className="text-xs font-black text-slate-700 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                      {COUNTRIES[selectedCountry].flag} {COUNTRIES[selectedCountry].dialCode}
                     </span>
                   </div>
                   <input
                     type="tel"
                     value={contactPhone}
-                    onChange={(e) => setContactPhone(e.target.value)}
-                    placeholder="074 56 78 21 ou 062 18 87 34"
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    placeholder={COUNTRIES[selectedCountry].placeholder}
                     className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                     autoFocus
                     required
@@ -734,7 +843,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                     <Phone className="w-4 h-4 text-slate-400" />
                   </div>
                 </div>
-                {detectedOp && (
+
+                {/* Indication opérateur Gabon */}
+                {selectedCountry === 'GA' && detectedOp && (
                   <div className="mt-1.5 text-[11px] text-slate-500 flex items-center justify-between">
                     <span>Opérateur détecté :</span>
                     <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${
@@ -742,6 +853,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                     }`}>
                       {detectedOp === 'AIRTEL' ? 'Airtel Gabon (074, 076, 077)' : 'Moov Gabon (060, 062, 065, 066)'}
                     </span>
+                  </div>
+                )}
+
+                {/* Validation mobile Inde */}
+                {selectedCountry === 'IN' && isIndiaValid && (
+                  <div className="mt-1.5 text-[11px] text-emerald-700 flex items-center gap-1.5 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Numéro mobile indien valide (10 chiffres)</span>
                   </div>
                 )}
               </div>
@@ -781,21 +900,23 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           {/* 3. FLUX MOT DE PASSE OUBLIÉ : ÉTAPE 1 (Saisie du numéro) */}
           {authMode === 'FORGOT_PASSWORD' && stage === 1 && (
             <form onSubmit={handleStartForgotPassword} className="space-y-4">
+              {renderCountrySelector()}
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Numéro de téléphone de votre compte (+241)
+                  Numéro de téléphone de votre compte ({COUNTRIES[selectedCountry].label})
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                    <span className="text-xs font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
-                      🇬🇦 +241
+                    <span className="text-xs font-black text-slate-700 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                      {COUNTRIES[selectedCountry].flag} {COUNTRIES[selectedCountry].dialCode}
                     </span>
                   </div>
                   <input
                     type="tel"
                     value={contactPhone}
-                    onChange={(e) => setContactPhone(e.target.value)}
-                    placeholder="074 56 78 21 ou 062 18 87 34"
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    placeholder={COUNTRIES[selectedCountry].placeholder}
                     className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                     autoFocus
                     required
@@ -843,7 +964,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
             <form onSubmit={handleVerifyOtp} className="space-y-5">
               <div className="text-center space-y-1">
                 <span className="text-xs text-slate-500">Code SMS envoyé au numéro :</span>
-                <p className="font-extrabold text-slate-800 text-base">{contactPhone}</p>
+                <p className="font-extrabold text-slate-800 text-base">
+                  {toSmsE164(contactPhone, selectedCountry)}
+                </p>
               </div>
 
               <div>
@@ -913,7 +1036,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                     type="text"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Ex: Paul OBAME ou Agence Gabon Immo"
+                    placeholder="Ex: Paul OBAME ou Agence Partenaire"
                     className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                     autoFocus
                     required
@@ -922,35 +1045,43 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                 </div>
               </div>
 
-              {/* Localisation : Province et Ville */}
+              {/* Localisation : Province / État et Ville */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                    Province
+                    {selectedCountry === 'IN' ? 'État (State)' : 'Province'}
                   </label>
                   <select
                     value={selectedProvince}
                     onChange={(e) => {
                       const prov = e.target.value;
                       setSelectedProvince(prov);
-                      const matchingCities = GABON_PROVINCES.find((p) => p.name === prov)?.cities || [];
+                      const matchingCities = selectedCountry === 'IN'
+                        ? INDIA_STATES.find((s) => s.name === prov)?.cities || []
+                        : GABON_PROVINCES.find((p) => p.name === prov)?.cities || [];
                       if (matchingCities.length > 0) {
                         setSelectedCity(matchingCities[0].name);
                       }
                     }}
                     className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus:bg-white focus:ring-2 focus:ring-emerald-500"
                   >
-                    {GABON_PROVINCES.map((p) => (
-                      <option key={p.code} value={p.name}>
-                        {p.name}
-                      </option>
-                    ))}
+                    {selectedCountry === 'IN'
+                      ? INDIA_STATES.map((s) => (
+                          <option key={s.code} value={s.name}>
+                            {s.name}
+                          </option>
+                        ))
+                      : GABON_PROVINCES.map((p) => (
+                          <option key={p.code} value={p.name}>
+                            {p.name}
+                          </option>
+                        ))}
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                    Ville
+                    Ville (City)
                   </label>
                   <select
                     value={selectedCity}
@@ -1013,7 +1144,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-black text-slate-800 flex items-center gap-1">
                     <FileText className="w-3.5 h-3.5 text-emerald-600" />
-                    Charte Déontologique Annonceur Gabon
+                    Charte Déontologique Annonceur BizBooster
                   </span>
                   <button
                     type="button"
@@ -1024,7 +1155,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   </button>
                 </div>
                 <p className="text-[10px] leading-relaxed text-slate-600">
-                  BIZBOOSTER est un hébergeur technique. Vous vous engagez à publier des annonces sincères, vérifiées et conformes aux lois en vigueur au Gabon.
+                  BIZBOOSTER est un hébergeur technique. Vous vous engagez à publier des annonces sincères, vérifiées et conformes aux lois en vigueur.
                 </p>
               </div>
 
@@ -1038,7 +1169,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   required
                 />
                 <span className="text-[11px] text-slate-700 font-semibold leading-tight">
-                  J'accepte sans réserve les <button type="button" onClick={(e) => { e.preventDefault(); setShowCguModal(true); }} className="text-emerald-700 font-bold underline cursor-pointer">Conditions Générales d'Utilisation</button> et la Charte Déontologique BizBooster Gabon.
+                  J'accepte sans réserve les <button type="button" onClick={(e) => { e.preventDefault(); setShowCguModal(true); }} className="text-emerald-700 font-bold underline cursor-pointer">Conditions Générales d'Utilisation</button> et la Charte Déontologique BizBooster.
                 </span>
               </label>
 

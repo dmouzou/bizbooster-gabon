@@ -533,15 +533,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     }
 
     const phone = currentUser.contactPhone || currentUser.phoneNumber || '';
-    const digits = normalizeGabonPhone(phone);
-    if (!digits) {
-      setPwdError('Numéro gabonais invalide associé à ce compte.');
+    const syntheticEmail = toSyntheticEmail(phone);
+    if (!syntheticEmail) {
+      setPwdError('Numéro de téléphone invalide associé à ce compte.');
       return;
     }
 
     setPwdLoading(true);
     try {
-      const syntheticEmail = toSyntheticEmail(digits);
       const cred = EmailAuthProvider.credential(syntheticEmail, currentPassword);
       // Réauthentification avec le mot de passe actuel
       await reauthenticateWithCredential(auth.currentUser, cred);

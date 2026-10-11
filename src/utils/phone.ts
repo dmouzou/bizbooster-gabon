@@ -1,6 +1,6 @@
 /**
- * Utilitaires de normalisation, validation et détection opérateur Gabon
- * Conforme au plan de correction d'authentification BizBooster Gabon (Section 3.1 & Annexe A)
+ * Utilitaires de normalisation, validation et détection opérateur Gabon et Inde
+ * Conforme au plan de correction d'authentification BizBooster Gabon et expansion internationale (Inde)
  */
 
 export const MOOV_PREFIXES = ['60', '62', '65', '66'] as const;
@@ -12,6 +12,39 @@ export const GABON_MOBILE_PREFIXES = {
 };
 
 export type GabonOperator = 'MOOV' | 'AIRTEL';
+
+export type SupportedCountry = 'GA' | 'IN';
+
+export interface CountryInfo {
+  code: SupportedCountry;
+  name: string;
+  flag: string;
+  dialCode: string;
+  placeholder: string;
+  digitsLength: number;
+  label: string;
+}
+
+export const COUNTRIES: Record<SupportedCountry, CountryInfo> = {
+  GA: {
+    code: 'GA',
+    name: 'Gabon',
+    flag: '🇬🇦',
+    dialCode: '+241',
+    placeholder: '074 56 78 21 ou 062 18 87 34',
+    digitsLength: 8,
+    label: 'Gabon (+241)',
+  },
+  IN: {
+    code: 'IN',
+    name: 'Inde',
+    flag: '🇮🇳',
+    dialCode: '+91',
+    placeholder: '98765 43210',
+    digitsLength: 10,
+    label: 'Inde (+91)',
+  },
+};
 
 /**
  * Normalise un numéro de téléphone gabonais brut pour extraire les 8 chiffres significatifs.
@@ -40,43 +73,105 @@ export function normalizeGabonPhone(raw?: string | null): string {
 }
 
 /**
- * Convertit 8 chiffres en format international E.164 (+241XXXXXXXX).
- * Ne contient jamais le 0 local. Utilisé pour l'enregistrement du compte en base.
+ * Normalise un numéro de téléphone indien brut pour extraire les 10 chiffres significatifs.
+ * Gère +91, 0091, le préfixe 91 si longueur > 10, ainsi que le 0 initial local (11 chiffres).
+ *
+ * @param raw Numéro brut (+91 98765 43210, 09876543210, etc.)
+ * @returns Chaîne de chiffres (idéalement 10 chiffres)
  */
-export function toE164(digits: string): string {
-  const clean = normalizeGabonPhone(digits);
+export function normalizeIndiaPhone(raw?: string | null): string {
+  if (!raw) return '';
+  let digits = raw.replace(/\D/g, '');
+
+  if (digits.startsWith('0091')) {
+    digits = digits.slice(4);
+  } else if (digits.startsWith('91') && digits.length > 10) {
+    digits = digits.slice(2);
+  }
+
+  // Si l'utilisateur saisit un 0 initial (numérotation nationale à 11 chiffres)
+  if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+
+  return digits;
+}
+
+/**
+ * Normalise un numéro selon le pays sélectionné ou par détection automatique du préfixe.
+ */
+export function normalizePhone(raw?: string | null, country: SupportedCountry = 'GA'): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('+91') || trimmed.startsWith('0091')) {
+    return normalizeIndiaPhone(trimmed);
+  }
+  if (trimmed.startsWith('+241') || trimmed.startsWith('00241')) {
+    return normalizeGabonPhone(trimmed);
+  }
+  return country === 'IN' ? normalizeIndiaPhone(trimmed) : normalizeGabonPhone(trimmed);
+}
+
+/**
+ * Convertit en format international E.164 (+241XXXXXXXX ou +91XXXXXXXXXX).
+ * Ne contient jamais le 0 local pour le Gabon. Utilisé pour l'enregistrement du compte en base.
+ */
+export function toE164(digits: string, country: SupportedCountry = 'GA'): string {
+  if (!digits) return '';
+  const trimmed = digits.trim();
+  if (country === 'IN' || trimmed.startsWith('+91') || trimmed.startsWith('0091')) {
+    const clean = normalizeIndiaPhone(trimmed);
+    return `+91${clean}`;
+  }
+  const clean = normalizeGabonPhone(trimmed);
   return `+241${clean}`;
 }
 
 /**
- * Convertit un numéro gabonais en format international SMS à 9 chiffres (+2410XXXXXXXX).
- * Ajoute un '0' si le numéro a 8 chiffres, le conserve s'il est déjà présent.
- *
- * Exemple : '66780104'    -> '+241066780104'
- *           '066780104'   -> '+241066780104'
- *           '+24166780104' -> '+241066780104'
+ * Convertit un numéro en format international SMS :
+ * - Gabon : format international SMS à 9 chiffres (+2410XXXXXXXX)
+ * - Inde  : format international standard à 10 chiffres (+91XXXXXXXXXX)
  *
  * Utilisé UNIQUEMENT pour l'envoi du SMS OTP (signInWithPhoneNumber).
  * Le compte utilisateur dans Firebase (Auth, Firestore, e-mail synthétique)
- * est quant à lui TOUJOURS enregistré sur 8 chiffres sans le 0 (+241XXXXXXXX).
+ * est quant à lui TOUJOURS enregistré sans 0 additionnel.
  */
-export function toSmsE164(raw?: string | null): string {
-  const clean = normalizeGabonPhone(raw);
+export function toSmsE164(raw?: string | null, country: SupportedCountry = 'GA'): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  if (country === 'IN' || trimmed.startsWith('+91') || trimmed.startsWith('0091')) {
+    const clean = normalizeIndiaPhone(trimmed);
+    return `+91${clean}`;
+  }
+  const clean = normalizeGabonPhone(trimmed);
   return `+2410${clean}`;
 }
 
 /**
- * Convertit 8 chiffres en e-mail synthétique unique (<8chiffres>@bizbooster.ga).
- * Ne contient jamais le 0 local.
+ * Convertit les chiffres en e-mail synthétique unique (<chiffres>@bizbooster.ga).
+ * - Gabon : <8chiffres>@bizbooster.ga (sans le 0 local)
+ * - Inde  : <10chiffres>@bizbooster.ga
  */
-export function toSyntheticEmail(digits: string): string {
-  const clean = normalizeGabonPhone(digits);
+export function toSyntheticEmail(digits: string, country?: SupportedCountry): string {
+  if (!digits) return '';
+  const trimmed = digits.trim();
+  let clean: string;
+  if (
+    country === 'IN' ||
+    trimmed.startsWith('+91') ||
+    trimmed.startsWith('0091') ||
+    (country !== 'GA' && trimmed.replace(/\D/g, '').length === 10)
+  ) {
+    clean = normalizeIndiaPhone(digits);
+  } else {
+    clean = normalizeGabonPhone(digits);
+  }
   return `${clean}@bizbooster.ga`;
 }
 
 /**
- * Détecte l'opérateur mobile gabonais à partir des deux premiers chiffres uniquement.
- * Renvoie null si préfixe inconnu (ne se rabat pas par défaut sur Airtel ou Moov).
+ * Détecte l'opérateur mobile gabonais à partir des deux premiers chiffres.
+ * Renvoie null si préfixe inconnu ou numéro non gabonais.
  */
 export function detectOperator(digits: string): GabonOperator | null {
   const clean = normalizeGabonPhone(digits);
@@ -102,7 +197,23 @@ export function isValidGabonMobile(digits: string): boolean {
 }
 
 /**
- * Formate le numéro pour un affichage lisible utilisateur (+241 XX XX XX XX).
+ * Vérifie si le numéro est un mobile indien valide (10 chiffres commençant par 6, 7, 8 ou 9).
+ */
+export function isValidIndiaMobile(digits: string): boolean {
+  const clean = normalizeIndiaPhone(digits);
+  if (clean.length !== 10) return false;
+  return /^[6-9]\d{9}$/.test(clean);
+}
+
+/**
+ * Vérifie si le numéro est valide selon le pays.
+ */
+export function isValidPhone(digits: string, country: SupportedCountry = 'GA'): boolean {
+  return country === 'IN' ? isValidIndiaMobile(digits) : isValidGabonMobile(digits);
+}
+
+/**
+ * Formate le numéro pour un affichage lisible utilisateur gabonais (+241 XX XX XX XX).
  */
 export function formatGabonDisplay(digits: string): string {
   const clean = normalizeGabonPhone(digits);
@@ -113,10 +224,24 @@ export function formatGabonDisplay(digits: string): string {
 }
 
 /**
+ * Formate le numéro pour affichage selon le pays.
+ */
+export function formatDisplayPhone(digits: string, country: SupportedCountry = 'GA'): string {
+  if (country === 'IN' || digits.startsWith('+91')) {
+    const clean = normalizeIndiaPhone(digits);
+    if (clean.length === 10) {
+      return `+91 ${clean.slice(0, 5)} ${clean.slice(5, 10)}`;
+    }
+    return clean ? `+91 ${clean}` : '';
+  }
+  return formatGabonDisplay(digits);
+}
+
+/**
  * Traduction stricte des codes d'erreur d'authentification en français (Annexe A).
  * N'utilise pas de tirets cadratins.
  */
-export function getAuthErrorMessage(err: unknown): string {
+export function getAuthErrorMessage(err: unknown, country: SupportedCountry = 'GA'): string {
   const errorObj = (err || {}) as { code?: string; message?: string };
   const code = (errorObj.code || '').toLowerCase();
   const rawMessage = errorObj.message || '';
@@ -147,13 +272,17 @@ export function getAuthErrorMessage(err: unknown): string {
       return 'Session expirée. Recommencez la vérification.';
 
     case 'auth/invalid-phone-number':
-      return 'Numéro gabonais invalide (8 chiffres).';
+      return country === 'IN'
+        ? 'Numéro indien invalide (10 chiffres).'
+        : 'Numéro gabonais invalide (8 chiffres).';
 
     case 'auth/quota-exceeded':
       return 'Service SMS momentanément saturé. Réessayez plus tard.';
 
     case 'auth/operation-not-allowed':
-      return 'Connexion par SMS non activée pour le Gabon. (Configuration à corriger en console.)';
+      return country === 'IN'
+        ? 'Connexion par SMS non activée pour l\'Inde. (Configuration à corriger en console.)'
+        : 'Connexion par SMS non activée pour le Gabon. (Configuration à corriger en console.)';
 
     case 'auth/unauthorized-domain':
       return 'Domaine non autorisé. (Configuration à corriger en console.)';

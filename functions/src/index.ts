@@ -39,6 +39,40 @@ function normalizeGabonPhone(input: string): {
 }
 
 /**
+ * Normalise un numéro (Gabon +241 ou Inde +91).
+ *
+ * @param {string} input - Le numéro saisi.
+ * @return {{e164: string, rawDigits: string}} Format E.164 et chiffres bruts.
+ */
+function normalizeInternationalPhone(input: string): {
+  e164: string;
+  rawDigits: string;
+} {
+  const str = input || "";
+  const digits = str.replace(/\D/g, "");
+  if (
+    str.startsWith("+91") ||
+    digits.startsWith("0091") ||
+    (digits.startsWith("91") && digits.length > 10)
+  ) {
+    let clean = digits;
+    if (clean.startsWith("0091")) {
+      clean = clean.slice(4);
+    } else if (clean.startsWith("91") && clean.length > 10) {
+      clean = clean.slice(2);
+    }
+    if (clean.length === 11 && clean.startsWith("0")) {
+      clean = clean.slice(1);
+    }
+    return {
+      e164: `+91${clean}`,
+      rawDigits: clean,
+    };
+  }
+  return normalizeGabonPhone(input);
+}
+
+/**
  * Résout l'utilisateur Firebase Auth correspondant à un compte (Section 0.5).
  *
  * @param {string} docId - ID du document utilisateur dans Firestore.
@@ -1214,7 +1248,7 @@ export const recordSmsSent = onCall(
   {cors: true},
   async (request) => {
     const {phoneNumber} = request.data || {};
-    const {e164} = normalizeGabonPhone(phoneNumber);
+    const {e164} = normalizeInternationalPhone(phoneNumber);
 
     if (e164 && FIREBASE_TEST_PHONE_NUMBERS.includes(e164)) {
       return {success: true, test: true};
