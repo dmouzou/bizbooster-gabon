@@ -56,17 +56,16 @@ function getTodayString(): string {
 /**
  * Numéros de téléphone de test déclarés dans Firebase Authentication
  * (Ces numéros ne consomment pas de SMS réels et sont 100% gratuits).
+ * Ne contient aucun code secret OTP.
  */
 export const FIREBASE_TEST_PHONE_NUMBERS = [
+  '+24167256341',
+  '+24167896902',
+  '+24177276895',
   '+24177905165',
   '+24177000000',
   '+24166000000',
   '+24174000000',
-  '+24101010101',
-  '+24100000000',
-  '+24111111111',
-  '+24177112233',
-  '+24177452018',
 ];
 
 export function isFirebaseTestPhoneNumber(phone?: string): boolean {
@@ -74,17 +73,15 @@ export function isFirebaseTestPhoneNumber(phone?: string): boolean {
   const clean = phone.replace(/[^0-9+]/g, '');
   const digits = clean.replace(/[^0-9]/g, '');
 
-  if (FIREBASE_TEST_PHONE_NUMBERS.some((testNum) => clean === testNum || digits === testNum.replace(/[^0-9]/g, ''))) {
-    return true;
-  }
-  if (/(\d)\1{5,}/.test(digits)) return true;
-  if (digits.endsWith('000000') || digits.endsWith('123456')) return true;
-  return false;
+  return FIREBASE_TEST_PHONE_NUMBERS.some(
+    (testNum) => clean === testNum || digits === testNum.replace(/[^0-9]/g, '')
+  );
 }
 
 /**
  * Enregistre un envoi de SMS OTP (authentification ou renouvellement mot de passe).
  * N'incrémente PAS le compteur pour les numéros de test Firebase Authentication (gratuits).
+ * Utilise FieldValue.increment() de manière atomique.
  */
 export async function trackSmsSent(phoneNumber?: string): Promise<{ today: number; allTime: number }> {
   // Exclusion formelle des numéros de test Firebase
@@ -96,36 +93,20 @@ export async function trackSmsSent(phoneNumber?: string): Promise<{ today: numbe
 
   const today = getTodayString();
   const metricsRef = doc(db, 'system_counters', 'scalability_metrics');
-  let finalToday = 1;
-  let finalAllTime = 1;
+  let finalToday = Number(localStorage.getItem(SMS_SENT_TODAY_KEY) || '0') + 1;
+  let finalAllTime = Number(localStorage.getItem(SMS_SENT_ALL_TIME_KEY) || '0') + 1;
 
   try {
-    const snap = await getDoc(metricsRef);
-    if (snap.exists()) {
-      const data = snap.data();
-      const isSameDay = data.todayDate === today;
-      finalToday = isSameDay ? (Number(data.smsSentToday) || 0) + 1 : 1;
-      finalAllTime = (Number(data.smsSentAllTime) || 0) + 1;
-      await setDoc(
-        metricsRef,
-        {
-          todayDate: today,
-          smsSentToday: finalToday,
-          smsSentAllTime: finalAllTime,
-          lastSmsSentAt: new Date().toISOString(),
-          lastSmsRecipient: phoneNumber || 'unknown',
-        },
-        { merge: true }
-      );
-    } else {
-      await setDoc(metricsRef, {
+    await setDoc(
+      metricsRef,
+      {
         todayDate: today,
-        smsSentToday: 1,
-        smsSentAllTime: 1,
+        smsSentToday: increment(1),
+        smsSentAllTime: increment(1),
         lastSmsSentAt: new Date().toISOString(),
-        lastSmsRecipient: phoneNumber || 'unknown',
-      });
-    }
+      },
+      { merge: true }
+    );
   } catch (err) {
     console.warn('Could not sync SMS metric to Firestore:', err);
   }

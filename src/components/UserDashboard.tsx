@@ -41,14 +41,13 @@ import {
   Smartphone,
 } from 'lucide-react';
 import {
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
-  ConfirmationResult,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
   updatePassword,
 } from 'firebase/auth';
-import { doc, updateDoc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
-import { trackSmsSent, trackDownloadRequest } from '../services/platformMetrics';
+import { trackDownloadRequest } from '../services/platformMetrics';
 import { Ad, UserProfile, SubscriptionTier, BoosterPackType, AdPackType, PaymentOperator, isUserAdmin, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime, isAdOwner, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
 import { isAdBoostFeatured } from '../utils/personalization';
@@ -58,34 +57,7 @@ import { MobilePaymentSimulator } from './MobilePaymentSimulator';
 import { SubscriptionUpgradeModal } from './SubscriptionUpgradeModal';
 import { AdCard } from './AdCard';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
-import { recordPasswordCooldown } from '../utils/passwordCooldown';
-
-const getPhoneClean = (raw: string): string => {
-  let clean = raw.replace(/[^0-9]/g, '');
-  if (clean.startsWith('241')) clean = clean.slice(3);
-  while (clean.startsWith('0')) clean = clean.slice(1);
-  return clean;
-};
-
-const formatGabonPhone = (raw: string): string => {
-  const clean = getPhoneClean(raw);
-  return `+241${clean}`;
-};
-
-const formatGabonPhoneForSms = (raw: string): string => {
-  const clean = getPhoneClean(raw);
-  return `+2410${clean}`;
-};
-
-const TEST_PHONE_CODES: Record<string, string> = {
-  '+24162520803': '625208',
-  '+24167256341': '555555',
-  '+24177874707': '000111',
-  '+24167896902': '111777',
-  '+24177276895': '777777',
-  '+24177905165': '000000',
-  '+24167443312': '676767',
-};
+import { normalizeGabonPhone, toSyntheticEmail, getAuthErrorMessage } from '../utils/phone';
 
 interface UserDashboardProps {
   currentUser: UserProfile;
@@ -248,73 +220,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     });
   };
 
-  // Password reset flow state in Profile (Requirement 3c with OTP and 24h cooldown)
-  const [pwdStep, setPwdStep] = useState<'IDLE' | 'OTP' | 'NEW_PWD'>('IDLE');
-  const [pwdOtp, setPwdOtp] = useState('');
+  // Modification de mot de passe sécurisée (Section 3.7 : Réauthentification directe sans SMS)
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showCurrentPwd, setShowCurrentPwd] = useState(false);
   const [showNewPwd, setShowNewPwd] = useState(false);
   const [pwdError, setPwdError] = useState<string | null>(null);
   const [pwdSuccess, setPwdSuccess] = useState<string | null>(null);
   const [pwdLoading, setPwdLoading] = useState(false);
-  const [pwdResendTimer, setPwdResendTimer] = useState(45);
-  const [pwdDeliveredOtp, setPwdDeliveredOtp] = useState<string | null>(null);
-  const pwdConfirmationRef = useRef<ConfirmationResult | null>(null);
-  const pwdRecaptchaRef = useRef<RecaptchaVerifier | null>(null);
-
-  // 24-hour password rate limiting
-  const passwordCooldown = useMemo(() => {
-    if (!currentUser.lastPasswordChangeDate) {
-      return { canChange: true, remainingHours: 0 };
-    }
-    const lastTime = new Date(currentUser.lastPasswordChangeDate).getTime();
-    if (isNaN(lastTime)) return { canChange: true, remainingHours: 0 };
-    const diffMs = Date.now() - lastTime;
-    const dayMs = 24 * 3600 * 1000;
-    if (diffMs < dayMs) {
-      const remainingHours = Math.ceil((dayMs - diffMs) / (3600 * 1000));
-      return { canChange: false, remainingHours };
-    }
-    return { canChange: true, remainingHours: 0 };
-  }, [currentUser.lastPasswordChangeDate]);
 
   // Cities matching selected province in profile
   const profileCities = GABON_PROVINCES.find((p) => p.name === profileProvince)?.cities || [];
-
-  // Countdown timer for password OTP resend
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (pwdStep === 'OTP' && pwdResendTimer > 0) {
-      interval = setInterval(() => {
-        setPwdResendTimer((prev) => prev - 1);
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [pwdStep, pwdResendTimer]);
-
-  const getOrCreatePwdRecaptcha = () => {
-    let container = document.getElementById('pwd-recaptcha-container');
-    if (!container) {
-      container = document.createElement('div');
-      container.id = 'pwd-recaptcha-container';
-      document.body.appendChild(container);
-    }
-    if (pwdRecaptchaRef.current) {
-      try {
-        pwdRecaptchaRef.current.clear();
-      } catch (e) {
-        // ignore
-      }
-      pwdRecaptchaRef.current = null;
-    }
-    container.innerHTML = '';
-    auth.languageCode = 'fr';
-    pwdRecaptchaRef.current = new RecaptchaVerifier(auth, 'pwd-recaptcha-container', {
-      size: 'invisible',
-      callback: () => {},
-    });
-    return pwdRecaptchaRef.current;
-  };
 
   // Subscriptions & Booster Pack payment simulator state
   const [itemToPurchase, setItemToPurchase] = useState<{
@@ -602,191 +519,54 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     }
   };
 
-  // Requirement 3c: Send SMS OTP for password change
-  const handleRequestPasswordOtp = async () => {
-    if (pwdLoading) return;
+  // Section 3.7 : Changement de mot de passe du tableau de bord par réauthentification directe
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
     setPwdError(null);
     setPwdSuccess(null);
-    setPwdDeliveredOtp(null);
-    const phone = currentUser.contactPhone || currentUser.phoneNumber;
-    if (!phone) {
-      setPwdError('Aucun numéro de téléphone Gabon associé à ce compte.');
+
+    if (!currentPassword) {
+      setPwdError('Veuillez saisir votre mot de passe actuel.');
       return;
     }
-    const cleanDigits = getPhoneClean(phone);
-    if (!/^[67]\d{7}$/.test(cleanDigits)) {
-      setPwdError('Numéro Gabon invalide (8 chiffres requis).');
-      return;
-    }
-    const phoneStandard = formatGabonPhone(phone);
-    setPwdLoading(true);
-    try {
-      const verifier = getOrCreatePwdRecaptcha();
-      pwdConfirmationRef.current = await signInWithPhoneNumber(auth, phoneStandard, verifier);
-      await trackSmsSent(phoneStandard);
-      setPwdStep('OTP');
-      setPwdResendTimer(45);
-      const testCode = TEST_PHONE_CODES[phoneStandard];
-      if (testCode) {
-        setPwdDeliveredOtp(testCode);
-      }
-      setPwdSuccess(
-        testCode
-          ? `Code de confirmation SMS envoyé au ${phoneStandard} (Numéro de test : code ${testCode}).`
-          : `Code de confirmation SMS envoyé avec succès au ${phoneStandard}.`
-      );
-    } catch (err: any) {
-      console.warn('Password OTP Firebase signInWithPhoneNumber returned:', err);
-      const errStr = ((err?.message || '') + ' ' + (err?.code || '')).toLowerCase();
-      const isCode39OrQuota =
-        errStr.includes('error-code:-39') ||
-        err?.code === 'auth/error-code:-39' ||
-        errStr.includes('quota') ||
-        errStr.includes('too-many-requests') ||
-        errStr.includes('internal-error') ||
-        errStr.includes('operation-not-allowed') ||
-        errStr.includes('unauthorized-domain');
-
-      if (isCode39OrQuota) {
-        const testCode = TEST_PHONE_CODES[phoneStandard];
-        const codeToUse = testCode || Math.floor(100000 + Math.random() * 900000).toString();
-        const docData = {
-          phoneNumber: phoneStandard,
-          cleanDigits,
-          otpCode: codeToUse,
-          createdAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-          verified: false,
-          channel: 'GABON_SMS_GATEWAY',
-        };
-        try {
-          await setDoc(doc(db, 'phone_verifications', cleanDigits), docData);
-          await setDoc(doc(db, 'phone_verifications', phoneStandard), docData);
-        } catch (fsErr) {
-          console.warn('Fallback phone_verifications write error:', fsErr);
-        }
-        await trackSmsSent(phoneStandard);
-        setPwdDeliveredOtp(codeToUse);
-        setPwdStep('OTP');
-        setPwdResendTimer(45);
-        setPwdSuccess(
-          testCode
-            ? `Numéro de test. Votre code de sécurité est : ${testCode}`
-            : `Restrictions SMS Google détectées. Code de sécurité temporaire : ${codeToUse}`
-        );
-        return;
-      }
-
-      const messages: Record<string, string> = {
-        'auth/invalid-phone-number': 'Numéro de téléphone Gabon invalide (+241 requis, 8 chiffres).',
-        'auth/too-many-requests': 'Trop de tentatives d\'envoi de SMS. Veuillez patienter quelques minutes.',
-        'auth/quota-exceeded': 'Le quota d\'envoi de SMS est temporairement saturé. Réessayez plus tard.',
-        'auth/captcha-check-failed': 'Vérification anti-robot échouée. Veuillez réessayer.',
-        'auth/operation-not-allowed': 'La connexion par SMS n\'est pas activée pour la région Gabon (+241).',
-        'auth/unauthorized-domain': 'Ce domaine web n\'est pas autorisé pour l\'envoi de SMS dans Firebase.',
-        'auth/internal-error': 'Impossible d\'expédier le SMS vers cet opérateur gabonais. Vérifiez votre couverture réseau ou réessayez plus tard.',
-      };
-      setPwdError(messages[err?.code] ?? (err?.message || "Impossible d'envoyer le code SMS OTP. Réessayez dans un instant."));
-    } finally {
-      setPwdLoading(false);
-    }
-  };
-
-  // Requirement 3c: Verify OTP code
-  const handleVerifyPasswordOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPwdError(null);
-    const trimmed = pwdOtp.trim();
-    if (!trimmed || trimmed.length < 6) {
-      setPwdError('Veuillez saisir le code SMS à 6 chiffres.');
-      return;
-    }
-    setPwdLoading(true);
-    try {
-      let isVerified = false;
-      if (pwdConfirmationRef.current) {
-        try {
-          await pwdConfirmationRef.current.confirm(trimmed);
-          isVerified = true;
-        } catch (confirmErr: any) {
-          console.warn('pwdConfirmationRef.confirm error:', confirmErr);
-        }
-      }
-
-      if (!isVerified) {
-        const phone = currentUser.contactPhone || currentUser.phoneNumber || '';
-        const cleanDigits = getPhoneClean(phone);
-        const phoneWithoutZero = `+241${cleanDigits}`;
-        const phoneForSms = `+2410${cleanDigits}`;
-
-        for (const key of [cleanDigits, phoneWithoutZero, phoneForSms].filter(Boolean)) {
-          const vSnap = await getDoc(doc(db, 'phone_verifications', key));
-          if (vSnap.exists() && vSnap.data().otpCode === trimmed) {
-            const expiresAt = vSnap.data().expiresAt ? new Date(vSnap.data().expiresAt).getTime() : Infinity;
-            if (Date.now() <= expiresAt) {
-              isVerified = true;
-              break;
-            }
-          }
-        }
-      }
-
-      if (!isVerified) {
-        setPwdError('Code SMS OTP incorrect ou expiré. Veuillez vérifier le code reçu sur votre téléphone.');
-        return;
-      }
-
-      setPwdStep('NEW_PWD');
-    } catch {
-      setPwdError('Code SMS OTP incorrect ou expiré.');
-    } finally {
-      setPwdLoading(false);
-    }
-  };
-
-  // Requirement 3c: Save new password (records lastPasswordChangeDate to enforce 24h cooldown)
-  const handleSaveNewPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPwdError(null);
-    if (newPassword.length < 6) {
-      setPwdError('Le mot de passe doit comporter au moins 6 caractères.');
+    if (!newPassword || newPassword.length < 6) {
+      setPwdError('Le nouveau mot de passe doit comporter au moins 6 caractères.');
       return;
     }
     if (newPassword !== confirmNewPassword) {
-      setPwdError('Les deux mots de passe ne correspondent pas.');
+      setPwdError('Les deux nouveaux mots de passe ne correspondent pas.');
       return;
     }
+    if (!auth.currentUser) {
+      setPwdError('Session expirée. Veuillez vous reconnecter.');
+      return;
+    }
+
+    const phone = currentUser.contactPhone || currentUser.phoneNumber || '';
+    const digits = normalizeGabonPhone(phone);
+    if (!digits) {
+      setPwdError('Numéro gabonais invalide associé à ce compte.');
+      return;
+    }
+
     setPwdLoading(true);
     try {
-      const nowIso = new Date().toISOString();
-      const phone = currentUser.contactPhone || currentUser.phoneNumber || '';
-      const cleanDigits = getPhoneClean(phone);
-      const phoneWithoutZero = `+241${cleanDigits}`;
-      await recordPasswordCooldown(phoneWithoutZero, nowIso);
-      if (onUpdateUser) {
-        await onUpdateUser({
-          password: newPassword.trim(),
-          lastPasswordChangeDate: nowIso,
-          contactPhone: phoneWithoutZero,
-          phoneNumber: phoneWithoutZero,
-        });
-      }
-      if (auth.currentUser) {
-        try {
-          await updatePassword(auth.currentUser, newPassword.trim());
-        } catch {
-          // ignore
-        }
-      }
-      setPwdSuccess('Votre nouveau mot de passe a été enregistré avec succès !');
-      setPwdStep('IDLE');
+      const syntheticEmail = toSyntheticEmail(digits);
+      const cred = EmailAuthProvider.credential(syntheticEmail, currentPassword);
+      // Réauthentification avec le mot de passe actuel
+      await reauthenticateWithCredential(auth.currentUser, cred);
+      // Mise à jour de Firebase Auth en premier (l'ordre compte, Section 3.7)
+      await updatePassword(auth.currentUser, newPassword);
+
+      setPwdSuccess('Votre mot de passe a été modifié avec succès.');
+      setCurrentPassword('');
       setNewPassword('');
       setConfirmNewPassword('');
-      setPwdOtp('');
       setTimeout(() => setPwdSuccess(null), 5000);
     } catch (err: any) {
-      console.error('Save password error:', err);
-      setPwdError('Erreur lors de la mise à jour du mot de passe.');
+      console.error('Password change error in UserDashboard:', err);
+      const msg = getAuthErrorMessage(err?.code, err?.message);
+      setPwdError(msg);
     } finally {
       setPwdLoading(false);
     }
@@ -2087,7 +1867,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   </span>
                 </div>
                 <div className="pt-1 text-[11px] text-slate-500 border-t border-slate-200/60 leading-relaxed">
-                  🛡️ <em>Règle de sécurité Gabon :</em> Pour prévenir les abus et protéger les envois de codes SMS, la modification du mot de passe requiert une confirmation par SMS OTP et est limitée à <strong>une seule fois par période de 24 heures</strong>.
+                  Pour votre sécurité, la modification nécessite la saisie de votre mot de passe actuel.
                 </div>
               </div>
 
@@ -2105,174 +1885,83 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 </div>
               )}
 
-              {/* Password Cooldown Lock Check */}
-              {!passwordCooldown.canChange ? (
-                <div className="bg-amber-50 border border-amber-300 p-4 rounded-2xl text-xs text-amber-900 space-y-1.5">
-                  <div className="flex items-center gap-2 font-black">
-                    <Clock className="w-4 h-4 text-amber-600" />
-                    <span>Délai de sécurité actif (1 modification / 24h)</span>
-                  </div>
-                  <p className="text-[11px] leading-relaxed text-amber-800">
-                    Vous avez déjà modifié votre mot de passe récemment. Pour protéger votre compte contre les tentatives répétées, vous pourrez à nouveau le changer dans <strong>{passwordCooldown.remainingHours} heure(s)</strong>.
-                  </p>
-                </div>
-              ) : pwdStep === 'IDLE' ? (
-                <div className="space-y-3 pt-2">
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Cliquez ci-dessous pour lancer la procédure de changement de mot de passe. Un code de sécurité SMS sera envoyé à votre numéro <strong>{currentUser.contactPhone || currentUser.phoneNumber}</strong>.
-                  </p>
-                  <button
-                    type="button"
-                    disabled={pwdLoading}
-                    onClick={handleRequestPasswordOtp}
-                    className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    {pwdLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-                    <span>Changer mon mot de passe (Vérification SMS OTP)</span>
-                  </button>
-                </div>
-              ) : pwdStep === 'OTP' ? (
-                <form onSubmit={handleVerifyPasswordOtp} className="space-y-3 pt-2">
-                  <div className="text-xs text-slate-700 font-bold">
-                    Entrez le code SMS à 6 chiffres envoyé au {currentUser.contactPhone || currentUser.phoneNumber} :
-                  </div>
-                  {TEST_PHONE_CODES[formatGabonPhone(currentUser.contactPhone || currentUser.phoneNumber || '')] && (
-                    <div className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold px-3 py-1 rounded-xl">
-                      <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>Numéro de test — Code : <span className="font-mono text-sm underline">{TEST_PHONE_CODES[formatGabonPhone(currentUser.contactPhone || currentUser.phoneNumber || '')]}</span></span>
-                    </div>
-                  )}
-
-                  {pwdDeliveredOtp && (
-                    <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-300 rounded-xl p-3 space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-extrabold text-emerald-800 flex items-center gap-1">
-                          <Smartphone className="w-4 h-4 text-emerald-600 animate-pulse" />
-                          Code SMS / Sécurité Reçu (+241)
-                        </span>
-                        <span className="bg-emerald-200/80 text-emerald-900 text-[10px] font-black px-2 py-0.5 rounded-full">
-                          Valide 10 min
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between bg-white p-2.5 rounded-lg border border-emerald-200 shadow-xs">
-                        <span className="text-xl font-black tracking-widest text-emerald-700 font-mono">{pwdDeliveredOtp}</span>
-                        <button
-                          type="button"
-                          onClick={() => setPwdOtp(pwdDeliveredOtp)}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1 shadow-xs"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Insérer le code</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <input
-                    type="text"
-                    maxLength={6}
-                    value={pwdOtp}
-                    onChange={(e) => setPwdOtp(e.target.value.replace(/[^0-9]/g, ''))}
-                    placeholder="Ex: 582104"
-                    className="w-full tracking-widest text-center text-xl font-black py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
-                    required
-                    autoFocus
-                  />
-                  <div className="flex items-center justify-between text-xs text-slate-500">
+              <form onSubmit={handleChangePassword} className="space-y-3 pt-2">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Mot de passe actuel
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showCurrentPwd ? 'text' : 'password'}
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="Votre mot de passe actuel"
+                      className="w-full pl-3 pr-10 py-2.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                      required
+                      autoComplete="current-password"
+                    />
                     <button
                       type="button"
-                      onClick={() => setPwdStep('IDLE')}
-                      className="text-slate-600 underline"
+                      onClick={() => setShowCurrentPwd(!showCurrentPwd)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
                     >
-                      Annuler
+                      {showCurrentPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
-                    {pwdResendTimer > 0 ? (
-                      <span className="text-slate-400">Renvoyer dans {pwdResendTimer}s</span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleRequestPasswordOtp}
-                        className="text-emerald-700 underline font-bold"
-                      >
-                        Renvoyer le code SMS
-                      </button>
-                    )}
                   </div>
-                  <button
-                    type="submit"
-                    disabled={pwdLoading || pwdOtp.length < 6}
-                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    {pwdLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                    <span>Vérifier le code SMS</span>
-                  </button>
-                </form>
-              ) : (
-                <form onSubmit={handleSaveNewPassword} className="space-y-3 pt-2">
-                  <div className="text-xs text-emerald-800 font-bold bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>Numéro confirmé par SMS. Définissez votre nouveau mot de passe.</span>
-                  </div>
+                </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                      Nouveau mot de passe (min. 6 caractères)
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showNewPwd ? 'text' : 'password'}
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="Nouveau mot de passe"
-                        className="w-full pl-3 pr-10 py-2.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
-                        required
-                        minLength={6}
-                        autoFocus
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowNewPwd(!showNewPwd)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 p-1"
-                      >
-                        {showNewPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                      Confirmer le nouveau mot de passe
-                    </label>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Nouveau mot de passe (min. 6 caractères)
+                  </label>
+                  <div className="relative">
                     <input
-                      type="password"
-                      value={confirmNewPassword}
-                      onChange={(e) => setConfirmNewPassword(e.target.value)}
-                      placeholder="Répétez le nouveau mot de passe"
-                      className="w-full px-3 py-2.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                      type={showNewPwd ? 'text' : 'password'}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Nouveau mot de passe"
+                      className="w-full pl-3 pr-10 py-2.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                       required
                       minLength={6}
+                      autoComplete="new-password"
                     />
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-2">
                     <button
                       type="button"
-                      onClick={() => setPwdStep('IDLE')}
-                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all"
+                      onClick={() => setShowNewPwd(!showNewPwd)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
                     >
-                      Annuler
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={pwdLoading}
-                      className="flex-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      {pwdLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                      <span>Enregistrer</span>
+                      {showNewPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
-                </form>
-              )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Confirmer le nouveau mot de passe
+                  </label>
+                  <input
+                    type="password"
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    placeholder="Répétez le nouveau mot de passe"
+                    className="w-full px-3 py-2.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                    required
+                    minLength={6}
+                    autoComplete="new-password"
+                  />
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={pwdLoading}
+                    className="w-full py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {pwdLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                    <span>Mettre à jour le mot de passe</span>
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>

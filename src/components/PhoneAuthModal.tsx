@@ -4,91 +4,70 @@ import {
   signInWithPhoneNumber,
   ConfirmationResult,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
+  EmailAuthProvider,
+  linkWithCredential,
   updatePassword,
-  signInWithCustomToken,
+  signOut,
 } from 'firebase/auth';
-import { httpsCallable } from 'firebase/functions';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
-import { auth, db, functions } from '../services/firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../services/firebase';
 import { trackSmsSent } from '../services/platformMetrics';
 import {
   X,
   Phone,
-  ShieldCheck,
   CheckCircle2,
   AlertCircle,
   FileText,
   Lock,
-  Sparkles,
   ArrowRight,
   RefreshCw,
   User,
   Eye,
   EyeOff,
+  ArrowLeft,
   Smartphone,
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { GABON_PROVINCES } from '../data/gabonLocations';
 import { CguModal } from './CguModal';
-import { checkPasswordCooldown, recordPasswordCooldown } from '../utils/passwordCooldown';
+import {
+  normalizeGabonPhone,
+  toE164,
+  toSyntheticEmail,
+  detectOperator,
+  isValidGabonMobile,
+  getAuthErrorMessage,
+  GabonOperator,
+} from '../utils/phone';
 
 interface PhoneAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccessLogin: (user: UserProfile) => void;
-  initialMode?: 'LOGIN' | 'PUBLISH_TRIGGER';
+  onSuccessLogin?: (user: UserProfile) => void;
+  initialMode?: 'LOGIN' | 'PUBLISH_TRIGGER' | 'REGISTER';
 }
-
-const getPhoneClean = (raw: string): string => {
-  let clean = raw.replace(/[^0-9]/g, '');
-  if (clean.startsWith('241')) clean = clean.slice(3);
-  while (clean.startsWith('0')) clean = clean.slice(1);
-  return clean;
-};
-
-const formatGabonPhone = (raw: string): string => {
-  const clean = getPhoneClean(raw);
-  return `+241${clean}`;
-};
-
-const formatGabonPhoneForSms = (raw: string): string => {
-  const clean = getPhoneClean(raw);
-  return `+2410${clean}`;
-};
-
-export const TEST_PHONE_CODES: Record<string, string> = {
-  '+24162520803': '625208',
-  '+24167256341': '555555',
-  '+24177874707': '000111',
-  '+24167896902': '111777',
-  '+24177276895': '777777',
-  '+24177905165': '000000',
-  '+24167443312': '676767',
-};
 
 export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   isOpen,
   onClose,
-  onSuccessLogin,
   initialMode = 'LOGIN',
 }) => {
-  // Stages:
-  // 1 = Formulaire principal (Connexion directe OU Inscription directe avec Nom, Ville, Mot de passe)
-  // 2 = Vérification de sécurité OTP (pour Mot de passe oublié ou validation SMS)
-  // 4 = Nouveau Mot de passe après OTP validé
-  const [stage, setStage] = useState<1 | 2 | 4>(1);
+  // Modes d'authentification
+  const [authMode, setAuthMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD'>(
+    initialMode === 'REGISTER' ? 'REGISTER' : 'LOGIN'
+  );
 
-  // Mode en Stage 1 : false = Connexion (téléphone + mot de passe), true = Inscription (nouveau compte)
-  const [isRegisterMode, setIsRegisterMode] = useState(false);
-  const [isForgotPasswordFlow, setIsForgotPasswordFlow] = useState(false);
+  // Étapes :
+  // REGISTER: 1 = Saisie numéro -> 2 = Code SMS OTP -> 3 = Profil & Mot de passe
+  // FORGOT_PASSWORD: 1 = Saisie numéro -> 2 = Code SMS OTP -> 4 = Nouveau mot de passe
+  // LOGIN: étape unique
+  const [stage, setStage] = useState<1 | 2 | 3 | 4>(1);
 
   // Form states
   const [contactPhone, setContactPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [detectedOperator, setDetectedOperator] = useState<'AIRTEL' | 'MOOV'>('AIRTEL');
   const [otpCode, setOtpCode] = useState('');
   const [fullName, setFullName] = useState('');
   const [selectedProvince, setSelectedProvince] = useState(GABON_PROVINCES[0]?.name || 'Estuaire');
@@ -96,70 +75,65 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [showCguModal, setShowCguModal] = useState(false);
 
-  // Fallback OTP généré automatiquement lorsque Google bloque l'envoi réel de SMS vers le Gabon (-39 / quota)
-  const [deliveredFallbackOtp, setDeliveredFallbackOtp] = useState<string | null>(null);
-
+  // Verrous & Références
+  const sendLockRef = useRef(false);
   const confirmationRef = useRef<ConfirmationResult | null>(null);
   const recaptchaRef = useRef<RecaptchaVerifier | null>(null);
+
   const [resendTimer, setResendTimer] = useState(45);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Villes associées à la province sélectionnée
+  // Villes associées à la province
   const availableCities = GABON_PROVINCES.find((p) => p.name === selectedProvince)?.cities || [];
 
-  // Détection automatique de l'opérateur gabonais (Airtel ou Moov)
-  useEffect(() => {
-    const clean = contactPhone.replace(/[^0-9]/g, '');
-    if (clean.includes('77') || clean.includes('74') || clean.includes('76') || clean.startsWith('07') || clean.startsWith('7')) {
-      setDetectedOperator('AIRTEL');
-    } else if (clean.includes('66') || clean.includes('65') || clean.includes('62') || clean.startsWith('06') || clean.startsWith('6')) {
-      setDetectedOperator('MOOV');
-    }
-  }, [contactPhone]);
+  // Détection opérateur dynamique pour information visuelle
+  const digits = normalizeGabonPhone(contactPhone);
+  const detectedOp: GabonOperator | null = detectOperator(digits);
 
-  // Compte à rebours de renvoi OTP
+  // Gestion du compte à rebours de renvoi SMS (Hygiène : ReturnType<typeof setInterval>)
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval>;
     if (stage === 2 && resendTimer > 0) {
       interval = setInterval(() => {
         setResendTimer((prev) => prev - 1);
       }, 1000);
     }
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [stage, resendTimer]);
 
-  // Initialiseur et recycleur sécurisé de RecaptchaVerifier
-  const getOrCreateRecaptcha = () => {
-    let container = document.getElementById('recaptcha-container');
-    if (!container) {
-      container = document.createElement('div');
-      container.id = 'recaptcha-container';
-      document.body.appendChild(container);
-    }
+  // Initialiseur paresseux de RecaptchaVerifier invisible (Section 3.3)
+  const getOrCreateRecaptcha = (): RecaptchaVerifier => {
+    const container = document.getElementById('recaptcha-container');
 
     if (recaptchaRef.current) {
       try {
         recaptchaRef.current.clear();
-      } catch {
-        // ignore
+      } catch (e) {
+        console.error('Erreur clear reCAPTCHA:', e);
       }
       recaptchaRef.current = null;
+    }
+
+    if (container) {
+      container.innerHTML = '';
     }
 
     auth.languageCode = 'fr';
     recaptchaRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
       size: 'invisible',
       callback: () => {
-        // reCAPTCHA validé
+        setErrorMessage(null);
       },
       'expired-callback': () => {
         if (recaptchaRef.current) {
           try {
             recaptchaRef.current.clear();
-          } catch {
-            // ignore
+          } catch (e) {
+            console.error('Erreur expiration reCAPTCHA:', e);
           }
           recaptchaRef.current = null;
         }
@@ -175,325 +149,120 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       if (recaptchaRef.current) {
         try {
           recaptchaRef.current.clear();
-        } catch {
-          // ignore
+        } catch (e) {
+          console.error('Erreur nettoyage reCAPTCHA unmount:', e);
         }
         recaptchaRef.current = null;
-      }
-      try {
-        if ((window as any).recaptchaVerifier) {
-          (window as any).recaptchaVerifier.clear();
-          (window as any).recaptchaVerifier = null;
-        }
-      } catch {
-        // ignore
       }
     };
   }, []);
 
-  // Réinitialisation des états à l'ouverture/fermeture
-  useEffect(() => {
-    if (!isOpen) {
-      setErrorMessage(null);
-      setSuccessNotice(null);
-      setStage(1);
-      setIsRegisterMode(false);
-      setOtpCode('');
-      setPassword('');
-      setConfirmPassword('');
-      setIsForgotPasswordFlow(false);
-      setDeliveredFallbackOtp(null);
-      confirmationRef.current = null;
-      setIsLoading(false);
-      if (recaptchaRef.current) {
-        try {
-          recaptchaRef.current.clear();
-        } catch {
-          // ignore
-        }
-        recaptchaRef.current = null;
+  // Réinitialisation et nettoyage lors de la fermeture
+  const handleModalClose = async () => {
+    // Si l'utilisateur quitte à l'étape 3 de l'inscription sans terminer, déconnecter la session fantôme
+    if (stage === 3 && auth.currentUser) {
+      try {
+        await signOut(auth);
+      } catch (e) {
+        console.error('Erreur signOut fermeture modal étape 3:', e);
       }
-    } else {
-      setErrorMessage(null);
-      setSuccessNotice(null);
-      setOtpCode('');
-      setDeliveredFallbackOtp(null);
-      confirmationRef.current = null;
-      setIsLoading(false);
     }
-  }, [isOpen]);
 
-  /**
-   * Envoi d'un code OTP (utilisé principalement pour le renouvellement de mot de passe)
-   * En cas de blocage Google anti-abus (-39) ou quota, génère immédiatement un code
-   * de secours stocké dans phone_verifications pour ne JAMAIS bloquer l'utilisateur.
-   */
-  const sendCode = async (): Promise<boolean> => {
-    if (isLoading) return false;
+    // Réinitialisation hygiénique des champs
+    setContactPhone('');
+    setFullName('');
+    setTermsAccepted(false);
+    setPassword('');
+    setConfirmPassword('');
+    setOtpCode('');
     setErrorMessage(null);
     setSuccessNotice(null);
-    setDeliveredFallbackOtp(null);
+    setStage(1);
+    setAuthMode(initialMode === 'REGISTER' ? 'REGISTER' : 'LOGIN');
+    confirmationRef.current = null;
+    setIsLoading(false);
+    sendLockRef.current = false;
 
-    const cleanDigits = getPhoneClean(contactPhone);
-    if (!/^[67]\d{7}$/.test(cleanDigits)) {
-      setErrorMessage(
-        'Numéro Gabon invalide (8 chiffres requis). Exemple : 74 56 78 21 (ou 074 56 78 21) pour Airtel, 62 52 08 03 (ou 062 52 08 03) pour Moov.'
-      );
+    if (recaptchaRef.current) {
+      try {
+        recaptchaRef.current.clear();
+      } catch (e) {
+        console.error('Erreur clear reCAPTCHA close:', e);
+      }
+      recaptchaRef.current = null;
+    }
+
+    onClose();
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      setAuthMode(initialMode === 'REGISTER' ? 'REGISTER' : 'LOGIN');
+      setStage(1);
+      setErrorMessage(null);
+      setSuccessNotice(null);
+    }
+  }, [isOpen, initialMode]);
+
+  /**
+   * Envoi du SMS avec reCAPTCHA invisible et verrou anti double-clic (Section 3.3)
+   */
+  const sendCode = async (): Promise<boolean> => {
+    if (sendLockRef.current || isLoading) return false;
+
+    const rawDigits = normalizeGabonPhone(contactPhone);
+    if (!isValidGabonMobile(rawDigits)) {
+      setErrorMessage('Numéro gabonais invalide (8 chiffres). Exemple : 074 56 78 21 ou 062 18 87 34.');
       return false;
     }
 
+    sendLockRef.current = true;
     setIsLoading(true);
-    const phoneStandard = formatGabonPhone(contactPhone);
-    const testCode = TEST_PHONE_CODES[phoneStandard];
+    setErrorMessage(null);
+    setSuccessNotice(null);
+
+    const e164 = toE164(rawDigits);
 
     try {
       const verifier = getOrCreateRecaptcha();
-      confirmationRef.current = await signInWithPhoneNumber(auth, phoneStandard, verifier);
-      await trackSmsSent(phoneStandard);
-      if (testCode) {
-        setDeliveredFallbackOtp(testCode);
-      }
-      setSuccessNotice(
-        testCode
-          ? `Code de sécurité envoyé au ${phoneStandard} (Numéro de test : code ${testCode}).`
-          : `Code de sécurité SMS envoyé avec succès au ${phoneStandard}.`
-      );
+      confirmationRef.current = await signInWithPhoneNumber(auth, e164, verifier);
+      await trackSmsSent(e164);
+      setSuccessNotice(`Code de confirmation SMS envoyé au ${e164}.`);
       return true;
-    } catch (err: any) {
-      console.warn('Firebase signInWithPhoneNumber returned:', err);
+    } catch (err: unknown) {
+      console.error('Erreur envoi SMS Firebase:', err);
       if (recaptchaRef.current) {
         try {
           recaptchaRef.current.clear();
-        } catch {
-          // ignore
+        } catch (clearErr) {
+          console.error('Erreur clear reCAPTCHA catch:', clearErr);
         }
         recaptchaRef.current = null;
       }
-
-      const errStr = ((err?.message || '') + ' ' + (err?.code || '')).toLowerCase();
-      if (errStr.includes('recaptcha') || errStr.includes('element has been removed') || errStr.includes('captcha-check-failed')) {
-        setErrorMessage('La vérification de sécurité a été réinitialisée. Veuillez cliquer à nouveau pour continuer.');
-        return false;
-      }
-
-      const isSmsBlockedOrLimited =
-        errStr.includes('error-code:-39') ||
-        err?.code === 'auth/error-code:-39' ||
-        errStr.includes('quota') ||
-        errStr.includes('too-many-requests') ||
-        errStr.includes('internal-error') ||
-        errStr.includes('operation-not-allowed') ||
-        errStr.includes('unauthorized-domain');
-
-      // Génération d'un code de secours résilient si Google bloque l'acheminement SMS
-      if (isSmsBlockedOrLimited) {
-        const codeToUse = testCode || Math.floor(100000 + Math.random() * 900000).toString();
-        const docData = {
-          phoneNumber: phoneStandard,
-          cleanDigits,
-          otpCode: codeToUse,
-          createdAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-          verified: false,
-          channel: 'GABON_SMS_GATEWAY',
-        };
-
-        try {
-          await setDoc(doc(db, 'phone_verifications', cleanDigits), docData);
-          await setDoc(doc(db, 'phone_verifications', phoneStandard), docData);
-        } catch (fsErr) {
-          console.warn('Fallback phone_verifications write notice:', fsErr);
-        }
-
-        await trackSmsSent(phoneStandard);
-        setDeliveredFallbackOtp(codeToUse);
-        setSuccessNotice(
-          testCode
-            ? `Numéro de test détecté. Votre code de sécurité est : ${testCode}`
-            : `Restrictions SMS Google détectées pour cet opérateur Gabon. Votre code de sécurité temporaire est : ${codeToUse}`
-        );
-        return true;
-      }
-
-      const messages: Record<string, string> = {
-        'auth/invalid-phone-number': 'Numéro de téléphone invalide (+241 requis, 8 chiffres).',
-        'auth/too-many-requests': 'Trop de tentatives d\'envoi de SMS. Veuillez patienter quelques minutes avant de réessayer.',
-        'auth/quota-exceeded': 'Le quota d\'envoi de SMS est temporairement saturé. Réessayez plus tard.',
-        'auth/captcha-check-failed': 'Vérification anti-robot échouée. Veuillez cliquer à nouveau pour réessayer.',
-        'auth/operation-not-allowed': 'La connexion par SMS n\'est pas activée pour la région Gabon (+241).',
-        'auth/unauthorized-domain': 'Ce domaine web n\'est pas autorisé pour l\'envoi de SMS dans Firebase.',
-        'auth/internal-error': 'Impossible d\'expédier le SMS vers cet opérateur gabonais. Vérifiez votre couverture réseau.',
-      };
-      setErrorMessage(messages[err.code] ?? (err.message || "Impossible d'envoyer le code SMS. Réessayez."));
+      setErrorMessage(getAuthErrorMessage(err));
       return false;
     } finally {
       setIsLoading(false);
+      sendLockRef.current = false;
     }
   };
 
   /**
-   * 1. INSCRIPTION DIRECTE ANNONCEUR (Téléphone + Nom + Ville + Mot de passe)
-   * Crée le compte immédiatement sans être bloqué par l'anti-abus SMS de Google.
+   * FLUX DE CONNEXION DIRECTE (Section 3.5)
+   * signInWithEmailAndPassword(auth, toSyntheticEmail(digits), password)
    */
-  const handleDirectRegistration = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setSuccessNotice(null);
 
-    const cleanDigits = getPhoneClean(contactPhone);
-    if (!/^[67]\d{7}$/.test(cleanDigits)) {
-      setErrorMessage(
-        'Numéro Gabon invalide (8 chiffres requis). Exemple : 74 56 78 21 (ou 074 56 78 21) pour Airtel, 62 52 08 03 (ou 062 52 08 03) pour Moov.'
-      );
+    const rawDigits = normalizeGabonPhone(contactPhone);
+    if (!rawDigits || rawDigits.length < 8) {
+      setErrorMessage('Numéro gabonais invalide (8 chiffres).');
       return;
     }
 
-    if (!fullName.trim()) {
-      setErrorMessage('Veuillez indiquer votre nom complet ou le nom de votre agence.');
-      return;
-    }
-
-    if (!password.trim() || password.length < 6) {
-      setErrorMessage('Le mot de passe doit comporter au moins 6 caractères.');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setErrorMessage('Les deux mots de passe ne correspondent pas.');
-      return;
-    }
-
-    if (!termsAccepted) {
-      setErrorMessage('Vous devez accepter les Conditions Générales et la Charte Annonceur pour continuer.');
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const phoneWithoutZero = `+241${cleanDigits}`;
-      const syntheticEmail = `${cleanDigits}@bizbooster.ga`;
-
-      // A. Vérification préalable si le compte existe déjà dans Firestore
-      try {
-        const checkSnap1 = await getDoc(doc(db, 'users', cleanDigits));
-        const checkSnap2 = await getDoc(doc(db, 'users', phoneWithoutZero));
-        if (checkSnap1.exists() || checkSnap2.exists()) {
-          setErrorMessage('Ce numéro de téléphone possède déjà un compte annonceur. Veuillez vous connecter avec votre mot de passe.');
-          setIsRegisterMode(false);
-          setIsLoading(false);
-          return;
-        }
-      } catch (checkErr) {
-        console.warn('Pre-check error notice:', checkErr);
-      }
-
-      // B. Appel de la Cloud Function registerWithPhonePassword (Admin SDK)
-      try {
-        const registerFn = httpsCallable(functions, 'registerWithPhonePassword');
-        const res = await registerFn({
-          phoneNumber: phoneWithoutZero,
-          password: password.trim(),
-          name: fullName.trim(),
-          province: selectedProvince,
-          city: selectedCity,
-          operator: detectedOperator,
-        });
-        const data = res.data as any;
-
-        if (data?.customToken) {
-          const cred = await signInWithCustomToken(auth, data.customToken);
-          onSuccessLogin({ id: cred.user.uid, ...data.user } as UserProfile);
-          return;
-        }
-
-        if (data?.syntheticEmail) {
-          const userCred = await signInWithEmailAndPassword(auth, data.syntheticEmail, password.trim());
-          const snap = await getDoc(doc(db, 'users', userCred.user.uid));
-          const profile = snap.exists() ? { id: snap.id, ...snap.data() } : data.user;
-          onSuccessLogin(profile as UserProfile);
-          return;
-        }
-      } catch (fnErr: any) {
-        console.warn('Cloud Function register error:', fnErr?.code, fnErr?.message);
-        const code = fnErr?.code || '';
-        const msg = fnErr?.message || '';
-
-        if (code === 'functions/already-exists' || code === 'already-exists' || msg.includes('déjà associé')) {
-          setErrorMessage('Ce numéro de téléphone possède déjà un compte annonceur. Veuillez vous connecter avec votre mot de passe.');
-          setIsRegisterMode(false);
-          setIsLoading(false);
-          return;
-        }
-      }
-
-      // C. Fallback direct côté client via Firebase Auth synthetic email
-      try {
-        let userUid = '';
-        try {
-          const cred = await createUserWithEmailAndPassword(auth, syntheticEmail, password.trim());
-          userUid = cred.user.uid;
-        } catch (authCreateErr: any) {
-          if (authCreateErr?.code === 'auth/email-already-in-use') {
-            const loginCred = await signInWithEmailAndPassword(auth, syntheticEmail, password.trim());
-            userUid = loginCred.user.uid;
-          } else {
-            throw authCreateErr;
-          }
-        }
-
-        const newUser: UserProfile = {
-          id: userUid,
-          contactPhone: phoneWithoutZero,
-          phoneNumber: phoneWithoutZero,
-          name: fullName.trim(),
-          operator: detectedOperator,
-          isVerified: true,
-          termsAccepted: true,
-          termsAcceptedAt: new Date().toISOString(),
-          role: 'USER',
-          exemptFromPaymentAndKyc: false,
-          idVerificationStatus: 'NOT_SUBMITTED',
-          createdAt: new Date().toISOString(),
-          password: password.trim(),
-          lastPasswordChangeDate: new Date().toISOString(),
-          location: {
-            province: selectedProvince,
-            city: selectedCity,
-          },
-        };
-
-        await setDoc(doc(db, 'users', userUid), newUser, { merge: true });
-        onSuccessLogin(newUser);
-      } catch (clientErr: any) {
-        console.error('Direct registration client fallback error:', clientErr);
-        if (clientErr?.code === 'auth/email-already-in-use') {
-          setErrorMessage('Ce numéro de téléphone possède déjà un compte. Veuillez vous connecter avec votre mot de passe.');
-          setIsRegisterMode(false);
-        } else {
-          setErrorMessage(clientErr?.message || 'Erreur lors de la création de votre compte. Veuillez réessayer.');
-        }
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  /**
-   * 2. CONNEXION PAR NUMÉRO + MOT DE PASSE
-   */
-  const handlePasswordLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage(null);
-    setSuccessNotice(null);
-
-    const cleanDigits = getPhoneClean(contactPhone);
-    if (!/^[67]\d{7}$/.test(cleanDigits)) {
-      setErrorMessage('Numéro Gabon invalide (8 chiffres requis). Exemple : 74 56 78 21 ou 074 56 78 21 pour Airtel, 62 52 08 03 pour Moov.');
-      return;
-    }
-
-    if (!password.trim()) {
+    if (!password) {
       setErrorMessage('Veuillez saisir votre mot de passe.');
       return;
     }
@@ -501,328 +270,234 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setIsLoading(true);
 
     try {
-      const phoneWithoutZero = `+241${cleanDigits}`;
-      const syntheticEmail = `${cleanDigits}@bizbooster.ga`;
-
-      // 1. Authentification directe via Cloud Function (vérification Firestore & sync Auth)
-      try {
-        const loginFn = httpsCallable(functions, 'loginWithPhonePassword');
-        const res = await loginFn({
-          phoneNumber: phoneWithoutZero,
-          password: password.trim(),
-        });
-        const data = res.data as any;
-
-        if (data?.customToken) {
-          const cred = await signInWithCustomToken(auth, data.customToken);
-          onSuccessLogin({ id: cred.user.uid, ...data.user } as UserProfile);
-          return;
-        }
-
-        if (data?.syntheticEmail) {
-          const userCred = await signInWithEmailAndPassword(auth, data.syntheticEmail, password.trim());
-          const snap = await getDoc(doc(db, 'users', userCred.user.uid));
-          const profile = snap.exists() ? { id: snap.id, ...snap.data() } : data.user;
-          onSuccessLogin(profile as UserProfile);
-          return;
-        }
-      } catch (fnErr: any) {
-        console.warn('Cloud Function login error:', fnErr?.code, fnErr?.message);
-        const code = fnErr?.code || '';
-        const msg = fnErr?.message || '';
-
-        if (code === 'functions/unauthenticated' || code === 'unauthenticated' || msg.includes('mot de passe incorrect')) {
-          setErrorMessage(
-            "Mot de passe incorrect. Si vous l'avez oublié, cliquez sur 'Mot de passe oublié ?' ci-dessus."
-          );
-          setIsLoading(false);
-          return;
-        } else if (code === 'functions/not-found' || code === 'not-found' || msg.includes('Aucun compte')) {
-          setErrorMessage(
-            "Aucun compte annonceur associé à ce numéro. Cliquez sur 'Nouveau sur BizBooster ? Créer un compte' ci-dessous pour créer votre compte en 1 minute."
-          );
-          setIsLoading(false);
-          return;
-        }
-      }
-
-      // 2. Fallback direct client via Firebase Auth email/pass (synthetic email)
-      try {
-        const userCred = await signInWithEmailAndPassword(auth, syntheticEmail, password.trim());
-        const snap = await getDoc(doc(db, 'users', userCred.user.uid));
-        if (snap.exists()) {
-          const profile = {
-            id: userCred.user.uid,
-            password: snap.data().password || password.trim(),
-            ...snap.data(),
-          } as UserProfile;
-          onSuccessLogin(profile);
-          return;
-        }
-      } catch (authErr: any) {
-        console.warn('signInWithEmailAndPassword fallback error:', authErr?.code);
-        setErrorMessage(
-          "Numéro ou mot de passe incorrect. Veuillez vérifier votre saisie ou cliquer sur 'Mot de passe oublié ?' pour réinitialiser votre mot de passe."
-        );
-      }
+      const syntheticEmail = toSyntheticEmail(rawDigits);
+      // Ne jamais appliquer trim() aux mots de passe
+      await signInWithEmailAndPassword(auth, syntheticEmail, password);
+      // Ne pas construire de profil à la main : fermer le modal et laisser l'écouteur Firestore charger le profil
+      handleModalClose();
+    } catch (err: unknown) {
+      console.error('Erreur connexion:', err);
+      setErrorMessage(getAuthErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
   };
 
   /**
-   * 3. INITIALISATION DU FLUX MOT DE PASSE OUBLIÉ
+   * FLUX D'INSCRIPTION : Étape 1 (Validation numéro et envoi SMS)
    */
-  const handleStartForgotPassword = async () => {
-    setErrorMessage(null);
-    setDeliveredFallbackOtp(null);
-
-    const cleanDigits = getPhoneClean(contactPhone);
-    if (!/^[67]\d{7}$/.test(cleanDigits)) {
-      setErrorMessage(
-        "Veuillez d'abord renseigner votre numéro Gabon (+241) dans le formulaire ci-dessus, puis cliquer sur 'Mot de passe oublié ?'."
-      );
-      return;
-    }
-
-    const phoneWithoutZero = formatGabonPhone(contactPhone);
-
-    // Vérification du délai de 24h avant renouvellement
-    setIsLoading(true);
-    try {
-      const cooldownCheck = await checkPasswordCooldown(phoneWithoutZero);
-      if (cooldownCheck.isBlocked) {
-        setErrorMessage(
-          `Votre mot de passe a été récemment modifié dans les dernières 24 heures. Pour protéger votre compte, vous pourrez réinitialiser votre mot de passe dans ${cooldownCheck.remainingHours} heure${cooldownCheck.remainingHours > 1 ? 's' : ''}.`
-        );
-        setIsLoading(false);
-        return;
-      }
-    } catch (checkErr) {
-      console.warn('checkPasswordCooldown error:', checkErr);
-    }
-
-    // Vérification si le compte existe dans la base
-    try {
-      const checkSnap1 = await getDoc(doc(db, 'users', cleanDigits));
-      const checkSnap2 = await getDoc(doc(db, 'users', phoneWithoutZero));
-      if (!checkSnap1.exists() && !checkSnap2.exists()) {
-        setErrorMessage("Aucun compte annonceur associé à ce numéro (+241). Veuillez vérifier votre numéro ou créer un compte.");
-        setIsLoading(false);
-        return;
-      }
-    } catch (checkUserErr) {
-      console.warn('Check user error:', checkUserErr);
-    }
-
-    setIsForgotPasswordFlow(true);
-    if (await sendCode()) {
+  const handleStartRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const success = await sendCode();
+    if (success) {
       setStage(2);
       setResendTimer(45);
     }
   };
 
   /**
-   * 4. VÉRIFICATION DU CODE OTP (Stage 2)
+   * FLUX MOT DE PASSE OUBLIÉ : Étape 1 (Validation numéro et envoi SMS)
+   */
+  const handleStartForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const success = await sendCode();
+    if (success) {
+      setStage(2);
+      setResendTimer(45);
+    }
+  };
+
+  /**
+   * ÉTAPE 2 : VÉRIFICATION DU CODE SMS OTP (Sections 3.2, 3.4, 3.6)
    */
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-    const trimmedCode = otpCode.trim();
-    if (!trimmedCode || trimmedCode.length < 6) {
+
+    const cleanCode = otpCode.replace(/\D/g, '');
+    if (cleanCode.length < 6) {
       setErrorMessage('Veuillez saisir le code à 6 chiffres.');
       return;
     }
 
-    setIsLoading(true);
-    const cleanDigits = getPhoneClean(contactPhone);
-    const phoneWithoutZero = `+241${cleanDigits}`;
-    const phoneForSms = `+2410${cleanDigits}`;
-
-    let isVerified = false;
-
-    // A. Validation principale : confirmation Firebase Phone Auth si session active
-    if (confirmationRef.current) {
-      try {
-        await confirmationRef.current.confirm(trimmedCode);
-        isVerified = true;
-      } catch (confirmErr: any) {
-        console.warn('confirmationRef.confirm notice:', confirmErr?.code, confirmErr?.message);
-      }
-    }
-
-    // B. Validation de secours : numéros de test ou Firestore phone_verifications
-    if (!isVerified) {
-      const testCode = TEST_PHONE_CODES[phoneWithoutZero] || TEST_PHONE_CODES[phoneForSms];
-      if (testCode && testCode === trimmedCode) {
-        isVerified = true;
-      } else {
-        try {
-          const keys = [cleanDigits, phoneWithoutZero, phoneForSms].filter(Boolean);
-          for (const k of keys) {
-            const vSnap = await getDoc(doc(db, 'phone_verifications', k));
-            if (vSnap.exists() && vSnap.data().otpCode === trimmedCode) {
-              const expiresAt = vSnap.data().expiresAt ? new Date(vSnap.data().expiresAt).getTime() : Infinity;
-              if (Date.now() <= expiresAt) {
-                isVerified = true;
-                await updateDoc(vSnap.ref, {
-                  verified: true,
-                  verifiedAt: new Date().toISOString(),
-                }).catch(() => {});
-                break;
-              }
-            }
-          }
-        } catch (fsErr) {
-          console.warn('Firestore fallback check error:', fsErr);
-        }
-      }
-    }
-
-    if (!isVerified) {
-      setErrorMessage('Code de vérification incorrect ou expiré. Veuillez vérifier le code saisi.');
-      setIsLoading(false);
+    if (!confirmationRef.current) {
+      setErrorMessage('Session expirée. Recommencez la vérification.');
+      setStage(1);
       return;
     }
 
-    // C. Traitement après validation réussie
+    setIsLoading(true);
+
     try {
-      if (isForgotPasswordFlow) {
+      // Seul confirmationRef.current.confirm(code) peut vérifier (Section 3.2)
+      const userCred = await confirmationRef.current.confirm(cleanCode);
+      const user = userCred.user;
+
+      if (authMode === 'REGISTER') {
+        // Section 3.4 Étape 2 : Vérifier si users/uid existe déjà
+        const userDocSnap = await getDoc(doc(db, 'users', user.uid));
+        if (userDocSnap.exists()) {
+          await signOut(auth);
+          setErrorMessage('Ce numéro a déjà un compte, connectez-vous.');
+          setAuthMode('LOGIN');
+          setStage(1);
+          return;
+        }
+        // Sinon passer à l'étape 3
+        setStage(3);
+      } else if (authMode === 'FORGOT_PASSWORD') {
+        // Section 3.6 Étape 2 : Si users/uid n'existe pas, signOut et afficher 'Aucun compte pour ce numéro.'
+        const userDocSnap = await getDoc(doc(db, 'users', user.uid));
+        if (!userDocSnap.exists()) {
+          await signOut(auth);
+          setErrorMessage('Aucun compte pour ce numéro.');
+          return;
+        }
+        // Passer à l'étape 4 de saisie du nouveau mot de passe
         setPassword('');
         setConfirmPassword('');
         setStage(4);
-        setIsLoading(false);
-        return;
       }
-
-      // Connexion directe si utilisateur existant
-      let snap: any = null;
-      try {
-        const altSnap = await getDoc(doc(db, 'users', cleanDigits));
-        if (altSnap.exists()) {
-          snap = altSnap;
-        } else {
-          const altSnap2 = await getDoc(doc(db, 'users', phoneWithoutZero));
-          if (altSnap2.exists()) snap = altSnap2;
-        }
-      } catch (readErr) {
-        console.warn('Firestore user fetch notice:', readErr);
-      }
-
-      if (snap && snap.exists() && snap.data().termsAccepted) {
-        const profile = {
-          id: snap.id,
-          password: snap.data().password || 'users-with-no-password',
-          ...snap.data(),
-        } as UserProfile;
-        onSuccessLogin(profile);
-        return;
-      }
-
-      // Nouvel utilisateur
-      setStage(1);
-      setIsRegisterMode(true);
-    } catch (procErr: any) {
-      console.warn('Post-verification routing notice:', procErr);
-      setStage(1);
+    } catch (err: unknown) {
+      console.error('Erreur confirmation OTP:', err);
+      setErrorMessage(getAuthErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
   };
 
   /**
-   * 5. MISE À JOUR DU MOT DE PASSE (Stage 4)
+   * ÉTAPE 3 INSCRIPTION : Création de profil et liaison e-mail/mot de passe (Section 3.4)
    */
-  const handleResetPasswordComplete = async (e: React.FormEvent) => {
+  const handleCompleteRegistration = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
-    if (!password.trim() || password.length < 6) {
-      setErrorMessage('Le mot de passe doit comporter au moins 6 caractères.');
+    if (!fullName.trim()) {
+      setErrorMessage('Veuillez renseigner votre nom complet ou raison sociale.');
+      return;
+    }
+
+    // Ne jamais appliquer trim() aux mots de passe
+    if (!password || password.length < 6) {
+      setErrorMessage('Mot de passe trop faible (6 caractères minimum).');
       return;
     }
 
     if (password !== confirmPassword) {
-      setErrorMessage('Les deux mots de passe ne correspondent pas.');
+      setErrorMessage('Les mots de passe ne correspondent pas.');
+      return;
+    }
+
+    if (!termsAccepted) {
+      setErrorMessage('Veuillez accepter les Conditions Générales d\'Utilisation.');
       return;
     }
 
     setIsLoading(true);
+
     try {
-      const cleanDigits = getPhoneClean(contactPhone);
-      const phoneWithoutZero = `+241${cleanDigits}`;
-      const syntheticEmail = `${cleanDigits}@bizbooster.ga`;
-      const nowIso = new Date().toISOString();
+      const user = auth.currentUser;
+      if (!user) {
+        throw new Error('SESSION_LOST');
+      }
 
-      // 1. Appel Cloud Function resetPasswordWithPhone (Admin SDK)
+      const rawDigits = normalizeGabonPhone(contactPhone);
+      const emailCred = EmailAuthProvider.credential(toSyntheticEmail(rawDigits), password);
+
       try {
-        const resetFn = httpsCallable(functions, 'resetPasswordWithPhone');
-        await resetFn({
-          phoneNumber: phoneWithoutZero,
-          newPassword: password.trim(),
-          otpCode: otpCode.trim(),
-        });
-      } catch (fnErr) {
-        console.warn('resetPasswordWithPhone cloud fn notice:', fnErr);
-      }
-
-      // 2. Mise à jour client directe si session active
-      const currentUser = auth.currentUser;
-      if (currentUser) {
-        try {
-          await updatePassword(currentUser, password.trim());
-        } catch {
-          // ignore
-        }
-      }
-
-      // 3. Mise à jour Firestore users & enregistrement du cooldown
-      let targetUid = currentUser?.uid || '';
-      if (!targetUid) {
-        const q1 = await getDoc(doc(db, 'users', cleanDigits));
-        if (q1.exists()) {
-          targetUid = q1.id;
-        } else {
-          const q2 = await getDoc(doc(db, 'users', phoneWithoutZero));
-          if (q2.exists()) targetUid = q2.id;
-        }
-      }
-
-      if (targetUid) {
-        await updateDoc(doc(db, 'users', targetUid), {
-          password: password.trim(),
-          lastPasswordChangeDate: nowIso,
-        }).catch(() => {});
-      }
-
-      await recordPasswordCooldown(phoneWithoutZero, nowIso);
-
-      // Connexion avec les nouveaux identifiants
-      try {
-        const userCred = await signInWithEmailAndPassword(auth, syntheticEmail, password.trim());
-        const snap = await getDoc(doc(db, 'users', userCred.user.uid));
-        if (snap.exists()) {
-          onSuccessLogin({ id: userCred.user.uid, ...snap.data() } as UserProfile);
+        await linkWithCredential(user, emailCred);
+      } catch (linkErr: unknown) {
+        const code = (linkErr as { code?: string })?.code;
+        if (
+          code === 'auth/email-already-in-use' ||
+          code === 'auth/provider-already-linked' ||
+          code === 'auth/credential-already-in-use'
+        ) {
+          setErrorMessage('Ce numéro possède déjà un compte. Connectez-vous.');
           return;
         }
-      } catch (signErr) {
-        console.warn('Sign-in after reset password notice:', signErr);
-      }
-
-      if (targetUid) {
-        const snap = await getDoc(doc(db, 'users', targetUid));
-        if (snap.exists()) {
-          onSuccessLogin({ id: targetUid, ...snap.data() } as UserProfile);
+        if (code === 'auth/weak-password') {
+          setErrorMessage('Mot de passe trop faible (6 caractères minimum).');
           return;
         }
+        throw linkErr;
       }
 
-      setSuccessNotice('Votre mot de passe a été réinitialisé avec succès. Veuillez vous connecter.');
-      setStage(1);
-      setIsRegisterMode(false);
-    } catch (err: any) {
-      console.error('Error resetting password:', err);
-      setErrorMessage('Erreur lors de la mise à jour du mot de passe. Veuillez réessayer.');
+      // Création du profil Firestore (sans password, sans lastPasswordChangeDate, sans idVerificationStatus)
+      await setDoc(doc(db, 'users', user.uid), {
+        name: fullName.trim(),
+        operator: detectOperator(rawDigits),
+        role: 'USER',
+        isVerified: true,
+        termsAccepted: true,
+        termsAcceptedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        contactPhone: toE164(rawDigits),
+        phoneNumber: toE164(rawDigits),
+        location: {
+          province: selectedProvince,
+          city: selectedCity,
+        },
+      });
+
+      handleModalClose();
+    } catch (err: unknown) {
+      console.error('Erreur finalisation inscription:', err);
+      setErrorMessage(getAuthErrorMessage(err));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * ÉTAPE 4 MOT DE PASSE OUBLIÉ : Mise à jour du mot de passe dans Auth (Section 3.6)
+   */
+  const handleCompleteResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+
+    // Ne jamais appliquer trim() aux mots de passe
+    if (!password || password.length < 6) {
+      setErrorMessage('Mot de passe trop faible (6 caractères minimum).');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMessage('Les mots de passe ne correspondent pas.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const user = auth.currentUser;
+      if (!user) {
+        setErrorMessage('Session expirée. Recommencez la vérification.');
+        setStage(1);
+        return;
+      }
+
+      // Mise à jour Auth uniquement (ne pas copier dans Firestore)
+      try {
+        await updatePassword(user, password);
+      } catch (upErr: unknown) {
+        const code = (upErr as { code?: string })?.code;
+        if (code === 'auth/requires-recent-login') {
+          setErrorMessage('Pour votre sécurité, recommencez la vérification.');
+          setStage(2);
+          return;
+        }
+        throw upErr;
+      }
+
+      setSuccessNotice('Votre mot de passe a été mis à jour avec succès.');
+      setTimeout(() => {
+        handleModalClose();
+      }, 1200);
+    } catch (err: unknown) {
+      console.error('Erreur mise à jour mot de passe:', err);
+      setErrorMessage(getAuthErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
@@ -832,12 +507,15 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+      {/* Conteneur unique invisible pour reCAPTCHA monté à la racine du modal */}
+      <div id="recaptcha-container" />
+
       <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative my-auto">
         {/* En-tête */}
         <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white p-6 relative">
           <button
-            onClick={onClose}
-            className="absolute top-5 right-5 text-slate-400 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors"
+            onClick={handleModalClose}
+            className="absolute top-5 right-5 text-slate-400 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -849,25 +527,33 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           </div>
 
           <h2 className="text-xl sm:text-2xl font-black text-white">
-            {stage === 1 && (!isRegisterMode ? 'Connexion Espace Annonceur' : 'Créer un Compte Annonceur')}
-            {stage === 2 && (isForgotPasswordFlow ? 'Code de Sécurité (Mot de Passe Oublié)' : 'Vérification du Code de Sécurité')}
-            {stage === 4 && 'Nouveau Mot de Passe Sécurisé'}
+            {authMode === 'LOGIN' && 'Connexion Espace Annonceur'}
+            {authMode === 'REGISTER' && stage === 1 && 'Inscription Annonceur (Étape 1/3)'}
+            {authMode === 'REGISTER' && stage === 2 && 'Vérification SMS OTP (Étape 2/3)'}
+            {authMode === 'REGISTER' && stage === 3 && 'Informations Annonceur (Étape 3/3)'}
+            {authMode === 'FORGOT_PASSWORD' && stage === 1 && 'Mot de Passe Oublié (Étape 1/3)'}
+            {authMode === 'FORGOT_PASSWORD' && stage === 2 && 'Vérification SMS OTP (Étape 2/3)'}
+            {authMode === 'FORGOT_PASSWORD' && stage === 4 && 'Nouveau Mot de Passe (Étape 3/3)'}
           </h2>
+
           <p className="text-xs text-slate-300 mt-1">
-            {stage === 1 &&
-              (!isRegisterMode
-                ? 'Connectez-vous rapidement avec votre numéro de téléphone et votre mot de passe.'
-                : 'Renseignez vos coordonnées pour activer votre compte annonceur et publier immédiatement.')}
-            {stage === 2 && `Un code de vérification à 6 chiffres a été préparé pour le ${contactPhone}.`}
-            {stage === 4 && 'Votre numéro a été vérifié. Veuillez définir et confirmer votre nouveau mot de passe.'}
+            {authMode === 'LOGIN' && 'Connectez-vous avec votre numéro gabonais et votre mot de passe.'}
+            {authMode === 'REGISTER' && stage === 1 && 'Entrez votre numéro pour recevoir un code de vérification SMS sécurisé.'}
+            {authMode === 'REGISTER' && stage === 2 && `Saisissez le code SMS à 6 chiffres envoyé au ${contactPhone}.`}
+            {authMode === 'REGISTER' && stage === 3 && 'Complétez votre profil pour finaliser la création de votre compte.'}
+            {authMode === 'FORGOT_PASSWORD' && stage === 1 && 'Entrez votre numéro pour recevoir un code de réinitialisation par SMS.'}
+            {authMode === 'FORGOT_PASSWORD' && stage === 2 && `Saisissez le code SMS reçu au ${contactPhone}.`}
+            {authMode === 'FORGOT_PASSWORD' && stage === 4 && 'Définissez votre nouveau mot de passe sécurisé.'}
           </p>
 
-          {/* Stepper Dots */}
-          <div className="flex items-center gap-2 mt-4">
-            <div className={`h-1.5 rounded-full transition-all ${stage >= 1 ? 'w-8 bg-emerald-400' : 'w-2 bg-slate-700'}`} />
-            <div className={`h-1.5 rounded-full transition-all ${stage >= 2 ? 'w-8 bg-emerald-400' : 'w-2 bg-slate-700'}`} />
-            <div className={`h-1.5 rounded-full transition-all ${stage >= 4 ? 'w-8 bg-emerald-400' : 'w-2 bg-slate-700'}`} />
-          </div>
+          {/* Stepper Dots (Uniquement pour REGISTER et FORGOT_PASSWORD, Section 3.9) */}
+          {authMode !== 'LOGIN' && (
+            <div className="flex items-center gap-2 mt-4">
+              <div className={`h-1.5 rounded-full transition-all ${stage >= 1 ? 'w-8 bg-emerald-400' : 'w-2 bg-slate-700'}`} />
+              <div className={`h-1.5 rounded-full transition-all ${stage >= 2 ? 'w-8 bg-emerald-400' : 'w-2 bg-slate-700'}`} />
+              <div className={`h-1.5 rounded-full transition-all ${stage >= 3 ? 'w-8 bg-emerald-400' : 'w-2 bg-slate-700'}`} />
+            </div>
+          )}
         </div>
 
         {/* Corps du modal */}
@@ -886,370 +572,249 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
             </div>
           )}
 
-          {/* STAGE 1: CONNEXION OU INSCRIPTION DIRECTE */}
-          {stage === 1 && (
-            <div className="space-y-4">
-              {/* Formulaire A : Connexion existante (Téléphone + Mot de passe) */}
-              {!isRegisterMode ? (
-                <form onSubmit={handlePasswordLogin} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                      Numéro de téléphone au Gabon (+241)
-                    </label>
-                    <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                        <span className="text-xs font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
-                          🇬🇦 +241
-                        </span>
-                      </div>
-                      <input
-                        type="tel"
-                        value={contactPhone}
-                        onChange={(e) => setContactPhone(e.target.value)}
-                        placeholder="74 56 78 21 ou 62 52 08 03"
-                        className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
-                        autoFocus
-                        required
-                      />
-                      <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
-                        <Phone className="w-4 h-4 text-slate-400" />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                        Mot de passe
-                      </label>
-                      <button
-                        type="button"
-                        onClick={handleStartForgotPassword}
-                        className="text-xs font-bold text-emerald-700 hover:text-emerald-800 underline cursor-pointer"
-                      >
-                        Mot de passe oublié ?
-                      </button>
-                    </div>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Votre mot de passe"
-                        className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
-                        required
-                      />
-                      <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isLoading}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    {isLoading ? (
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <>
-                        <span>Se connecter</span>
-                        <ArrowRight className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
-
-                  <div className="pt-2 text-center">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsRegisterMode(true);
-                        setErrorMessage(null);
-                        setSuccessNotice(null);
-                      }}
-                      className="text-xs text-slate-600 hover:text-emerald-700 font-semibold underline cursor-pointer"
-                    >
-                      Nouveau sur BizBooster ? Créer un compte annonceur
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                /* Formulaire B : Inscription directe complète (Téléphone + Nom + Ville + Mot de passe + CGU) */
-                <form onSubmit={handleDirectRegistration} className="space-y-4">
-                  {/* Numéro de téléphone */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                      Numéro de téléphone au Gabon (+241)
-                    </label>
-                    <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                        <span className="text-xs font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
-                          🇬🇦 +241
-                        </span>
-                      </div>
-                      <input
-                        type="tel"
-                        value={contactPhone}
-                        onChange={(e) => setContactPhone(e.target.value)}
-                        placeholder="74 56 78 21 ou 62 52 08 03"
-                        className="w-full pl-24 pr-12 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
-                        autoFocus
-                        required
-                      />
-                      <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
-                        <Phone className="w-4 h-4 text-slate-400" />
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between mt-1.5 text-[11px] text-slate-500">
-                      <span>Opérateurs : <strong>Airtel</strong> et <strong>Moov</strong></span>
-                      <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${
-                        detectedOperator === 'AIRTEL' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
-                      }`}>
-                        {detectedOperator === 'AIRTEL' ? 'Airtel Gabon' : 'Moov Gabon'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Nom complet */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                      Nom complet ou Dénomination Commerciale
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        placeholder="Ex: M. OBAME Paul ou Agence Ogooué"
-                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
-                        required
-                      />
-                      <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    </div>
-                  </div>
-
-                  {/* Localisation : Province et Ville */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                        Province
-                      </label>
-                      <select
-                        value={selectedProvince}
-                        onChange={(e) => {
-                          const prov = e.target.value;
-                          setSelectedProvince(prov);
-                          const matchingCities = GABON_PROVINCES.find((p) => p.name === prov)?.cities || [];
-                          if (matchingCities.length > 0) {
-                            setSelectedCity(matchingCities[0].name);
-                          }
-                        }}
-                        className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                      >
-                        {GABON_PROVINCES.map((p) => (
-                          <option key={p.code} value={p.name}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                        Ville
-                      </label>
-                      <select
-                        value={selectedCity}
-                        onChange={(e) => setSelectedCity(e.target.value)}
-                        className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                      >
-                        {availableCities.map((c) => (
-                          <option key={c.name} value={c.name}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Mot de passe et confirmation */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                        Créer un mot de passe
-                      </label>
-                      <div className="relative">
-                        <input
-                          type={showPassword ? 'text' : 'password'}
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          placeholder="Min 6 caractères"
-                          className="w-full pr-8 pl-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                          required
-                          minLength={6}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
-                        >
-                          {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                        Confirmer mot de passe
-                      </label>
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="Répétez le mot de passe"
-                        className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                        required
-                        minLength={6}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Encadré Déontologique & CGU */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2 text-xs text-slate-600">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 text-slate-900 font-bold">
-                        <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span className="text-[11px]">Conditions Générales & Charte Annonceur Gabon</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowCguModal(true)}
-                        className="text-[10px] font-extrabold text-emerald-700 hover:text-emerald-800 underline cursor-pointer"
-                      >
-                        Consulter CGU
-                      </button>
-                    </div>
-                    <p className="text-[10px] leading-relaxed text-slate-600">
-                      BIZBOOSTER est un hébergeur technique. Vous vous engagez à publier des annonces sincères, vérifiées et conformes aux lois en vigueur au Gabon.
-                    </p>
-                  </div>
-
-                  {/* Case à cocher CGU */}
-                  <label className="flex items-start gap-2.5 cursor-pointer pt-0.5">
-                    <input
-                      type="checkbox"
-                      checked={termsAccepted}
-                      onChange={(e) => setTermsAccepted(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                      required
-                    />
-                    <span className="text-[11px] text-slate-700 font-semibold leading-tight">
-                      J'accepte sans réserve les <button type="button" onClick={(e) => { e.preventDefault(); setShowCguModal(true); }} className="text-emerald-700 font-bold underline">Conditions Générales d'Utilisation</button> et la Charte Déontologique BizBooster Gabon.
+          {/* 1. FLUX DE CONNEXION (Formulaire direct en une étape) */}
+          {authMode === 'LOGIN' && (
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Numéro de téléphone au Gabon (+241)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                    <span className="text-xs font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                      🇬🇦 +241
                     </span>
-                  </label>
-
-                  {/* Bouton de soumission */}
-                  <button
-                    type="submit"
-                    disabled={isLoading}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    {isLoading ? (
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <>
-                        <span>Créer mon Compte Annonceur</span>
-                        <ArrowRight className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
-
-                  <div className="pt-1 text-center">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsRegisterMode(false);
-                        setErrorMessage(null);
-                        setSuccessNotice(null);
-                      }}
-                      className="text-xs text-slate-600 hover:text-emerald-700 font-semibold underline cursor-pointer"
-                    >
-                      Déjà un compte ? Se connecter avec mon mot de passe
-                    </button>
                   </div>
-                </form>
-              )}
-            </div>
+                  <input
+                    type="tel"
+                    value={contactPhone}
+                    onChange={(e) => setContactPhone(e.target.value)}
+                    placeholder="74 56 78 21 ou 62 18 87 34"
+                    className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                    autoFocus
+                    required
+                  />
+                  <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
+                    <Phone className="w-4 h-4 text-slate-400" />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Mot de passe
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('FORGOT_PASSWORD');
+                      setStage(1);
+                      setErrorMessage(null);
+                      setSuccessNotice(null);
+                    }}
+                    className="text-xs font-bold text-emerald-700 hover:text-emerald-800 underline cursor-pointer"
+                  >
+                    Mot de passe oublié ?
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Votre mot de passe"
+                    className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                    required
+                  />
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <span>Se connecter</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              <div className="pt-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('REGISTER');
+                    setStage(1);
+                    setErrorMessage(null);
+                    setSuccessNotice(null);
+                  }}
+                  className="text-xs text-slate-600 hover:text-emerald-700 font-semibold underline cursor-pointer"
+                >
+                  Nouveau sur BizBooster ? Créer un compte annonceur
+                </button>
+              </div>
+            </form>
           )}
 
-          {/* STAGE 2: VÉRIFICATION DU CODE DE SÉCURITÉ OTP */}
+          {/* 2. FLUX D'INSCRIPTION : ÉTAPE 1 (Saisie du numéro) */}
+          {authMode === 'REGISTER' && stage === 1 && (
+            <form onSubmit={handleStartRegister} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Numéro de téléphone au Gabon (+241)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                    <span className="text-xs font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                      🇬🇦 +241
+                    </span>
+                  </div>
+                  <input
+                    type="tel"
+                    value={contactPhone}
+                    onChange={(e) => setContactPhone(e.target.value)}
+                    placeholder="74 56 78 21 ou 62 18 87 34"
+                    className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                    autoFocus
+                    required
+                  />
+                  <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
+                    <Phone className="w-4 h-4 text-slate-400" />
+                  </div>
+                </div>
+                {detectedOp && (
+                  <div className="mt-1.5 text-[11px] text-slate-500 flex items-center justify-between">
+                    <span>Opérateur détecté :</span>
+                    <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${
+                      detectedOp === 'AIRTEL' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                    }`}>
+                      {detectedOp === 'AIRTEL' ? 'Airtel Gabon (074, 076, 077)' : 'Moov Gabon (060, 062, 065, 066)'}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <span>Envoyer le code SMS de vérification</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              <div className="pt-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('LOGIN');
+                    setStage(1);
+                    setErrorMessage(null);
+                    setSuccessNotice(null);
+                  }}
+                  className="text-xs text-slate-600 hover:text-emerald-700 font-semibold underline cursor-pointer"
+                >
+                  Déjà un compte ? Se connecter
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* 3. FLUX MOT DE PASSE OUBLIÉ : ÉTAPE 1 (Saisie du numéro) */}
+          {authMode === 'FORGOT_PASSWORD' && stage === 1 && (
+            <form onSubmit={handleStartForgotPassword} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Numéro de téléphone de votre compte (+241)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                    <span className="text-xs font-black text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                      🇬🇦 +241
+                    </span>
+                  </div>
+                  <input
+                    type="tel"
+                    value={contactPhone}
+                    onChange={(e) => setContactPhone(e.target.value)}
+                    placeholder="74 56 78 21 ou 62 18 87 34"
+                    className="w-full pl-24 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                    autoFocus
+                    required
+                  />
+                  <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
+                    <Phone className="w-4 h-4 text-slate-400" />
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <span>Envoyer le code SMS de récupération</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              <div className="pt-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('LOGIN');
+                    setStage(1);
+                    setErrorMessage(null);
+                    setSuccessNotice(null);
+                  }}
+                  className="text-xs text-slate-600 hover:text-emerald-700 font-semibold underline cursor-pointer"
+                >
+                  Retour à la connexion
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* 4. ÉTAPE 2 : VÉRIFICATION OTP SMS (Commun pour REGISTER et FORGOT_PASSWORD) */}
           {stage === 2 && (
             <form onSubmit={handleVerifyOtp} className="space-y-5">
               <div className="text-center space-y-1">
-                <span className="text-xs text-slate-500">Vérification de sécurité pour le compte lié au :</span>
+                <span className="text-xs text-slate-500">Code SMS envoyé au numéro :</span>
                 <p className="font-extrabold text-slate-800 text-base">{contactPhone}</p>
               </div>
-
-              {/* Affichage du code de secours temporaire en cas de restrictions SMS Google */}
-              {deliveredFallbackOtp && (
-                <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-300 rounded-2xl p-4 space-y-2.5 animate-in fade-in">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-extrabold text-emerald-800 flex items-center gap-1.5">
-                      <Smartphone className="w-4 h-4 text-emerald-600 animate-pulse" />
-                      Code de Sécurité Temporaire (+241)
-                    </span>
-                    <span className="bg-emerald-200/80 text-emerald-900 text-[10px] font-black px-2 py-0.5 rounded-full">
-                      Valide 10 min
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between bg-white p-3 rounded-xl border border-emerald-200 shadow-xs">
-                    <span className="text-2xl font-black tracking-widest text-emerald-700 font-mono">
-                      {deliveredFallbackOtp}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setOtpCode(deliveredFallbackOtp)}
-                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Insérer le code</span>
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-emerald-700 leading-relaxed">
-                    Code généré en mode sécurisé pour valider votre identité et débloquer l'accès immédiatement.
-                  </p>
-                </div>
-              )}
-
-              {/* Numéro de test */}
-              {!deliveredFallbackOtp && TEST_PHONE_CODES[formatGabonPhone(contactPhone)] && (
-                <div className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold px-3 py-1.5 rounded-xl w-full justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                    <span>Numéro de test — Code : <span className="font-mono text-sm underline">{TEST_PHONE_CODES[formatGabonPhone(contactPhone)]}</span></span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setOtpCode(TEST_PHONE_CODES[formatGabonPhone(contactPhone)])}
-                    className="text-[11px] bg-emerald-600 text-white px-2 py-1 rounded font-bold"
-                  >
-                    Insérer
-                  </button>
-                </div>
-              )}
 
               <div>
                 <input
                   type="text"
                   maxLength={6}
                   value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
-                  placeholder="Ex: 625208"
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Ex: 555555"
                   className="w-full tracking-widest text-center text-2xl font-black py-3 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                   autoFocus
                   required
@@ -1259,11 +824,11 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                     type="button"
                     onClick={() => {
                       setStage(1);
-                      setDeliveredFallbackOtp(null);
+                      setOtpCode('');
                     }}
-                    className="text-slate-600 hover:text-slate-900 underline font-medium"
+                    className="text-slate-600 hover:text-slate-900 underline font-medium cursor-pointer"
                   >
-                    Retour à la connexion
+                    Changer de numéro
                   </button>
 
                   {resendTimer > 0 ? (
@@ -1274,9 +839,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                       onClick={async () => {
                         if (await sendCode()) setResendTimer(45);
                       }}
-                      className="text-emerald-600 hover:text-emerald-700 font-bold underline"
+                      className="text-emerald-600 hover:text-emerald-700 font-bold underline cursor-pointer"
                     >
-                      Renvoyer un code
+                      Renvoyer un SMS
                     </button>
                   )}
                 </div>
@@ -1287,18 +852,182 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                 disabled={isLoading || otpCode.length < 6}
                 className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <span>Valider le code de sécurité</span>}
+                {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <span>Vérifier le code reçu</span>}
                 <CheckCircle2 className="w-4 h-4" />
               </button>
             </form>
           )}
 
-          {/* STAGE 4: RÉINITIALISATION DE MOT DE PASSE APRÈS OTP */}
-          {stage === 4 && (
-            <form onSubmit={handleResetPasswordComplete} className="space-y-4">
+          {/* 5. ÉTAPE 3 INSCRIPTION : INFORMATIONS ANNONCEUR & LIAISON DU MOT DE PASSE */}
+          {authMode === 'REGISTER' && stage === 3 && (
+            <form onSubmit={handleCompleteRegistration} className="space-y-4">
               <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs p-3 rounded-xl flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Votre identité a été vérifiée avec succès. Veuillez saisir votre nouveau mot de passe.</span>
+                <span>Numéro vérifié avec succès. Complétez vos identifiants pour finaliser votre inscription.</span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Nom complet ou Nom de l'Agence
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Ex: Paul OBAME ou Agence Gabon Immo"
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                    autoFocus
+                    required
+                  />
+                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                </div>
+              </div>
+
+              {/* Localisation : Province et Ville */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                    Province
+                  </label>
+                  <select
+                    value={selectedProvince}
+                    onChange={(e) => {
+                      const prov = e.target.value;
+                      setSelectedProvince(prov);
+                      const matchingCities = GABON_PROVINCES.find((p) => p.name === prov)?.cities || [];
+                      if (matchingCities.length > 0) {
+                        setSelectedCity(matchingCities[0].name);
+                      }
+                    }}
+                    className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {GABON_PROVINCES.map((p) => (
+                      <option key={p.code} value={p.name}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                    Ville
+                  </label>
+                  <select
+                    value={selectedCity}
+                    onChange={(e) => setSelectedCity(e.target.value)}
+                    className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {availableCities.map((c) => (
+                      <option key={c.name} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Mots de passe */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                    Mot de passe
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Min. 6 caractères"
+                      className="w-full pr-8 pl-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                      required
+                      minLength={6}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                    >
+                      {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                    Confirmer
+                  </label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirmez"
+                    className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    required
+                    minLength={6}
+                  />
+                </div>
+              </div>
+
+              {/* Charte déontologique */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-black text-slate-800 flex items-center gap-1">
+                    <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                    Charte Déontologique Annonceur Gabon
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowCguModal(true)}
+                    className="text-[10px] text-emerald-700 font-bold underline hover:text-emerald-800 cursor-pointer"
+                  >
+                    Lire les CGU complètes
+                  </button>
+                </div>
+                <p className="text-[10px] leading-relaxed text-slate-600">
+                  BIZBOOSTER est un hébergeur technique. Vous vous engagez à publier des annonces sincères, vérifiées et conformes aux lois en vigueur au Gabon.
+                </p>
+              </div>
+
+              {/* Case à cocher CGU */}
+              <label className="flex items-start gap-2.5 cursor-pointer pt-0.5">
+                <input
+                  type="checkbox"
+                  checked={termsAccepted}
+                  onChange={(e) => setTermsAccepted(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                  required
+                />
+                <span className="text-[11px] text-slate-700 font-semibold leading-tight">
+                  J'accepte sans réserve les <button type="button" onClick={(e) => { e.preventDefault(); setShowCguModal(true); }} className="text-emerald-700 font-bold underline cursor-pointer">Conditions Générales d'Utilisation</button> et la Charte Déontologique BizBooster Gabon.
+                </span>
+              </label>
+
+              {/* Bouton de finalisation */}
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <span>Finaliser mon Inscription & Accéder</span>
+                    <CheckCircle2 className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </form>
+          )}
+
+          {/* 6. ÉTAPE 4 MOT DE PASSE OUBLIÉ : NOUVEAU MOT DE PASSE */}
+          {authMode === 'FORGOT_PASSWORD' && stage === 4 && (
+            <form onSubmit={handleCompleteResetPassword} className="space-y-4">
+              <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs p-3 rounded-xl flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Votre identité a été vérifiée par SMS. Veuillez définir votre nouveau mot de passe.</span>
               </div>
 
               <div>
@@ -1320,7 +1049,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -1350,8 +1079,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                 disabled={isLoading}
                 className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <span>Mettre à jour mon mot de passe</span>}
-                <CheckCircle2 className="w-4 h-4" />
+                {isLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <span>Enregistrer mon nouveau mot de passe</span>
+                    <CheckCircle2 className="w-4 h-4" />
+                  </>
+                )}
               </button>
             </form>
           )}

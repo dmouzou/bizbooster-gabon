@@ -233,7 +233,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
   // File d'attente et contrôle des états
   const queueRef = useRef<InAppNotification[]>([]);
   const isWaitingRef = useRef<boolean>(false);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Initialisation synchrone immédiate depuis localStorage + currentUser (0ms, aucun délai réseau)
   const getInitialSeenIds = (): Set<string> => {

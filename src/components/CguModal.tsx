@@ -35,7 +35,7 @@ export const CguModal: React.FC<CguModalProps> = ({
 
   return (
     <div
-      className="app-modal-overlay"
+      className="app-modal-overlay !z-[70]"
       onClick={onClose}
     >
       <div

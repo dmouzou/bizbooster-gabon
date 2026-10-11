@@ -134,21 +134,8 @@ export function isAdOwner(
   ad: { userId?: string; contactPhone?: string },
   user: { id?: string; contactPhone?: string } | null
 ): boolean {
-  if (!user) return false;
-  if (ad.userId && user.id && ad.userId === user.id) return true;
-
-  const phoneToTest = ad.contactPhone;
-  if (phoneToTest && user.contactPhone) {
-    const cleanAdPhone = phoneToTest.replace(/[^\d]/g, '');
-    const cleanUserPhone = user.contactPhone.replace(/[^\d]/g, '');
-    if (cleanAdPhone && cleanUserPhone) {
-      if (cleanAdPhone === cleanUserPhone) return true;
-      if (cleanAdPhone.endsWith(cleanUserPhone.slice(-8)) || cleanUserPhone.endsWith(cleanAdPhone.slice(-8))) {
-        return true;
-      }
-    }
-  }
-  return false;
+  if (!user || !user.id || !ad.userId) return false;
+  return ad.userId === user.id;
 }
 
 // Point 1: Utilitaires pour les offres et demandes d'emploi (EMPLOI & AUTRES_EMPLOIS)

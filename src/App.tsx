@@ -134,6 +134,9 @@ function doesAdMatchSearchQuery(ad: Ad, rawQuery: string): boolean {
 
 function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [postLoginIntent, setPostLoginIntent] = useState<'PUBLISH' | 'DASHBOARD' | null>(null);
 
   useEffect(() => {
     let unsubUserDoc: (() => void) | null = null;
@@ -146,6 +149,8 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
       if (!fbUser) {
         setCurrentUser(null);
+        setProfileError(null);
+        setAuthReady(true);
         return;
       }
 
@@ -153,9 +158,12 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       unsubUserDoc = onSnapshot(
         doc(db, 'users', fbUser.uid),
         (snap) => {
+          setAuthReady(true);
+          setProfileError(null);
           if (snap.exists()) {
             const data = snap.data();
-            const existingFavs: string[] = data.favoriteAdIds || [];
+            const { password, ...safeData } = data as any;
+            const existingFavs: string[] = safeData.favoriteAdIds || [];
             try {
               const guestStored = localStorage.getItem('bizbooster_guest_favorites');
               if (guestStored) {
@@ -173,14 +181,20 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
             }
             setCurrentUser({
               id: fbUser.uid,
-              ...data,
-              password: data.password || 'users-with-no-password',
+              ...safeData,
             } as UserProfile);
           } else {
             setCurrentUser(null);
           }
         },
-        (err) => console.error('User profile listener error:', err)
+        (err) => {
+          console.error('User profile listener error:', err);
+          setAuthReady(true);
+          if (err.code === 'permission-denied') {
+            setCurrentUser(null);
+            setProfileError('Accès à votre profil refusé (permission-denied). Veuillez vous reconnecter.');
+          }
+        }
       );
     });
 
@@ -921,7 +935,12 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
   // Handle open publish flow with mandatory auth check
   const handleTriggerPublish = () => {
+    if (!authReady) {
+      showToast("Initialisation de votre session en cours, veuillez patienter...");
+      return;
+    }
     if (!currentUser) {
+      setPostLoginIntent('PUBLISH');
       setAuthTriggerPurpose('PUBLISH');
       setIsPhoneAuthOpen(true);
     } else {
@@ -929,18 +948,23 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     }
   };
 
-  // Handle login success from PhoneAuthModal
-  const handleLoginSuccess = (user: UserProfile) => {
-    setCurrentUser(user);
+  // Handle login success from PhoneAuthModal (Section 3.8: Do not setCurrentUser manually)
+  const handleLoginSuccess = () => {
     setIsPhoneAuthOpen(false);
-    showToast(`Bienvenue ${user.name} ! Votre numéro ${user.contactPhone} a été vérifié par SMS.`);
-
-    if (authTriggerPurpose === 'PUBLISH') {
-      setIsPublishModalOpen(true);
-    } else {
-      setFrontendTab('user-dashboard');
-    }
   };
+
+  // Exécution différée de l'intention post-connexion quand currentUser devient non nul
+  useEffect(() => {
+    if (currentUser && postLoginIntent) {
+      const intent = postLoginIntent;
+      setPostLoginIntent(null);
+      if (intent === 'PUBLISH') {
+        setIsPublishModalOpen(true);
+      } else {
+        setFrontendTab('user-dashboard');
+      }
+    }
+  }, [currentUser, postLoginIntent]);
 
   // Handle Logout Confirmation
   const handleLogout = () => {
@@ -962,9 +986,16 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
   // Handle adding new ad (received from PublishAdModal). Errors propagate to the modal.
   const handleAdPublished = async (newAd: Ad) => {
+    if (!auth.currentUser) {
+      showToast("Session expirée. Veuillez vous reconnecter pour publier votre annonce.");
+      setPostLoginIntent('PUBLISH');
+      setAuthTriggerPurpose('PUBLISH');
+      setIsPhoneAuthOpen(true);
+      return;
+    }
     await setDoc(doc(db, 'ads', newAd.id), {
       ...newAd,
-      userId: auth.currentUser!.uid,
+      userId: auth.currentUser.uid,
       status: 'PENDING_REVIEW',
     });
     showToast(`Annonce "${newAd.title}" transmise à la modération administrative !`);
@@ -1033,8 +1064,13 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
   // Trigger editing ad - STRICTEMENT RÉSERVÉ AU DÉTENTEUR DE L'ANNONCE
   const handleTriggerEdit = (ad: Ad) => {
+    if (!authReady) {
+      showToast("Initialisation de votre session en cours, veuillez patienter...");
+      return;
+    }
     if (!currentUser) {
       showToast("Veuillez vous connecter avec votre numéro gabonais pour modifier cette annonce.");
+      setPostLoginIntent('DASHBOARD');
       setAuthTriggerPurpose('DASHBOARD');
       setIsPhoneAuthOpen(true);
       return;
@@ -1181,8 +1217,13 @@ function cleanUndefined(obj: any): any {
 
   // Trigger extending ad duration - STRICTEMENT RÉSERVÉ AU DÉTENTEUR DE L'ANNONCE
   const handleTriggerExtend = (ad: Ad) => {
+    if (!authReady) {
+      showToast("Initialisation de votre session en cours, veuillez patienter...");
+      return;
+    }
     if (!currentUser) {
       showToast("Veuillez vous connecter avec votre numéro gabonais pour prolonger cette annonce.");
+      setPostLoginIntent('DASHBOARD');
       setAuthTriggerPurpose('DASHBOARD');
       setIsPhoneAuthOpen(true);
       return;
@@ -1318,9 +1359,10 @@ function cleanUndefined(obj: any): any {
       showToast("Erreur : utilisateur non identifié.");
       throw new Error("Utilisateur non identifié");
     }
+    const { password, ...safeUpdated } = updated as any;
     try {
-      await updateDoc(doc(db, 'users', uid), updated);
-      setCurrentUser((prev) => (prev ? { ...prev, ...updated, id: uid } : null));
+      await updateDoc(doc(db, 'users', uid), safeUpdated);
+      setCurrentUser((prev) => (prev ? { ...prev, ...safeUpdated, id: uid } : null));
 
       // Point 1: If advertiser name is updated, automatically synchronize the new name on ALL their ads
       if (updated.name && updated.name.trim() && (!currentUser || updated.name.trim() !== currentUser.name)) {
@@ -1416,6 +1458,11 @@ function cleanUndefined(obj: any): any {
         setActiveCategory={setActiveCategory}
         onOpenPublishModal={handleTriggerPublish}
         onOpenPhoneAuth={() => {
+          if (!authReady) {
+            showToast("Initialisation de votre session en cours, veuillez patienter...");
+            return;
+          }
+          setPostLoginIntent('DASHBOARD');
           setAuthTriggerPurpose('DASHBOARD');
           setIsPhoneAuthOpen(true);
         }}
@@ -1426,6 +1473,25 @@ function cleanUndefined(obj: any): any {
       />
 
       <main className="flex-1 max-w-7xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 w-full space-y-5 sm:space-y-6 pb-28 md:pb-8">
+        {profileError && (
+          <div className="bg-red-50 border border-red-300 text-red-800 text-xs p-4 rounded-2xl flex items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+              <span className="font-bold">{profileError}</span>
+            </div>
+            <button
+              onClick={() => {
+                setProfileError(null);
+                setPostLoginIntent('DASHBOARD');
+                setAuthTriggerPurpose('DASHBOARD');
+                setIsPhoneAuthOpen(true);
+              }}
+              className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-3 py-1.5 rounded-xl cursor-pointer shrink-0"
+            >
+              Se reconnecter
+            </button>
+          </div>
+        )}
         {/* TAB 1: PUBLIC CATALOGUE (100% LIBRE, GRATUIT, VÉRIFIÉ) */}
         <div className={`space-y-5 sm:space-y-6 ${frontendTab === 'catalog' ? 'block animate-in fade-in duration-150' : 'hidden'}`}>
           {/* Hero Banner for Public Visitors (Optimized for mobile & desktop) */}
@@ -1955,13 +2021,18 @@ function cleanUndefined(obj: any): any {
               </p>
               <button
                 onClick={() => {
+                  if (!authReady) {
+                    showToast("Initialisation de votre session en cours, veuillez patienter...");
+                    return;
+                  }
+                  setPostLoginIntent('DASHBOARD');
                   setAuthTriggerPurpose('DASHBOARD');
                   setIsPhoneAuthOpen(true);
                 }}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-6 py-3 rounded-xl shadow-md transition-all inline-flex items-center gap-2"
               >
                 <User className="w-4 h-4" />
-                <span>Se connecter par SMS Gabon (+241)</span>
+                <span>Se connecter à mon Espace</span>
               </button>
             </div>
           )
@@ -2182,6 +2253,11 @@ function cleanUndefined(obj: any): any {
               setFrontendTab('user-dashboard');
               scrollToTopInstant();
             } else {
+              if (!authReady) {
+                showToast("Initialisation de votre session en cours, veuillez patienter...");
+                return;
+              }
+              setPostLoginIntent('DASHBOARD');
               setAuthTriggerPurpose('DASHBOARD');
               setIsPhoneAuthOpen(true);
             }

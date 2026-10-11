@@ -19,10 +19,12 @@ function normalizeGabonPhone(input: string): {
 } {
   const digits = (input || "").replace(/\D/g, "");
   let clean = digits;
-  if (clean.startsWith("241")) {
+  if (clean.startsWith("00241")) {
+    clean = clean.slice(5);
+  } else if (clean.startsWith("241")) {
     clean = clean.slice(3);
   }
-  if (clean.startsWith("0")) {
+  if (clean.length === 9 && clean.startsWith("0")) {
     clean = clean.slice(1);
   }
   return {

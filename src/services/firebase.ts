@@ -4,6 +4,24 @@ import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
 
+const REQUIRED_FIREBASE_ENV_VARS = [
+  'VITE_FIREBASE_API_KEY',
+  'VITE_FIREBASE_AUTH_DOMAIN',
+  'VITE_FIREBASE_PROJECT_ID',
+  'VITE_FIREBASE_STORAGE_BUCKET',
+  'VITE_FIREBASE_MESSAGING_SENDER_ID',
+  'VITE_FIREBASE_APP_ID',
+] as const;
+
+for (const envKey of REQUIRED_FIREBASE_ENV_VARS) {
+  if (!import.meta.env[envKey]) {
+    throw new Error(
+      `[CRITICAL CONFIG ERROR] Variable d'environnement Firebase manquante : ${envKey}. ` +
+      `Vérifiez votre fichier .env.local ou les variables d'environnement de déploiement.`
+    );
+  }
+}
+
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,

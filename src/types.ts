@@ -260,8 +260,7 @@ export interface UserProfile {
   idVerificationStatus?: 'NOT_SUBMITTED' | 'PENDING' | 'VERIFIED' | 'REJECTED';
   idRejectionReason?: string;
   idSubmittedAt?: string;
-  // Password & Security
-  password?: string;
+  // Security & Location
   lastPasswordChangeDate?: string; // ISO string to enforce 1 change per 24h
   location?: {
     province?: string;
