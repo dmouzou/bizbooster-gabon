@@ -2,7 +2,7 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 import {onDocumentWritten} from "firebase-functions/v2/firestore";
 import {onCall, onRequest, HttpsError} from "firebase-functions/v2/https";
 import {getFirestore} from "firebase-admin/firestore";
-import {getAuth} from "firebase-admin/auth";
+import {getAuth, UserRecord} from "firebase-admin/auth";
 import {initializeApp} from "firebase-admin/app";
 
 initializeApp();
@@ -29,6 +29,56 @@ function normalizeGabonPhone(input: string): {
     e164: `+241${clean}`,
     rawDigits: clean,
   };
+}
+
+/**
+ * Résout l'utilisateur Firebase Auth correspondant à un compte (Section 0.5).
+ *
+ * @param {string} docId - ID du document utilisateur dans Firestore.
+ * @param {string} rawDigits - Chiffres du numéro pour l'e-mail synthétique.
+ * @param {string} e164 - Numéro normalisé au format E.164.
+ * @return {Promise<UserRecord>} L'utilisateur Auth résolu.
+ */
+async function resolveAuthUser(
+  docId: string,
+  rawDigits: string,
+  e164: string
+): Promise<UserRecord> {
+  const authAdmin = getAuth();
+  if (docId) {
+    try {
+      return await authAdmin.getUser(docId);
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      if (code !== "auth/user-not-found") {
+        throw err;
+      }
+    }
+  }
+  if (rawDigits) {
+    try {
+      return await authAdmin.getUserByEmail(`${rawDigits}@bizbooster.ga`);
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      if (code !== "auth/user-not-found") {
+        throw err;
+      }
+    }
+  }
+  if (e164) {
+    try {
+      return await authAdmin.getUserByPhoneNumber(e164);
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      if (code !== "auth/user-not-found") {
+        throw err;
+      }
+    }
+  }
+  throw new HttpsError(
+    "not-found",
+    "Utilisateur Firebase Auth introuvable pour ce compte."
+  );
 }
 
 /**
@@ -82,123 +132,129 @@ export const loginWithPhonePassword = onCall(
         .get();
     }
 
-    if (!snap.empty) {
-      const userDoc = snap.docs[0];
-      const userData = userDoc.data();
-      const expectedPassword = userData.password || "users-with-no-password";
-
-      if (String(password).trim() !== String(expectedPassword).trim()) {
-        throw new HttpsError(
-          "unauthenticated",
-          "Numéro ou mot de passe incorrect."
-        );
-      }
-
-      const syntheticEmail = `${rawDigits}@bizbooster.ga`;
-
-      // 1. Sync email/password into Firebase Auth for client auth
-      try {
-        await authAdmin.updateUser(userDoc.id, {
-          email: syntheticEmail,
-          password: expectedPassword,
-        });
-      } catch (updateErr: unknown) {
-        const errCode = (updateErr as { code?: string })?.code;
-        if (errCode === "auth/user-not-found") {
-          try {
-            await authAdmin.createUser({
-              uid: userDoc.id,
-              phoneNumber: e164,
-              email: syntheticEmail,
-              password: expectedPassword,
-            });
-          } catch {
-            // ignore
-          }
-        }
-      }
-
-      // 2. Try custom token if IAM allows, otherwise client signs in directly
-      let customToken: string | null = null;
-      try {
-        customToken = await authAdmin.createCustomToken(userDoc.id);
-      } catch (tokenErr) {
-        console.warn("createCustomToken skipped (no signBlob IAM):", tokenErr);
-      }
-
-      return {
-        success: true,
-        customToken,
-        syntheticEmail,
-        user: {
-          id: userDoc.id,
-          ...userData,
-          password: expectedPassword,
-        },
-      };
+    if (snap.empty) {
+      // Même erreur générique pour 'introuvable' et 'mauvais mot de passe'
+      throw new HttpsError(
+        "unauthenticated",
+        "Numéro ou mot de passe incorrect."
+      );
     }
 
-    // Si non trouvé dans Firestore, vérifier si le compte existe dans Auth
+    const userDoc = snap.docs[0];
+    const userData = userDoc.data();
+    const expectedPassword = userData.password;
+
+    if (!expectedPassword) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Ce compte n'a pas de mot de passe configuré. " +
+          "Utilisez la réinitialisation du mot de passe."
+      );
+    }
+
+    // Ne jamais appliquer trim() aux mots de passe
+    if (password !== expectedPassword) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Numéro ou mot de passe incorrect."
+      );
+    }
+
+    const syntheticEmail = `${rawDigits}@bizbooster.ga`;
+
+    // 0.5 Résolution de l'uid Auth réel
+    let authUser: UserRecord;
     try {
-      const fbUser = await authAdmin.getUserByPhoneNumber(e164);
-      if (fbUser) {
-        // Pour un utilisateur existant sans profil Firestore explicite
-        if (String(password).trim() === "users-with-no-password") {
-          const syntheticEmail = `${rawDigits}@bizbooster.ga`;
-          try {
-            await authAdmin.updateUser(fbUser.uid, {
-              email: syntheticEmail,
-              password: "users-with-no-password",
-            });
-          } catch {
-            // ignore
-          }
-          let customToken: string | null = null;
-          try {
-            customToken = await authAdmin.createCustomToken(fbUser.uid);
-          } catch {
-            // ignore
-          }
-          const initialUser = {
-            id: fbUser.uid,
-            contactPhone: e164,
+      authUser = await resolveAuthUser(userDoc.id, rawDigits, e164);
+    } catch (resolveErr: unknown) {
+      if (
+        resolveErr instanceof HttpsError &&
+        resolveErr.code === "not-found"
+      ) {
+        try {
+          authUser = await authAdmin.createUser({
+            uid: userDoc.id,
             phoneNumber: e164,
-            name: "Annonceur BizBooster",
-            role: "USER",
-            password: "users-with-no-password",
-            createdAt: new Date().toISOString(),
-            termsAccepted: true,
-            isVerified: true,
-          };
-          await db
-            .collection("users")
-            .doc(fbUser.uid)
-            .set(initialUser, {merge: true});
-
-          return {
-            success: true,
-            customToken,
-            syntheticEmail,
-            user: initialUser,
-          };
+            email: syntheticEmail,
+            password: expectedPassword,
+          });
+        } catch (createErr: unknown) {
+          console.error(
+            "Erreur création Auth utilisateur dans loginWithPhonePassword:",
+            createErr
+          );
+          throw new HttpsError(
+            "internal",
+            "Impossible de synchroniser le compte utilisateur."
+          );
         }
+      } else {
+        console.error("Erreur résolution Auth User:", resolveErr);
+        throw resolveErr;
       }
-    } catch {
-      // ignore
     }
 
-    throw new HttpsError(
-      "not-found",
-      "Aucun compte associé à ce numéro de téléphone. " +
-        "Veuillez vous inscrire ou vérifier votre saisie."
-    );
+    // N'avalez jamais les erreurs de updateUser
+    try {
+      await authAdmin.updateUser(authUser.uid, {
+        email: syntheticEmail,
+        password: expectedPassword,
+      });
+    } catch (updateErr: unknown) {
+      console.error(
+        "Erreur updateUser dans loginWithPhonePassword:",
+        updateErr
+      );
+      throw new HttpsError(
+        "internal",
+        "Erreur lors de la mise à jour des identifiants d'authentification."
+      );
+    }
+
+    let customToken: string | null = null;
+    try {
+      customToken = await authAdmin.createCustomToken(authUser.uid);
+    } catch (tokenErr) {
+      console.warn("createCustomToken skipped (no signBlob IAM):", tokenErr);
+    }
+
+    // Renvoyer uniquement une liste blanche de champs de profil.
+    // Ne renvoyer jamais password.
+    const safeUserProfile = {
+      id: authUser.uid,
+      name: userData.name || "",
+      contactPhone: userData.contactPhone || e164,
+      phoneNumber: userData.phoneNumber || e164,
+      operator: userData.operator || null,
+      role: userData.role || "USER",
+      isVerified: Boolean(userData.isVerified),
+      termsAccepted: Boolean(userData.termsAccepted),
+      termsAcceptedAt: userData.termsAcceptedAt || null,
+      createdAt: userData.createdAt || null,
+      location: userData.location || null,
+      subscriptionTier: userData.subscriptionTier || "STANDARD",
+      subscriptionExpiresAt: userData.subscriptionExpiresAt || null,
+      freeBoostsRemaining: userData.freeBoostsRemaining || 0,
+      activeBoosterPack: userData.activeBoosterPack || null,
+      exemptFromPaymentAndKyc: Boolean(userData.exemptFromPaymentAndKyc),
+      isExempt: Boolean(userData.isExempt),
+      idVerificationStatus: userData.idVerificationStatus || "NOT_SUBMITTED",
+      avatarUrl: userData.avatarUrl || null,
+    };
+
+    return {
+      success: true,
+      customToken,
+      syntheticEmail,
+      user: safeUserProfile,
+    };
   }
 );
 
 /**
  * 1b. Inscription directe par Téléphone + Mot de passe
- * Crée instantanément l'utilisateur dans Firebase Auth et Firestore
- * sans dépendre des passerelles SMS sujettes aux restrictions internationales.
+ * Vérifie la claim téléphone et crée le profil utilisateur sans
+ * écraser d'utilisateurs existants.
  */
 export const registerWithPhonePassword = onCall(
   {cors: true},
@@ -221,11 +277,16 @@ export const registerWithPhonePassword = onCall(
       );
     }
 
-    if (String(password).length < 6) {
+    if (typeof password !== "string" || password.length < 6) {
       throw new HttpsError(
         "invalid-argument",
         "Le mot de passe doit comporter au moins 6 caractères."
       );
+    }
+
+    // 0.3 Contrôle strict de claim téléphone
+    if (!request.auth || request.auth.token.phone_number !== e164) {
+      throw new HttpsError("permission-denied", "Vérification SMS requise.");
     }
 
     const db = getFirestore();
@@ -263,30 +324,51 @@ export const registerWithPhonePassword = onCall(
     }
 
     const syntheticEmail = `${rawDigits}@bizbooster.ga`;
-    let uid = "";
 
-    // Créer ou synchroniser dans Firebase Auth
+    // Si getUserByEmail trouve un utilisateur, levez already-exists.
+    // N'écrasez jamais le mot de passe d'un utilisateur Auth existant.
     try {
-      const fbUser = await authAdmin.getUserByEmail(syntheticEmail);
-      uid = fbUser.uid;
-      await authAdmin.updateUser(uid, {
-        password: String(password).trim(),
-      });
-    } catch (getErr: unknown) {
-      const errCode = (getErr as { code?: string })?.code;
-      if (errCode === "auth/user-not-found") {
-        const createdUser = await authAdmin.createUser({
-          email: syntheticEmail,
-          password: String(password).trim(),
-          displayName: String(name).trim(),
-        });
-        uid = createdUser.uid;
-      } else {
+      const existingUser = await authAdmin.getUserByEmail(syntheticEmail);
+      if (existingUser) {
         throw new HttpsError(
-          "internal",
-          `Erreur Auth: ${(getErr as Error)?.message || getErr}`
+          "already-exists",
+          "Ce numéro possède déjà un compte. Connectez-vous."
         );
       }
+    } catch (getErr: unknown) {
+      const code = (getErr as { code?: string })?.code;
+      if (code !== "auth/user-not-found") {
+        if (getErr instanceof HttpsError) {
+          throw getErr;
+        }
+        console.error(
+          "Erreur getUserByEmail dans registerWithPhonePassword:",
+          getErr
+        );
+        throw new HttpsError(
+          "internal",
+          "Erreur lors de la vérification de l'utilisateur existant."
+        );
+      }
+    }
+
+    // Le compte Auth actuel est celui vérifié par SMS (request.auth.uid)
+    const uid = request.auth.uid;
+    try {
+      await authAdmin.updateUser(uid, {
+        email: syntheticEmail,
+        password: password,
+        displayName: String(name),
+      });
+    } catch (updateErr: unknown) {
+      console.error(
+        "Erreur updateUser dans registerWithPhonePassword:",
+        updateErr
+      );
+      throw new HttpsError(
+        "internal",
+        "Impossible de lier l'identifiant et le mot de passe au compte vérifié."
+      );
     }
 
     const detectedOp =
@@ -296,7 +378,7 @@ export const registerWithPhonePassword = onCall(
       id: uid,
       contactPhone: e164,
       phoneNumber: e164,
-      name: String(name).trim(),
+      name: String(name),
       operator: detectedOp,
       isVerified: true,
       termsAccepted: true,
@@ -305,7 +387,7 @@ export const registerWithPhonePassword = onCall(
       exemptFromPaymentAndKyc: false,
       idVerificationStatus: "NOT_SUBMITTED",
       createdAt: new Date().toISOString(),
-      password: String(password).trim(),
+      password: password, // Phase 0 : conservé temporairement
       lastPasswordChangeDate: new Date().toISOString(),
       location: {
         province: province || "Estuaire",
@@ -318,35 +400,39 @@ export const registerWithPhonePassword = onCall(
     let customToken: string | null = null;
     try {
       customToken = await authAdmin.createCustomToken(uid);
-    } catch {
-      // ignore
+    } catch (tokenErr) {
+      console.warn("createCustomToken skipped:", tokenErr);
     }
+
+    // Renvoyez uniquement une liste blanche de champs de profil (sans password)
+    const safeUser: Record<string, unknown> = {...newUser};
+    delete safeUser.password;
 
     return {
       success: true,
       customToken,
       syntheticEmail,
-      user: newUser,
+      user: safeUser,
     };
   }
 );
 
 /**
- * 1c. Réinitialisation sécurisée de mot de passe par code de vérification
+ * 1c. Réinitialisation sécurisée de mot de passe par vérification SMS
  */
 export const resetPasswordWithPhone = onCall(
   {cors: true},
   async (request) => {
-    const {phoneNumber, newPassword, otpCode} = request.data || {};
+    const {phoneNumber, newPassword} = request.data || {};
 
-    if (!phoneNumber || !newPassword || !otpCode) {
+    if (!phoneNumber || !newPassword) {
       throw new HttpsError(
         "invalid-argument",
-        "Numéro, code de vérification et nouveau mot de passe requis."
+        "Numéro et nouveau mot de passe requis."
       );
     }
 
-    if (String(newPassword).length < 6) {
+    if (typeof newPassword !== "string" || newPassword.length < 6) {
       throw new HttpsError(
         "invalid-argument",
         "Le mot de passe doit comporter au moins 6 caractères."
@@ -354,41 +440,16 @@ export const resetPasswordWithPhone = onCall(
     }
 
     const {e164, rawDigits} = normalizeGabonPhone(String(phoneNumber));
+
+    // 0.2 Contrôle strict de claim téléphone (plus d'OTP bypass)
+    if (!request.auth || request.auth.token.phone_number !== e164) {
+      throw new HttpsError("permission-denied", "Vérification SMS requise.");
+    }
+
     const db = getFirestore();
     const authAdmin = getAuth();
 
-    // 1. Validation du code de vérification
-    let isValidOtp = false;
-    for (const key of [rawDigits, e164]) {
-      const vSnap = await db.collection("phone_verifications").doc(key).get();
-      if (vSnap.exists) {
-        const vData = vSnap.data() || {};
-        if (vData.otpCode === String(otpCode).trim()) {
-          const expiresAt = vData.expiresAt ?
-            new Date(vData.expiresAt).getTime() :
-            Infinity;
-          if (Date.now() <= expiresAt) {
-            isValidOtp = true;
-            await vSnap.ref
-              .update({
-                verified: true,
-                verifiedAt: new Date().toISOString(),
-              })
-              .catch(() => {});
-            break;
-          }
-        }
-      }
-    }
-
-    if (!isValidOtp) {
-      throw new HttpsError(
-        "invalid-argument",
-        "Code de vérification incorrect ou expiré."
-      );
-    }
-
-    // 2. Recherche du compte
+    // Recherche du compte
     let snap = await db
       .collection("users")
       .where("contactPhone", "==", e164)
@@ -419,37 +480,40 @@ export const resetPasswordWithPhone = onCall(
     }
 
     const userDoc = snap.docs[0];
-    const uid = userDoc.id;
-    const nowIso = new Date().toISOString();
-
-    // 3. Sync Firebase Auth
     const syntheticEmail = `${rawDigits}@bizbooster.ga`;
+
+    // 0.5 Résolution de l'uid Auth réel
+    const authUser = await resolveAuthUser(userDoc.id, rawDigits, e164);
+
+    // Mettre à jour Firebase Auth (ne jamais avaler les erreurs)
     try {
-      await authAdmin.updateUser(uid, {
-        password: String(newPassword).trim(),
+      await authAdmin.updateUser(authUser.uid, {
+        email: syntheticEmail,
+        password: newPassword,
       });
-    } catch {
-      try {
-        const fbUser = await authAdmin.getUserByEmail(syntheticEmail);
-        await authAdmin.updateUser(fbUser.uid, {
-          password: String(newPassword).trim(),
-        });
-      } catch {
-        // ignore
-      }
+    } catch (updateErr: unknown) {
+      console.error(
+        "Erreur updateUser dans resetPasswordWithPhone:",
+        updateErr
+      );
+      throw new HttpsError(
+        "internal",
+        "Impossible de mettre à jour le mot de passe dans Firebase Auth."
+      );
     }
 
-    // 4. Sync Firestore
+    // Sync Firestore (Phase 0 : conservé temporairement)
+    const nowIso = new Date().toISOString();
     await userDoc.ref.update({
-      password: String(newPassword).trim(),
+      password: newPassword,
       lastPasswordChangeDate: nowIso,
     });
 
     let customToken: string | null = null;
     try {
-      customToken = await authAdmin.createCustomToken(uid);
-    } catch {
-      // ignore
+      customToken = await authAdmin.createCustomToken(authUser.uid);
+    } catch (tokenErr) {
+      console.warn("createCustomToken skipped:", tokenErr);
     }
 
     return {
@@ -649,6 +713,14 @@ interface SingPayResponsePayload {
 export const initiateSingPayPayment = onCall(
   {cors: true},
   async (request) => {
+    // 0.4 Exiger request.auth
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Authentification requise pour initier un paiement."
+      );
+    }
+
     const {amount, phoneNumber, reference, itemDescription, operator} =
       request.data || {};
 
@@ -794,8 +866,10 @@ export const initiateSingPayPayment = onCall(
       const singpayTx = responseJson.transaction || {};
       const singpayTxId = singpayTx.id || singpayTx._id || "";
 
-      await db.collection("payments").doc(String(reference)).set({
+      // 0.4 Remplacer .set() par .create() (interdire écrasement)
+      await db.collection("payments").doc(String(reference)).create({
         reference: String(reference),
+        userId: request.auth.uid,
         singpayTransactionId: singpayTxId,
         amount: Number(amount),
         operator: requestedOperator,
@@ -1000,35 +1074,117 @@ export const singpayWebhook = onRequest(
   {cors: true},
   async (req, res) => {
     try {
+      if (req.method !== "POST") {
+        res.status(405).json({error: "Method Not Allowed"});
+        return;
+      }
+
+      const db = getFirestore();
+      const settingsSnap = await db.doc("settings/payment_gateway").get();
+      const settingsData = settingsSnap.exists ? settingsSnap.data() || {} : {};
+
+      const expectedSecret =
+        process.env.SINGPAY_WEBHOOK_SECRET ||
+        (settingsData.singpayWebhookSecret as string) ||
+        process.env.SINGPAY_CLIENT_SECRET ||
+        (settingsData.singpayClientSecret as string);
+
+      const receivedSecret =
+        (req.headers["x-webhook-secret"] as string) ||
+        (req.headers["x-client-secret"] as string) ||
+        (req.query.secret as string);
+
+      // 0.4 Rejeter tout appel falsifié ou non authentifié avec 401
+      if (!expectedSecret || receivedSecret !== expectedSecret) {
+        console.warn(
+          "singpayWebhook: appel non autorise (secret manquant ou invalide)"
+        );
+        res.status(401).json({error: "Unauthorized"});
+        return;
+      }
+
       const data = (req.body || {}) as {
         transaction?: SingPayTransactionData;
+        id?: string;
+        _id?: string;
         reference?: string;
         result?: string;
         status?: string;
       };
-      const tx = data.transaction || data;
+      const tx: SingPayTransactionData = data.transaction || data;
       const reference = tx.reference;
       const result = tx.result;
       const status = tx.status;
 
-      if (reference) {
-        const db = getFirestore();
-        const docRef = db.collection("payments").doc(String(reference));
-        const isSuccess =
-          result === "Success" ||
-          (status === "Terminate" && result === "Success");
-
-        await docRef.set(
-          {
-            singpayStatus: status || null,
-            singpayResult: result || null,
-            status: isSuccess ? "SUCCESS" : result ? "FAILED" : "PENDING",
-            updatedAt: new Date().toISOString(),
-            rawWebhookPayload: data,
-          },
-          {merge: true}
-        );
+      if (!reference) {
+        res.status(400).json({error: "Missing reference"});
+        return;
       }
+
+      const docRef = db.collection("payments").doc(String(reference));
+      const paySnap = await docRef.get();
+      if (!paySnap.exists) {
+        res.status(404).json({error: "Payment not found"});
+        return;
+      }
+
+      const clientId =
+        process.env.SINGPAY_CLIENT_ID ||
+        (settingsData.singpayClientId as string) ||
+        "";
+      const clientSecret =
+        process.env.SINGPAY_CLIENT_SECRET ||
+        (settingsData.singpayClientSecret as string) ||
+        "";
+
+      let verifiedStatus = status;
+      let verifiedResult = result;
+
+      // Réinterroger l'API SingPay côté serveur pour certifier le statut
+      const txId = tx.id || tx._id;
+      if (clientId && clientSecret && txId) {
+        try {
+          const resp = await fetch(
+            `https://gateway.singpay.ga/v1/transaction/api/status/${encodeURIComponent(txId)}`,
+            {
+              method: "GET",
+              headers: {
+                "x-client-id": clientId,
+                "x-client-secret": clientSecret,
+              },
+            }
+          );
+          if (resp.ok) {
+            const json = (await resp.json()) as SingPayResponsePayload;
+            if (json?.transaction) {
+              verifiedStatus = json.transaction.status;
+              verifiedResult = json.transaction.result;
+            }
+          }
+        } catch (fetchErr) {
+          console.warn(
+            "singpayWebhook: validation statut cote serveur echouee:",
+            fetchErr
+          );
+        }
+      }
+
+      const isSuccess =
+        verifiedResult === "Success" ||
+        (verifiedStatus === "Terminate" && verifiedResult === "Success");
+
+      await docRef.set(
+        {
+          singpayTransactionId: txId || null,
+          singpayStatus: verifiedStatus || null,
+          singpayResult: verifiedResult || null,
+          status: isSuccess ? "SUCCESS" : verifiedResult ? "FAILED" : "PENDING",
+          updatedAt: new Date().toISOString(),
+          rawWebhookPayload: data,
+        },
+        {merge: true}
+      );
+
       res.status(200).json({received: true});
     } catch (err: unknown) {
       const e = err as Error;

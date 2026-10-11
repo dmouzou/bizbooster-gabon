@@ -26,14 +26,14 @@ service cloud.firestore {
     }
 
     // Admin = custom claim OR users/{uid}.role in ['ADMIN', 'SUPER_ADMIN', 'SUPER ADMIN'].
-    // Users can never write their own role (see /users rules below).
+    // L'accès admin vient uniquement du rôle ou des custom claims.
     function isAdmin() {
       return isSignedIn() && (
         isSuperAdmin() ||
         ('role' in request.auth.token && request.auth.token.role == 'ADMIN') ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'ADMIN' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isAdmin', false) == true))
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'SUPER_ADMIN'))
       );
     }
 
@@ -83,18 +83,19 @@ service cloud.firestore {
 
       allow read: if isOwner(userId) || isAdmin();
 
-      // A new profile can only be created for yourself, and only as a plain USER.
+      // A new profile can only be created for yourself, and only as a plain USER (no admin escalation).
       allow create: if isOwner(userId)
-                    && request.resource.data.role == 'USER';
+                    && request.resource.data.role == 'USER'
+                    && !request.resource.data.keys().hasAny(['isAdmin', 'isSuperAdmin']);
 
-      // Super Admin has full authority (create/revoke VIP exemptions, modify any subscription, add boosters, change roles).
-      // Normal Admin can verify/reject KYC, but CANNOT touch exemptions, subscriptions, boosters, or roles.
-      // Owner can update their profile and submit KYC for review (PENDING), but cannot self-approve or self-exempt.
+      // Super Admin has full authority.
+      // Normal Admin can verify KYC but cannot touch role, exemptions or subscriptions.
+      // Owner can update their profile but cannot self-promote (no isAdmin, isSuperAdmin, role, exemptions).
       allow update: if isSuperAdmin()
-                    || (isAdmin() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['exemptFromPaymentAndKyc', 'isExempt', 'role', 'subscriptionTier', 'subscriptionExpiresAt', 'freeBoostsRemaining']))
+                    || (isAdmin() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin', 'isSuperAdmin', 'exemptFromPaymentAndKyc', 'isExempt', 'role', 'subscriptionTier', 'subscriptionExpiresAt', 'freeBoostsRemaining']))
                     || (isOwner(userId)
                         && request.resource.data.get('role', 'USER') == resource.data.get('role', 'USER')
-                        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['exemptFromPaymentAndKyc', 'isExempt', 'role']))
+                        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin', 'isSuperAdmin', 'exemptFromPaymentAndKyc', 'isExempt', 'role'])
                         && (request.resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') != 'VERIFIED' || resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') == 'VERIFIED'));
 
       allow delete: if isSuperAdmin();
@@ -136,10 +137,10 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // PHONE VERIFICATIONS (OTP verification codes)
+    // PHONE VERIFICATIONS (Tout refuser - plus utilisé)
     // ---------------------------------------------------------------
     match /phone_verifications/{verificationId} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
 
     // ---------------------------------------------------------------
