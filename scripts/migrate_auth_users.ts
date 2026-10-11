@@ -40,7 +40,7 @@ function normalizePhone(input: string): { e164: string; digits: string } {
 }
 
 async function cleanupPasswordsPhase() {
-  console.log('--- NETTOYAGE POST-PHASE 3 : SUPPRESSION DES MOTS DE PASSE DANS FIRESTORE ---');
+  console.log('--- NETTOYAGE PHASE 4 : SUPPRESSION DES MOTS DE PASSE ET PHONE_VERIFICATIONS ---');
   const snap = await db.collection('users').get();
   let count = 0;
   for (const doc of snap.docs) {
@@ -54,6 +54,16 @@ async function cleanupPasswordsPhase() {
     }
   }
   console.log(`[${isDryRun ? 'SIMULATION' : 'REEL'}] ${count} champ(s) password supprimé(s) des documents users.`);
+
+  const pvSnap = await db.collection('phone_verifications').get();
+  let pvCount = 0;
+  for (const doc of pvSnap.docs) {
+    if (!isDryRun) {
+      await doc.ref.delete();
+    }
+    pvCount++;
+  }
+  console.log(`[${isDryRun ? 'SIMULATION' : 'REEL'}] ${pvCount} document(s) supprimé(s) de la collection phone_verifications.`);
 }
 
 async function runMigration() {
