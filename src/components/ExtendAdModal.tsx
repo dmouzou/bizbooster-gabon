@@ -320,6 +320,11 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
         ) : (
           <div className="p-4 flex justify-center">
             <MobilePaymentSimulator
+              productId="AD_EXTEND"
+              metadata={{
+                adId: ad.id,
+                days: selectedExtension.days,
+              }}
               amount={getExtensionPrice(selectedExtension.price)}
               itemDescription={`Prolongation +${selectedExtension.days} jours - ${ad.title}`}
               onSuccess={handlePaymentSuccess}

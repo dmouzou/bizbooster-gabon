@@ -3,9 +3,11 @@ import { functions } from './firebase';
 import { PaymentOperator } from '../types';
 
 export interface SingPayInitiateParams {
-  amount: number;
+  amount?: number;
+  productId?: string;
+  metadata?: Record<string, unknown>;
   phoneNumber: string;
-  reference: string;
+  reference?: string;
   itemDescription?: string;
   operator?: PaymentOperator;
 }

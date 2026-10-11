@@ -15,10 +15,13 @@ import confetti from 'canvas-confetti';
 import { PaymentOperator } from '../types';
 import { formatFCFA } from '../utils/formatters';
 import { initiateSingPay, pollSingPayStatus, MOOV_MERCHANT_NUMBER } from '../services/singpay';
+import { GABON_MOBILE_PREFIXES } from '../utils/phone';
 
 interface MobilePaymentSimulatorProps {
   amount: number;
   itemDescription: string;
+  productId?: string;
+  metadata?: Record<string, unknown>;
   onSuccess: (paymentInfo: { operator: PaymentOperator; contactPhone: string; transactionRef: string }) => void;
   onCancel: () => void;
   initialPhone?: string;
@@ -38,6 +41,8 @@ const to8Digits = (raw?: string) => {
 export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
   amount,
   itemDescription,
+  productId,
+  metadata,
   onSuccess,
   onCancel,
   initialPhone,
@@ -94,22 +99,13 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
     }
 
     if (operator === 'MOOV_MONEY') {
-      const isMoov =
-        digits.startsWith('60') ||
-        digits.startsWith('62') ||
-        digits.startsWith('65') ||
-        digits.startsWith('66');
+      const isMoov = GABON_MOBILE_PREFIXES.MOOV.some((prefix) => digits.startsWith(prefix));
       if (!isMoov) {
         setPhoneError('Préfixe Moov Money requis : le numéro doit commencer par 060, 062, 065 ou 066.');
         return;
       }
     } else if (operator === 'AIRTEL_MONEY') {
-      const isAirtel =
-        digits.startsWith('74') ||
-        digits.startsWith('76') ||
-        digits.startsWith('77') ||
-        digits.startsWith('70') ||
-        digits.startsWith('7');
+      const isAirtel = GABON_MOBILE_PREFIXES.AIRTEL.some((prefix) => digits.startsWith(prefix));
       if (!isAirtel) {
         setPhoneError('Préfixe Airtel Money requis : le numéro doit commencer par 074, 076 ou 077.');
         return;
@@ -120,18 +116,18 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
     setStep('INITIATING');
     setStatusMessage('Connexion à la passerelle SingPay Gabon...');
 
-    const refPrefix = operator === 'AIRTEL_MONEY' ? 'SP-AM' : 'SP-MM';
-    const generatedRef = `${refPrefix}-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
-    setTransactionRef(generatedRef);
-
     try {
       const initResult = await initiateSingPay({
         amount,
+        productId,
+        metadata,
         phoneNumber: digits,
-        reference: generatedRef,
         itemDescription,
         operator: operator,
       });
+
+      const canonicalRef = initResult.reference;
+      setTransactionRef(canonicalRef);
 
       const operatorLabel = operator === 'AIRTEL_MONEY' ? 'Airtel Money' : 'Moov Money';
       setTransactionId(initResult.transactionId);
@@ -160,7 +156,7 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
         try {
           const statusRes = await pollSingPayStatus({
             transactionId: initResult.transactionId,
-            reference: generatedRef,
+            reference: canonicalRef,
           });
 
           if (statusRes.status === 'SUCCESS') {
@@ -178,9 +174,9 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
 
             setTimeout(() => {
               onSuccess({
-                operator: 'MOOV_MONEY',
+                operator,
                 contactPhone: digits,
-                transactionRef: generatedRef,
+                transactionRef: canonicalRef,
               });
             }, 1800);
           } else if (statusRes.status === 'FAILED') {

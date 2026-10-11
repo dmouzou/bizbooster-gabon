@@ -1077,20 +1077,8 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
       const updatesToUser: Partial<UserProfile> = {};
 
       if (requiresSubscription) {
-        const boostsToAdd = selectedTierToBuy === 'BUSINESS' ? 6 : selectedTierToBuy === 'ELITE' ? 3 : 1;
-        const currentBoosts = currentUser?.freeBoostsRemaining || 0;
-        let finalBoosts = Math.min(20, currentBoosts + boostsToAdd);
-        if (isBoostFeatured && !isExempt) {
-          finalBoosts = Math.max(0, finalBoosts - 1);
-        }
-        updatesToUser.subscriptionTier = selectedTierToBuy;
-        updatesToUser.subscriptionExpiresAt = new Date(Date.now() + 30 * 86400000).toISOString();
-        updatesToUser.freeBoostsRemaining = finalBoosts;
         updatesToUser.consumedFreeAdsCount = (currentUser?.consumedFreeAdsCount || 0) + 1;
       } else {
-        if (hasFreeBoost && isBoostFeatured) {
-          updatesToUser.freeBoostsRemaining = Math.max(0, (currentUser?.freeBoostsRemaining || 1) - 1);
-        }
         if (isBasePostingCovered && !isExempt) {
           updatesToUser.consumedFreeAdsCount = (currentUser?.consumedFreeAdsCount || 0) + 1;
         }
@@ -3381,6 +3369,15 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
 
                   <div className="flex justify-center">
                     <MobilePaymentSimulator
+                      productId="AD_PUBLISH"
+                      metadata={{
+                        durationDays,
+                        photoCount: photos.length,
+                        hasVideo,
+                        withBoost: isBoostFeatured,
+                        requiresSubscription,
+                        selectedTierToBuy,
+                      }}
                       amount={totalBillCalculated}
                       itemDescription={`Publication ${title || mainCategory} (${durationDays} jours)`}
                       onSuccess={handlePaymentSuccess}

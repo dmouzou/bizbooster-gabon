@@ -6,6 +6,11 @@
 export const MOOV_PREFIXES = ['60', '62', '65', '66'] as const;
 export const AIRTEL_PREFIXES = ['74', '76', '77'] as const;
 
+export const GABON_MOBILE_PREFIXES = {
+  MOOV: MOOV_PREFIXES,
+  AIRTEL: AIRTEL_PREFIXES,
+};
+
 export type GabonOperator = 'MOOV' | 'AIRTEL';
 
 /**

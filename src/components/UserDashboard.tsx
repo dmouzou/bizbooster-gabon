@@ -461,20 +461,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         await onBoostAd(adToBoost.id);
         showAlert(`Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours.`, 'success', "Annonce Propulsée !");
       } else {
-        // 1. Boost this ad immediately
         await onBoostAd(adToBoost.id);
-        // 2. Credit the remaining (pack.boostsCount - 1) boosters to user's balance
         const remainingToCredit = selectedPackForBoost.boostsCount - 1;
-        if (remainingToCredit > 0 && onUpdateUser) {
-          const currentBoosts = currentUser.freeBoostsRemaining || 0;
-          const newTotal = Math.min(20, currentBoosts + remainingToCredit);
-          await onUpdateUser({
-            freeBoostsRemaining: newTotal,
-            activeBoosterPack: selectedPackForBoost.type,
-          });
-        }
         showAlert(
-          `Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours, et ${remainingToCredit} boosters supplémentaires ont été crédités sur votre compte (solde disponible) !`,
+          `Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours, et ${remainingToCredit} boosters supplémentaires ont été crédités sur votre compte via la validation sécurisée du serveur !`,
           'success',
           "Pack Boosters Activé !"
         );
@@ -676,30 +666,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     });
   };
 
-  const handlePurchaseSuccess = async (paymentInfo: { operator: PaymentOperator; transactionRef: string }) => {
-    if (!itemToPurchase || !onUpdateUser) return;
+  const handlePurchaseSuccess = async (_paymentInfo: { operator: PaymentOperator; transactionRef: string }) => {
+    if (!itemToPurchase) return;
     try {
       if (itemToPurchase.type === 'SUBSCRIPTION' && itemToPurchase.tier) {
-        const boostsToAdd = itemToPurchase.tier === 'BUSINESS' ? 6 : itemToPurchase.tier === 'ELITE' ? 3 : 1;
-        const currentBoosts = currentUser.freeBoostsRemaining || 0;
-        const newBoosts = Math.min(20, currentBoosts + boostsToAdd);
-        await onUpdateUser({
-          subscriptionTier: itemToPurchase.tier,
-          subscriptionExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
-          subscriptionStartedAt: new Date().toISOString(),
-          freeBoostsRemaining: newBoosts,
-        });
+        const upgradedTier = itemToPurchase.tier;
         setItemToPurchase(null);
-        setUpgradedTierModal(itemToPurchase.tier);
+        setUpgradedTierModal(upgradedTier);
       } else if (itemToPurchase.type === 'BOOSTER_PACK' && itemToPurchase.boostCount) {
-        const currentBoosts = currentUser.freeBoostsRemaining || 0;
-        const newBoosts = Math.min(20, currentBoosts + itemToPurchase.boostCount);
-        await onUpdateUser({
-          freeBoostsRemaining: newBoosts,
-          activeBoosterPack: itemToPurchase.packType,
-        });
+        const boostCount = itemToPurchase.boostCount;
         setItemToPurchase(null);
-        showAlert(`${itemToPurchase.boostCount} Boosters activés avec succès ! Votre nouveau solde est de ${newBoosts} boosters disponibles (max 20).`, 'success', "Pack Boosters Activé !");
+        showAlert(`${boostCount} Boosters activés avec succès par le serveur ! Votre solde est mis à jour en temps réel.`, 'success', "Pack Boosters Activé !");
       }
     } catch (e: any) {
       console.error('Purchase update error:', e);
@@ -2024,6 +2001,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             ) : showBoostPayment ? (
               <div className="pt-2">
                 <MobilePaymentSimulator
+                  productId={boostOption === 'SINGLE' || !selectedPackForBoost ? 'BOOST_SINGLE' : selectedPackForBoost.type}
+                  metadata={{
+                    adId: adToBoost.id,
+                    boostOption,
+                    packType: selectedPackForBoost?.type,
+                  }}
                   amount={boostOption === 'SINGLE' || !selectedPackForBoost ? 5000 : selectedPackForBoost.price}
                   itemDescription={
                     boostOption === 'SINGLE' || !selectedPackForBoost
@@ -2263,6 +2246,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
 
             <MobilePaymentSimulator
+              productId={itemToPurchase.type === 'SUBSCRIPTION' ? `SUB_${itemToPurchase.tier}` : itemToPurchase.packType}
+              metadata={{
+                type: itemToPurchase.type,
+                tier: itemToPurchase.tier,
+                packType: itemToPurchase.packType,
+                boostCount: itemToPurchase.boostCount,
+              }}
               amount={itemToPurchase.price}
               itemDescription={itemToPurchase.title}
               onSuccess={handlePurchaseSuccess}
