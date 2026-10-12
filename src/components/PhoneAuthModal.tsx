@@ -24,25 +24,20 @@ import {
   User,
   Eye,
   EyeOff,
-  ArrowLeft,
-  Smartphone,
+  ChevronDown,
 } from 'lucide-react';
 import { UserProfile } from '../types';
-import { GABON_PROVINCES } from '../data/gabonLocations';
-import { INDIA_STATES } from '../data/indiaLocations';
+import { COUNTRY_LOCATIONS } from '../data/countryLocations';
 import { CguModal } from './CguModal';
 import {
-  normalizeGabonPhone,
-  normalizeIndiaPhone,
   normalizePhone,
   toE164,
   toSmsE164,
   toSyntheticEmail,
   detectOperator,
-  isValidGabonMobile,
-  isValidIndiaMobile,
   isValidPhone,
   getAuthErrorMessage,
+  detectCountryFromPhone,
   GabonOperator,
   SupportedCountry,
   COUNTRIES,
@@ -65,7 +60,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     initialMode === 'REGISTER' ? 'REGISTER' : 'LOGIN'
   );
 
-  // Pays sélectionné (Gabon par défaut, ou Inde)
+  // Pays sélectionné (Gabon par défaut, ou l'un des 6 autres pays)
   const [selectedCountry, setSelectedCountry] = useState<SupportedCountry>('GA');
 
   // Étapes :
@@ -81,8 +76,11 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [fullName, setFullName] = useState('');
-  const [selectedProvince, setSelectedProvince] = useState(GABON_PROVINCES[0]?.name || 'Estuaire');
-  const [selectedCity, setSelectedCity] = useState(GABON_PROVINCES[0]?.cities[0]?.name || 'Libreville');
+
+  // Initialisation localisation
+  const initialRegions = COUNTRY_LOCATIONS.GA || [];
+  const [selectedProvince, setSelectedProvince] = useState(initialRegions[0]?.name || 'Estuaire');
+  const [selectedCity, setSelectedCity] = useState(initialRegions[0]?.cities[0]?.name || 'Libreville');
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [showCguModal, setShowCguModal] = useState(false);
 
@@ -96,15 +94,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Villes associées à la province / état selon le pays
-  const availableCities = selectedCountry === 'IN'
-    ? INDIA_STATES.find((s) => s.name === selectedProvince)?.cities || []
-    : GABON_PROVINCES.find((p) => p.name === selectedProvince)?.cities || [];
+  // Régions et villes associées au pays sélectionné
+  const availableRegions = COUNTRY_LOCATIONS[selectedCountry] || [];
+  const availableCities = availableRegions.find((r) => r.name === selectedProvince)?.cities || [];
 
   // Détection opérateur dynamique pour Gabon
-  const digits = normalizePhone(contactPhone, selectedCountry);
-  const detectedOp: GabonOperator | null = selectedCountry === 'GA' ? detectOperator(digits) : null;
-  const isIndiaValid = selectedCountry === 'IN' && isValidIndiaMobile(contactPhone);
+  const rawDigits = normalizePhone(contactPhone, selectedCountry);
+  const detectedOp: GabonOperator | null = selectedCountry === 'GA' ? detectOperator(rawDigits) : null;
+  const isCurrentPhoneValid = isValidPhone(contactPhone, selectedCountry);
 
   // Basculement de pays
   const handleSelectCountry = (country: SupportedCountry) => {
@@ -113,29 +110,24 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setContactPhone('');
     setErrorMessage(null);
     setSuccessNotice(null);
-    if (country === 'IN') {
-      setSelectedProvince(INDIA_STATES[0]?.name || 'Maharashtra');
-      setSelectedCity(INDIA_STATES[0]?.cities[0]?.name || 'Mumbai');
-    } else {
-      setSelectedProvince(GABON_PROVINCES[0]?.name || 'Estuaire');
-      setSelectedCity(GABON_PROVINCES[0]?.cities[0]?.name || 'Libreville');
-    }
+
+    const countryRegions = COUNTRY_LOCATIONS[country] || [];
+    const firstRegion = countryRegions[0]?.name || '';
+    const firstCity = countryRegions[0]?.cities[0]?.name || '';
+    setSelectedProvince(firstRegion);
+    setSelectedCity(firstCity);
   };
 
   // Détection automatique lors de la saisie / collage
   const handlePhoneChange = (val: string) => {
-    if (val.startsWith('+91') || val.startsWith('0091')) {
-      if (selectedCountry !== 'IN') {
-        setSelectedCountry('IN');
-        setSelectedProvince(INDIA_STATES[0]?.name || 'Maharashtra');
-        setSelectedCity(INDIA_STATES[0]?.cities[0]?.name || 'Mumbai');
-      }
-    } else if (val.startsWith('+241') || val.startsWith('00241')) {
-      if (selectedCountry !== 'GA') {
-        setSelectedCountry('GA');
-        setSelectedProvince(GABON_PROVINCES[0]?.name || 'Estuaire');
-        setSelectedCity(GABON_PROVINCES[0]?.cities[0]?.name || 'Libreville');
-      }
+    const detected = detectCountryFromPhone(val);
+    if (detected && detected !== selectedCountry) {
+      setSelectedCountry(detected);
+      const countryRegions = COUNTRY_LOCATIONS[detected] || [];
+      const firstRegion = countryRegions[0]?.name || '';
+      const firstCity = countryRegions[0]?.cities[0]?.name || '';
+      setSelectedProvince(firstRegion);
+      setSelectedCity(firstCity);
     }
     setContactPhone(val);
   };
@@ -241,7 +233,6 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
   // Réinitialisation et nettoyage lors de la fermeture
   const handleModalClose = async () => {
-    // Si l'utilisateur quitte à l'étape 3 de l'inscription sans terminer, déconnecter la session fantôme
     if (stage === 3 && auth.currentUser) {
       try {
         await signOut(auth);
@@ -250,7 +241,6 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       }
     }
 
-    // Réinitialisation hygiénique des champs
     setContactPhone('');
     setFullName('');
     setTermsAccepted(false);
@@ -265,8 +255,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setIsLoading(false);
     sendLockRef.current = false;
     setSelectedCountry('GA');
-    setSelectedProvince(GABON_PROVINCES[0]?.name || 'Estuaire');
-    setSelectedCity(GABON_PROVINCES[0]?.cities[0]?.name || 'Libreville');
+    const gaRegions = COUNTRY_LOCATIONS.GA || [];
+    setSelectedProvince(gaRegions[0]?.name || 'Estuaire');
+    setSelectedCity(gaRegions[0]?.cities[0]?.name || 'Libreville');
 
     if (recaptchaRef.current) {
       try {
@@ -295,12 +286,12 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const sendCode = async (): Promise<boolean> => {
     if (sendLockRef.current || isLoading) return false;
 
-    const rawDigits = normalizePhone(contactPhone, selectedCountry);
-    if (!isValidPhone(rawDigits, selectedCountry)) {
+    const digitsToVerify = normalizePhone(contactPhone, selectedCountry);
+    const countryInfo = COUNTRIES[selectedCountry];
+
+    if (!isValidPhone(digitsToVerify, selectedCountry)) {
       setErrorMessage(
-        selectedCountry === 'IN'
-          ? 'Numéro indien invalide (10 chiffres). Exemple : 98765 43210.'
-          : 'Numéro gabonais invalide. Exemple : 074 56 78 21 ou 062 18 87 34.'
+        `Numéro ${countryInfo.name.toLowerCase()} invalide (${countryInfo.digitsLength} chiffres requis). Exemple : ${countryInfo.placeholder}.`
       );
       return false;
     }
@@ -310,7 +301,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setErrorMessage(null);
     setSuccessNotice(null);
 
-    // Format SMS : +2410XXXXXXXX pour le Gabon (routage télécom local), +91XXXXXXXXXX pour l'Inde
+    // Format SMS : +2410XXXXXXXX pour le Gabon, standard international pour les autres
     const smsE164 = toSmsE164(contactPhone, selectedCountry);
 
     try {
@@ -339,20 +330,18 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
   /**
    * FLUX DE CONNEXION DIRECTE (Section 3.5)
-   * signInWithEmailAndPassword(auth, toSyntheticEmail(digits, country), password)
    */
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setSuccessNotice(null);
 
-    const rawDigits = normalizePhone(contactPhone, selectedCountry);
-    const minDigits = selectedCountry === 'IN' ? 10 : 8;
-    if (!rawDigits || rawDigits.length < minDigits) {
+    const digitsToLogin = normalizePhone(contactPhone, selectedCountry);
+    const countryInfo = COUNTRIES[selectedCountry];
+
+    if (!digitsToLogin || digitsToLogin.length < countryInfo.digitsLength) {
       setErrorMessage(
-        selectedCountry === 'IN'
-          ? 'Numéro indien invalide (10 chiffres).'
-          : 'Numéro gabonais invalide (8 chiffres).'
+        `Numéro ${countryInfo.name.toLowerCase()} invalide (${countryInfo.digitsLength} chiffres requis).`
       );
       return;
     }
@@ -365,10 +354,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setIsLoading(true);
 
     try {
-      const syntheticEmail = toSyntheticEmail(rawDigits, selectedCountry);
+      const syntheticEmail = toSyntheticEmail(digitsToLogin, selectedCountry);
       // Ne jamais appliquer trim() aux mots de passe
       await signInWithEmailAndPassword(auth, syntheticEmail, password);
-      // Ne pas construire de profil à la main : fermer le modal et laisser l'écouteur Firestore charger le profil
       handleModalClose();
     } catch (err: unknown) {
       console.error('Erreur connexion:', err);
@@ -424,12 +412,10 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setIsLoading(true);
 
     try {
-      // Seul confirmationRef.current.confirm(code) peut vérifier (Section 3.2)
       const userCred = await confirmationRef.current.confirm(cleanCode);
       const user = userCred.user;
 
       if (authMode === 'REGISTER') {
-        // Section 3.4 Étape 2 : Vérifier si users/uid existe déjà
         const userDocSnap = await getDoc(doc(db, 'users', user.uid));
         if (userDocSnap.exists()) {
           await signOut(auth);
@@ -438,17 +424,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           setStage(1);
           return;
         }
-        // Sinon passer à l'étape 3
         setStage(3);
       } else if (authMode === 'FORGOT_PASSWORD') {
-        // Section 3.6 Étape 2 : Si users/uid n'existe pas, signOut et afficher 'Aucun compte pour ce numéro.'
         const userDocSnap = await getDoc(doc(db, 'users', user.uid));
         if (!userDocSnap.exists()) {
           await signOut(auth);
           setErrorMessage('Aucun compte pour ce numéro.');
           return;
         }
-        // Passer à l'étape 4 de saisie du nouveau mot de passe
         setPassword('');
         setConfirmPassword('');
         setStage(4);
@@ -497,9 +480,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         throw new Error('SESSION_LOST');
       }
 
-      const rawDigits = normalizePhone(contactPhone, selectedCountry);
+      const digitsForReg = normalizePhone(contactPhone, selectedCountry);
       const emailCred = EmailAuthProvider.credential(
-        toSyntheticEmail(rawDigits, selectedCountry),
+        toSyntheticEmail(digitsForReg, selectedCountry),
         password
       );
 
@@ -526,14 +509,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
       await setDoc(doc(db, 'users', user.uid), {
         name: fullName.trim(),
         country: selectedCountry,
-        operator: selectedCountry === 'GA' ? detectOperator(rawDigits) : null,
+        operator: selectedCountry === 'GA' ? detectOperator(digitsForReg) : null,
         role: 'USER',
         isVerified: true,
         termsAccepted: true,
         termsAcceptedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
-        contactPhone: toE164(rawDigits, selectedCountry),
-        phoneNumber: toE164(rawDigits, selectedCountry),
+        contactPhone: toE164(digitsForReg, selectedCountry),
+        phoneNumber: toE164(digitsForReg, selectedCountry),
         location: {
           province: selectedProvince,
           city: selectedCity,
@@ -577,7 +560,6 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         return;
       }
 
-      // Mise à jour Auth uniquement (ne pas copier dans Firestore)
       try {
         await updatePassword(user, password);
       } catch (upErr: unknown) {
@@ -602,42 +584,37 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     }
   };
 
-  // Sélecteur de pays réutilisable pour LOGIN, REGISTER et FORGOT_PASSWORD
+  // Sélecteur de pays élégant et accessible
   const renderCountrySelector = () => (
     <div className="mb-4">
       <div className="flex items-center justify-between mb-1.5">
         <label className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
           Pays d'authentification
         </label>
-        <span className="text-[11px] font-bold text-emerald-700">
-          {COUNTRIES[selectedCountry].flag} {COUNTRIES[selectedCountry].name} ({COUNTRIES[selectedCountry].dialCode})
+        <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
+          <span>{COUNTRIES[selectedCountry].flag}</span>
+          <span>{COUNTRIES[selectedCountry].name}</span>
+          <span className="text-slate-400">({COUNTRIES[selectedCountry].dialCode})</span>
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
-        <button
-          type="button"
-          onClick={() => handleSelectCountry('GA')}
-          className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-            selectedCountry === 'GA'
-              ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
+      <div className="relative">
+        <select
+          value={selectedCountry}
+          onChange={(e) => handleSelectCountry(e.target.value as SupportedCountry)}
+          className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 appearance-none cursor-pointer"
         >
-          <span className="text-base leading-none">🇬🇦</span>
-          <span>Gabon (+241)</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => handleSelectCountry('IN')}
-          className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-            selectedCountry === 'IN'
-              ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <span className="text-base leading-none">🇮🇳</span>
-          <span>Inde (+91)</span>
-        </button>
+          {Object.values(COUNTRIES).map((c) => (
+            <option key={c.code} value={c.code}>
+              {c.flag} {c.name} ({c.dialCode})
+            </option>
+          ))}
+        </select>
+        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-base">
+          {COUNTRIES[selectedCountry].flag}
+        </div>
+        <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
+          <ChevronDown className="w-4 h-4" />
+        </div>
       </div>
     </div>
   );
@@ -665,7 +642,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
             <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1.5">
               <span>Authentification Annonceur</span>
               <span className="opacity-60">•</span>
-              <span>{selectedCountry === 'GA' ? '🇬🇦 Gabon (+241)' : '🇮🇳 Inde (+91)'}</span>
+              <span>{COUNTRIES[selectedCountry].flag} {COUNTRIES[selectedCountry].name} ({COUNTRIES[selectedCountry].dialCode})</span>
             </span>
           </div>
 
@@ -682,14 +659,14 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           <p className="text-xs text-slate-300 mt-1">
             {authMode === 'LOGIN' && `Connectez-vous avec votre numéro (${COUNTRIES[selectedCountry].label}) et mot de passe.`}
             {authMode === 'REGISTER' && stage === 1 && 'Entrez votre numéro pour recevoir un code de vérification SMS sécurisé.'}
-            {authMode === 'REGISTER' && stage === 2 && `Saisissez le code SMS à 6 chiffres envoyé au ${toSmsE164(contactPhone, selectedCountry)}.`}
+            {authMode === 'REGISTER' && stage === 2 && `Saisissez le code SMS envoyé au ${toSmsE164(contactPhone, selectedCountry)}.`}
             {authMode === 'REGISTER' && stage === 3 && 'Complétez votre profil pour finaliser la création de votre compte.'}
             {authMode === 'FORGOT_PASSWORD' && stage === 1 && 'Entrez votre numéro pour recevoir un code de réinitialisation par SMS.'}
             {authMode === 'FORGOT_PASSWORD' && stage === 2 && `Saisissez le code SMS reçu au ${toSmsE164(contactPhone, selectedCountry)}.`}
             {authMode === 'FORGOT_PASSWORD' && stage === 4 && 'Définissez votre nouveau mot de passe sécurisé.'}
           </p>
 
-          {/* Stepper Dots (Uniquement pour REGISTER et FORGOT_PASSWORD, Section 3.9) */}
+          {/* Stepper Dots */}
           {authMode !== 'LOGIN' && (
             <div className="flex items-center gap-2 mt-4">
               <div className={`h-1.5 rounded-full transition-all ${stage >= 1 ? 'w-8 bg-emerald-400' : 'w-2 bg-slate-700'}`} />
@@ -715,7 +692,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
             </div>
           )}
 
-          {/* 1. FLUX DE CONNEXION (Formulaire direct en une étape) */}
+          {/* 1. FLUX DE CONNEXION */}
           {authMode === 'LOGIN' && (
             <form onSubmit={handleLogin} className="space-y-4">
               {renderCountrySelector()}
@@ -815,7 +792,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
             </form>
           )}
 
-          {/* 2. FLUX D'INSCRIPTION : ÉTAPE 1 (Saisie du numéro) */}
+          {/* 2. FLUX D'INSCRIPTION : ÉTAPE 1 */}
           {authMode === 'REGISTER' && stage === 1 && (
             <form onSubmit={handleStartRegister} className="space-y-4">
               {renderCountrySelector()}
@@ -856,11 +833,11 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   </div>
                 )}
 
-                {/* Validation mobile Inde */}
-                {selectedCountry === 'IN' && isIndiaValid && (
+                {/* Validation mobile valide */}
+                {isCurrentPhoneValid && selectedCountry !== 'GA' && (
                   <div className="mt-1.5 text-[11px] text-emerald-700 flex items-center gap-1.5 font-semibold">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Numéro mobile indien valide (10 chiffres)</span>
+                    <span>Numéro mobile {COUNTRIES[selectedCountry].name.toLowerCase()} valide ({COUNTRIES[selectedCountry].digitsLength} chiffres)</span>
                   </div>
                 )}
               </div>
@@ -897,7 +874,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
             </form>
           )}
 
-          {/* 3. FLUX MOT DE PASSE OUBLIÉ : ÉTAPE 1 (Saisie du numéro) */}
+          {/* 3. FLUX MOT DE PASSE OUBLIÉ : ÉTAPE 1 */}
           {authMode === 'FORGOT_PASSWORD' && stage === 1 && (
             <form onSubmit={handleStartForgotPassword} className="space-y-4">
               {renderCountrySelector()}
@@ -959,7 +936,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
             </form>
           )}
 
-          {/* 4. ÉTAPE 2 : VÉRIFICATION OTP SMS (Commun pour REGISTER et FORGOT_PASSWORD) */}
+          {/* 4. ÉTAPE 2 : VÉRIFICATION OTP SMS */}
           {stage === 2 && (
             <form onSubmit={handleVerifyOtp} className="space-y-5">
               <div className="text-center space-y-1">
@@ -1019,7 +996,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
             </form>
           )}
 
-          {/* 5. ÉTAPE 3 INSCRIPTION : INFORMATIONS ANNONCEUR & LIAISON DU MOT DE PASSE */}
+          {/* 5. ÉTAPE 3 INSCRIPTION : INFORMATIONS ANNONCEUR & PROFIL */}
           {authMode === 'REGISTER' && stage === 3 && (
             <form onSubmit={handleCompleteRegistration} className="space-y-4">
               <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs p-3 rounded-xl flex items-center gap-2">
@@ -1045,43 +1022,35 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                 </div>
               </div>
 
-              {/* Localisation : Province / État et Ville */}
+              {/* Localisation : Province / Région et Ville */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                    {selectedCountry === 'IN' ? 'État (State)' : 'Province'}
+                    {selectedCountry === 'GA' ? 'Province' : selectedCountry === 'IN' ? 'État' : 'Région'}
                   </label>
                   <select
                     value={selectedProvince}
                     onChange={(e) => {
                       const prov = e.target.value;
                       setSelectedProvince(prov);
-                      const matchingCities = selectedCountry === 'IN'
-                        ? INDIA_STATES.find((s) => s.name === prov)?.cities || []
-                        : GABON_PROVINCES.find((p) => p.name === prov)?.cities || [];
+                      const matchingCities = availableRegions.find((r) => r.name === prov)?.cities || [];
                       if (matchingCities.length > 0) {
                         setSelectedCity(matchingCities[0].name);
                       }
                     }}
                     className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus:bg-white focus:ring-2 focus:ring-emerald-500"
                   >
-                    {selectedCountry === 'IN'
-                      ? INDIA_STATES.map((s) => (
-                          <option key={s.code} value={s.name}>
-                            {s.name}
-                          </option>
-                        ))
-                      : GABON_PROVINCES.map((p) => (
-                          <option key={p.code} value={p.name}>
-                            {p.name}
-                          </option>
-                        ))}
+                    {availableRegions.map((r) => (
+                      <option key={r.code || r.name} value={r.name}>
+                        {r.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                    Ville (City)
+                    Ville
                   </label>
                   <select
                     value={selectedCity}

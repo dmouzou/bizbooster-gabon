@@ -1,6 +1,6 @@
 /**
- * Utilitaires de normalisation, validation et détection opérateur Gabon et Inde
- * Conforme au plan de correction d'authentification BizBooster Gabon et expansion internationale (Inde)
+ * Utilitaires de normalisation, validation et détection opérateur multi-pays
+ * Supporte : Gabon (+241), Cameroun (+237), Mali (+223), Togo (+228), Sénégal (+221), Ghana (+233), Inde (+91)
  */
 
 export const MOOV_PREFIXES = ['60', '62', '65', '66'] as const;
@@ -13,7 +13,7 @@ export const GABON_MOBILE_PREFIXES = {
 
 export type GabonOperator = 'MOOV' | 'AIRTEL';
 
-export type SupportedCountry = 'GA' | 'IN';
+export type SupportedCountry = 'GA' | 'IN' | 'CM' | 'ML' | 'TG' | 'SN' | 'GH';
 
 export interface CountryInfo {
   code: SupportedCountry;
@@ -35,6 +35,51 @@ export const COUNTRIES: Record<SupportedCountry, CountryInfo> = {
     digitsLength: 8,
     label: 'Gabon (+241)',
   },
+  CM: {
+    code: 'CM',
+    name: 'Cameroun',
+    flag: '🇨🇲',
+    dialCode: '+237',
+    placeholder: '670 12 34 56 ou 690 12 34 56',
+    digitsLength: 9,
+    label: 'Cameroun (+237)',
+  },
+  SN: {
+    code: 'SN',
+    name: 'Sénégal',
+    flag: '🇸🇳',
+    dialCode: '+221',
+    placeholder: '77 123 45 67 ou 76 123 45 67',
+    digitsLength: 9,
+    label: 'Sénégal (+221)',
+  },
+  ML: {
+    code: 'ML',
+    name: 'Mali',
+    flag: '🇲🇱',
+    dialCode: '+223',
+    placeholder: '70 12 34 56 ou 65 12 34 56',
+    digitsLength: 8,
+    label: 'Mali (+223)',
+  },
+  TG: {
+    code: 'TG',
+    name: 'Togo',
+    flag: '🇹🇬',
+    dialCode: '+228',
+    placeholder: '90 12 34 56 ou 96 12 34 56',
+    digitsLength: 8,
+    label: 'Togo (+228)',
+  },
+  GH: {
+    code: 'GH',
+    name: 'Ghana',
+    flag: '🇬🇭',
+    dialCode: '+233',
+    placeholder: '024 123 4567 ou 050 123 4567',
+    digitsLength: 9,
+    label: 'Ghana (+233)',
+  },
   IN: {
     code: 'IN',
     name: 'Inde',
@@ -47,12 +92,7 @@ export const COUNTRIES: Record<SupportedCountry, CountryInfo> = {
 };
 
 /**
- * Normalise un numéro de téléphone gabonais brut pour extraire les 8 chiffres significatifs.
- * Gère +241, 241, 00241, espaces, tirets et supprime au plus un 0 initial local
- * uniquement lorsque la chaîne dépasserait 8 chiffres sans ce retrait.
- *
- * @param raw Numéro sous forme brute (+241 062 18 87 34, 066..., etc.)
- * @returns Chaîne de chiffres (idéalement 8 chiffres)
+ * Normalise un numéro gabonais brut pour extraire les 8 chiffres significatifs.
  */
 export function normalizeGabonPhone(raw?: string | null): string {
   if (!raw) return '';
@@ -64,7 +104,6 @@ export function normalizeGabonPhone(raw?: string | null): string {
     digits = digits.slice(3);
   }
 
-  // Si on a 9 chiffres et que le premier est un 0 local, retirer au plus un 0
   if (digits.length === 9 && digits.startsWith('0')) {
     digits = digits.slice(1);
   }
@@ -73,11 +112,107 @@ export function normalizeGabonPhone(raw?: string | null): string {
 }
 
 /**
- * Normalise un numéro de téléphone indien brut pour extraire les 10 chiffres significatifs.
- * Gère +91, 0091, le préfixe 91 si longueur > 10, ainsi que le 0 initial local (11 chiffres).
- *
- * @param raw Numéro brut (+91 98765 43210, 09876543210, etc.)
- * @returns Chaîne de chiffres (idéalement 10 chiffres)
+ * Normalise un numéro camerounais brut pour extraire les 9 chiffres significatifs.
+ */
+export function normalizeCameroonPhone(raw?: string | null): string {
+  if (!raw) return '';
+  let digits = raw.replace(/\D/g, '');
+
+  if (digits.startsWith('00237')) {
+    digits = digits.slice(5);
+  } else if (digits.startsWith('237') && digits.length > 9) {
+    digits = digits.slice(3);
+  }
+
+  if (digits.length === 10 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+
+  return digits;
+}
+
+/**
+ * Normalise un numéro sénégalais brut pour extraire les 9 chiffres significatifs.
+ */
+export function normalizeSenegalPhone(raw?: string | null): string {
+  if (!raw) return '';
+  let digits = raw.replace(/\D/g, '');
+
+  if (digits.startsWith('00221')) {
+    digits = digits.slice(5);
+  } else if (digits.startsWith('221') && digits.length > 9) {
+    digits = digits.slice(3);
+  }
+
+  if (digits.length === 10 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+
+  return digits;
+}
+
+/**
+ * Normalise un numéro malien brut pour extraire les 8 chiffres significatifs.
+ */
+export function normalizeMaliPhone(raw?: string | null): string {
+  if (!raw) return '';
+  let digits = raw.replace(/\D/g, '');
+
+  if (digits.startsWith('00223')) {
+    digits = digits.slice(5);
+  } else if (digits.startsWith('223') && digits.length > 8) {
+    digits = digits.slice(3);
+  }
+
+  if (digits.length === 9 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+
+  return digits;
+}
+
+/**
+ * Normalise un numéro togolais brut pour extraire les 8 chiffres significatifs.
+ */
+export function normalizeTogoPhone(raw?: string | null): string {
+  if (!raw) return '';
+  let digits = raw.replace(/\D/g, '');
+
+  if (digits.startsWith('00228')) {
+    digits = digits.slice(5);
+  } else if (digits.startsWith('228') && digits.length > 8) {
+    digits = digits.slice(3);
+  }
+
+  if (digits.length === 9 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+
+  return digits;
+}
+
+/**
+ * Normalise un numéro ghanéen brut pour extraire les 9 chiffres significatifs.
+ */
+export function normalizeGhanaPhone(raw?: string | null): string {
+  if (!raw) return '';
+  let digits = raw.replace(/\D/g, '');
+
+  if (digits.startsWith('00233')) {
+    digits = digits.slice(5);
+  } else if (digits.startsWith('233') && digits.length > 9) {
+    digits = digits.slice(3);
+  }
+
+  if (digits.length === 10 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+
+  return digits;
+}
+
+/**
+ * Normalise un numéro indien brut pour extraire les 10 chiffres significatifs.
  */
 export function normalizeIndiaPhone(raw?: string | null): string {
   if (!raw) return '';
@@ -89,7 +224,6 @@ export function normalizeIndiaPhone(raw?: string | null): string {
     digits = digits.slice(2);
   }
 
-  // Si l'utilisateur saisit un 0 initial (numérotation nationale à 11 chiffres)
   if (digits.length === 11 && digits.startsWith('0')) {
     digits = digits.slice(1);
   }
@@ -98,80 +232,138 @@ export function normalizeIndiaPhone(raw?: string | null): string {
 }
 
 /**
- * Normalise un numéro selon le pays sélectionné ou par détection automatique du préfixe.
+ * Détecte le pays à partir de l'indicatif international présent dans la chaîne.
  */
-export function normalizePhone(raw?: string | null, country: SupportedCountry = 'GA'): string {
-  if (!raw) return '';
+export function detectCountryFromPhone(raw?: string | null): SupportedCountry | null {
+  if (!raw) return null;
   const trimmed = raw.trim();
-  if (trimmed.startsWith('+91') || trimmed.startsWith('0091')) {
-    return normalizeIndiaPhone(trimmed);
-  }
-  if (trimmed.startsWith('+241') || trimmed.startsWith('00241')) {
-    return normalizeGabonPhone(trimmed);
-  }
-  return country === 'IN' ? normalizeIndiaPhone(trimmed) : normalizeGabonPhone(trimmed);
+
+  // 1. Détection prioritaire avec préfixe international explicite (+ ou 00)
+  if (trimmed.startsWith('+241') || trimmed.startsWith('00241')) return 'GA';
+  if (trimmed.startsWith('+237') || trimmed.startsWith('00237')) return 'CM';
+  if (trimmed.startsWith('+221') || trimmed.startsWith('00221')) return 'SN';
+  if (trimmed.startsWith('+223') || trimmed.startsWith('00223')) return 'ML';
+  if (trimmed.startsWith('+228') || trimmed.startsWith('00228')) return 'TG';
+  if (trimmed.startsWith('+233') || trimmed.startsWith('00233')) return 'GH';
+  if (trimmed.startsWith('+91') || trimmed.startsWith('0091')) return 'IN';
+
+  // 2. Détection sur chaîne de chiffres complète incluant l'indicatif
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.startsWith('237') && digits.length === 12) return 'CM';
+  if (digits.startsWith('221') && digits.length === 12) return 'SN';
+  if (digits.startsWith('223') && digits.length === 11) return 'ML';
+  if (digits.startsWith('228') && digits.length === 11) return 'TG';
+  if (digits.startsWith('233') && digits.length === 12) return 'GH';
+  if (digits.startsWith('91') && digits.length === 12) return 'IN';
+  if (digits.startsWith('241') && (digits.length === 11 || digits.length === 12)) return 'GA';
+
+  return null;
 }
 
 /**
- * Convertit en format international E.164 (+241XXXXXXXX ou +91XXXXXXXXXX).
- * Ne contient jamais le 0 local pour le Gabon. Utilisé pour l'enregistrement du compte en base.
+ * Normalise un numéro selon le pays sélectionné ou par détection automatique de l'indicatif.
+ */
+export function normalizePhone(raw?: string | null, country: SupportedCountry = 'GA'): string {
+  if (!raw) return '';
+  const detected = detectCountryFromPhone(raw);
+  const targetCountry = detected || country;
+
+  switch (targetCountry) {
+    case 'CM':
+      return normalizeCameroonPhone(raw);
+    case 'SN':
+      return normalizeSenegalPhone(raw);
+    case 'ML':
+      return normalizeMaliPhone(raw);
+    case 'TG':
+      return normalizeTogoPhone(raw);
+    case 'GH':
+      return normalizeGhanaPhone(raw);
+    case 'IN':
+      return normalizeIndiaPhone(raw);
+    case 'GA':
+    default:
+      return normalizeGabonPhone(raw);
+  }
+}
+
+/**
+ * Convertit en format international E.164.
+ * Pour le Gabon : ne contient jamais le 0 local (+241XXXXXXXX).
  */
 export function toE164(digits: string, country: SupportedCountry = 'GA'): string {
   if (!digits) return '';
-  const trimmed = digits.trim();
-  if (country === 'IN' || trimmed.startsWith('+91') || trimmed.startsWith('0091')) {
-    const clean = normalizeIndiaPhone(trimmed);
-    return `+91${clean}`;
+  const detected = detectCountryFromPhone(digits);
+  const targetCountry = detected || country;
+
+  switch (targetCountry) {
+    case 'CM':
+      return `+237${normalizeCameroonPhone(digits)}`;
+    case 'SN':
+      return `+221${normalizeSenegalPhone(digits)}`;
+    case 'ML':
+      return `+223${normalizeMaliPhone(digits)}`;
+    case 'TG':
+      return `+228${normalizeTogoPhone(digits)}`;
+    case 'GH':
+      return `+233${normalizeGhanaPhone(digits)}`;
+    case 'IN':
+      return `+91${normalizeIndiaPhone(digits)}`;
+    case 'GA':
+    default:
+      return `+241${normalizeGabonPhone(digits)}`;
   }
-  const clean = normalizeGabonPhone(trimmed);
-  return `+241${clean}`;
 }
 
 /**
  * Convertit un numéro en format international SMS :
- * - Gabon : format international SMS à 9 chiffres (+2410XXXXXXXX)
- * - Inde  : format international standard à 10 chiffres (+91XXXXXXXXXX)
- *
- * Utilisé UNIQUEMENT pour l'envoi du SMS OTP (signInWithPhoneNumber).
- * Le compte utilisateur dans Firebase (Auth, Firestore, e-mail synthétique)
- * est quant à lui TOUJOURS enregistré sans 0 additionnel.
+ * - Gabon : format international SMS à 9 chiffres avec 0 local (+2410XXXXXXXX)
+ * - Autres pays : format international standard E.164 (+237..., +221..., +223..., +228..., +233..., +91...)
  */
 export function toSmsE164(raw?: string | null, country: SupportedCountry = 'GA'): string {
   if (!raw) return '';
-  const trimmed = raw.trim();
-  if (country === 'IN' || trimmed.startsWith('+91') || trimmed.startsWith('0091')) {
-    const clean = normalizeIndiaPhone(trimmed);
-    return `+91${clean}`;
+  const detected = detectCountryFromPhone(raw);
+  const targetCountry = detected || country;
+
+  if (targetCountry === 'GA') {
+    const clean = normalizeGabonPhone(raw);
+    return `+2410${clean}`;
   }
-  const clean = normalizeGabonPhone(trimmed);
-  return `+2410${clean}`;
+
+  return toE164(raw, targetCountry);
 }
 
 /**
  * Convertit les chiffres en e-mail synthétique unique (<chiffres>@bizbooster.ga).
- * - Gabon : <8chiffres>@bizbooster.ga (sans le 0 local)
- * - Inde  : <10chiffres>@bizbooster.ga
+ * - Gabon : <8chiffres>@bizbooster.ga (conforme aux comptes existants)
+ * - Autres pays : <indicatifSansPlus><chiffres>@bizbooster.ga (garantit l'unicité et zéro collision)
  */
 export function toSyntheticEmail(digits: string, country?: SupportedCountry): string {
   if (!digits) return '';
-  const trimmed = digits.trim();
-  let clean: string;
-  if (
-    country === 'IN' ||
-    trimmed.startsWith('+91') ||
-    trimmed.startsWith('0091') ||
-    (country !== 'GA' && trimmed.replace(/\D/g, '').length === 10)
-  ) {
-    clean = normalizeIndiaPhone(digits);
-  } else {
-    clean = normalizeGabonPhone(digits);
+  const detected = detectCountryFromPhone(digits);
+  const targetCountry = country || detected || 'GA';
+
+  switch (targetCountry) {
+    case 'CM':
+      return `237${normalizeCameroonPhone(digits)}@bizbooster.ga`;
+    case 'SN':
+      return `221${normalizeSenegalPhone(digits)}@bizbooster.ga`;
+    case 'ML':
+      return `223${normalizeMaliPhone(digits)}@bizbooster.ga`;
+    case 'TG':
+      return `228${normalizeTogoPhone(digits)}@bizbooster.ga`;
+    case 'GH':
+      return `233${normalizeGhanaPhone(digits)}@bizbooster.ga`;
+    case 'IN':
+      return `91${normalizeIndiaPhone(digits)}@bizbooster.ga`;
+    case 'GA':
+    default:
+      return `${normalizeGabonPhone(digits)}@bizbooster.ga`;
   }
-  return `${clean}@bizbooster.ga`;
 }
 
 /**
  * Détecte l'opérateur mobile gabonais à partir des deux premiers chiffres.
- * Renvoie null si préfixe inconnu ou numéro non gabonais.
  */
 export function detectOperator(digits: string): GabonOperator | null {
   const clean = normalizeGabonPhone(digits);
@@ -197,6 +389,51 @@ export function isValidGabonMobile(digits: string): boolean {
 }
 
 /**
+ * Vérifie si le numéro est un mobile camerounais valide (9 chiffres commençant par 6).
+ */
+export function isValidCameroonMobile(digits: string): boolean {
+  const clean = normalizeCameroonPhone(digits);
+  if (clean.length !== 9) return false;
+  return /^6\d{8}$/.test(clean);
+}
+
+/**
+ * Vérifie si le numéro est un mobile sénégalais valide (9 chiffres commençant par 7).
+ */
+export function isValidSenegalMobile(digits: string): boolean {
+  const clean = normalizeSenegalPhone(digits);
+  if (clean.length !== 9) return false;
+  return /^7[05-8]\d{7}$/.test(clean);
+}
+
+/**
+ * Vérifie si le numéro est un mobile malien valide (8 chiffres commençant par 5, 6, 7, 8 ou 9).
+ */
+export function isValidMaliMobile(digits: string): boolean {
+  const clean = normalizeMaliPhone(digits);
+  if (clean.length !== 8) return false;
+  return /^[5-9]\d{7}$/.test(clean);
+}
+
+/**
+ * Vérifie si le numéro est un mobile togolais valide (8 chiffres commençant par 9 ou 7).
+ */
+export function isValidTogoMobile(digits: string): boolean {
+  const clean = normalizeTogoPhone(digits);
+  if (clean.length !== 8) return false;
+  return /^[79]\d{7}$/.test(clean);
+}
+
+/**
+ * Vérifie si le numéro est un mobile ghanéen valide (9 chiffres commençant par 2 ou 5).
+ */
+export function isValidGhanaMobile(digits: string): boolean {
+  const clean = normalizeGhanaPhone(digits);
+  if (clean.length !== 9) return false;
+  return /^(2[03-9]|5[0-9])\d{7}$/.test(clean);
+}
+
+/**
  * Vérifie si le numéro est un mobile indien valide (10 chiffres commençant par 6, 7, 8 ou 9).
  */
 export function isValidIndiaMobile(digits: string): boolean {
@@ -209,7 +446,23 @@ export function isValidIndiaMobile(digits: string): boolean {
  * Vérifie si le numéro est valide selon le pays.
  */
 export function isValidPhone(digits: string, country: SupportedCountry = 'GA'): boolean {
-  return country === 'IN' ? isValidIndiaMobile(digits) : isValidGabonMobile(digits);
+  switch (country) {
+    case 'CM':
+      return isValidCameroonMobile(digits);
+    case 'SN':
+      return isValidSenegalMobile(digits);
+    case 'ML':
+      return isValidMaliMobile(digits);
+    case 'TG':
+      return isValidTogoMobile(digits);
+    case 'GH':
+      return isValidGhanaMobile(digits);
+    case 'IN':
+      return isValidIndiaMobile(digits);
+    case 'GA':
+    default:
+      return isValidGabonMobile(digits);
+  }
 }
 
 /**
@@ -227,27 +480,69 @@ export function formatGabonDisplay(digits: string): string {
  * Formate le numéro pour affichage selon le pays.
  */
 export function formatDisplayPhone(digits: string, country: SupportedCountry = 'GA'): string {
-  if (country === 'IN' || digits.startsWith('+91')) {
-    const clean = normalizeIndiaPhone(digits);
-    if (clean.length === 10) {
-      return `+91 ${clean.slice(0, 5)} ${clean.slice(5, 10)}`;
+  const detected = detectCountryFromPhone(digits);
+  const targetCountry = detected || country;
+
+  switch (targetCountry) {
+    case 'CM': {
+      const clean = normalizeCameroonPhone(digits);
+      if (clean.length === 9) {
+        return `+237 ${clean.slice(0, 3)} ${clean.slice(3, 5)} ${clean.slice(5, 7)} ${clean.slice(7, 9)}`;
+      }
+      return clean ? `+237 ${clean}` : '';
     }
-    return clean ? `+91 ${clean}` : '';
+    case 'SN': {
+      const clean = normalizeSenegalPhone(digits);
+      if (clean.length === 9) {
+        return `+221 ${clean.slice(0, 2)} ${clean.slice(2, 5)} ${clean.slice(5, 7)} ${clean.slice(7, 9)}`;
+      }
+      return clean ? `+221 ${clean}` : '';
+    }
+    case 'ML': {
+      const clean = normalizeMaliPhone(digits);
+      if (clean.length === 8) {
+        return `+223 ${clean.slice(0, 2)} ${clean.slice(2, 4)} ${clean.slice(4, 6)} ${clean.slice(6, 8)}`;
+      }
+      return clean ? `+223 ${clean}` : '';
+    }
+    case 'TG': {
+      const clean = normalizeTogoPhone(digits);
+      if (clean.length === 8) {
+        return `+228 ${clean.slice(0, 2)} ${clean.slice(2, 4)} ${clean.slice(4, 6)} ${clean.slice(6, 8)}`;
+      }
+      return clean ? `+228 ${clean}` : '';
+    }
+    case 'GH': {
+      const clean = normalizeGhanaPhone(digits);
+      if (clean.length === 9) {
+        return `+233 ${clean.slice(0, 2)} ${clean.slice(2, 5)} ${clean.slice(5, 9)}`;
+      }
+      return clean ? `+233 ${clean}` : '';
+    }
+    case 'IN': {
+      const clean = normalizeIndiaPhone(digits);
+      if (clean.length === 10) {
+        return `+91 ${clean.slice(0, 5)} ${clean.slice(5, 10)}`;
+      }
+      return clean ? `+91 ${clean}` : '';
+    }
+    case 'GA':
+    default:
+      return formatGabonDisplay(digits);
   }
-  return formatGabonDisplay(digits);
 }
 
 /**
  * Traduction stricte des codes d'erreur d'authentification en français (Annexe A).
- * N'utilise pas de tirets cadratins.
  */
 export function getAuthErrorMessage(err: unknown, country: SupportedCountry = 'GA'): string {
   const errorObj = (err || {}) as { code?: string; message?: string };
   const code = (errorObj.code || '').toLowerCase();
   const rawMessage = errorObj.message || '';
 
-  // Journalisation du code complet d'erreur
   console.error('Code d\'erreur d\'authentification capturé:', code, errorObj);
+
+  const countryInfo = COUNTRIES[country] || COUNTRIES.GA;
 
   switch (code) {
     case 'auth/invalid-credential':
@@ -272,17 +567,13 @@ export function getAuthErrorMessage(err: unknown, country: SupportedCountry = 'G
       return 'Session expirée. Recommencez la vérification.';
 
     case 'auth/invalid-phone-number':
-      return country === 'IN'
-        ? 'Numéro indien invalide (10 chiffres).'
-        : 'Numéro gabonais invalide (8 chiffres).';
+      return `Numéro ${countryInfo.name.toLowerCase()} invalide (${countryInfo.digitsLength} chiffres).`;
 
     case 'auth/quota-exceeded':
       return 'Service SMS momentanément saturé. Réessayez plus tard.';
 
     case 'auth/operation-not-allowed':
-      return country === 'IN'
-        ? 'Connexion par SMS non activée pour l\'Inde. (Configuration à corriger en console.)'
-        : 'Connexion par SMS non activée pour le Gabon. (Configuration à corriger en console.)';
+      return `Connexion par SMS non activée pour ${countryInfo.name}. (Configuration à corriger en console.)`;
 
     case 'auth/unauthorized-domain':
       return 'Domaine non autorisé. (Configuration à corriger en console.)';
@@ -311,7 +602,7 @@ export function getAuthErrorMessage(err: unknown, country: SupportedCountry = 'G
         return 'Erreur inattendue (error-code:-39). Journalisez l\'erreur complète dans la console et vérifiez la configuration d\'App Check et de reCAPTCHA.';
       }
       if (code) {
-        return `Erreur inattendue (${code}). Journalisez l'erreur complète dans la console et vérifiez la configuration d'App Check et de reCAPTCHA.`;
+        return `Erreur inattendue (${code}). Journalisez l'erreur complète dans la console et vérifiez la configuration d\'App Check et de reCAPTCHA.`;
       }
       return rawMessage || 'Une erreur inattendue est survenue. Veuillez réessayer.';
   }

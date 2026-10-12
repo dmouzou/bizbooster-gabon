@@ -39,7 +39,7 @@ function normalizeGabonPhone(input: string): {
 }
 
 /**
- * Normalise un numéro (Gabon +241 ou Inde +91).
+ * Normalise un numéro international pour les 7 pays supportés.
  *
  * @param {string} input - Le numéro saisi.
  * @return {{e164: string, rawDigits: string}} Format E.164 et chiffres bruts.
@@ -50,6 +50,32 @@ function normalizeInternationalPhone(input: string): {
 } {
   const str = input || "";
   const digits = str.replace(/\D/g, "");
+
+  if (str.startsWith("+237") || digits.startsWith("00237")) {
+    const clean = digits.startsWith("00237") ?
+      digits.slice(5) : digits.slice(3);
+    return {e164: `+237${clean}`, rawDigits: clean};
+  }
+  if (str.startsWith("+221") || digits.startsWith("00221")) {
+    const clean = digits.startsWith("00221") ?
+      digits.slice(5) : digits.slice(3);
+    return {e164: `+221${clean}`, rawDigits: clean};
+  }
+  if (str.startsWith("+223") || digits.startsWith("00223")) {
+    const clean = digits.startsWith("00223") ?
+      digits.slice(5) : digits.slice(3);
+    return {e164: `+223${clean}`, rawDigits: clean};
+  }
+  if (str.startsWith("+228") || digits.startsWith("00228")) {
+    const clean = digits.startsWith("00228") ?
+      digits.slice(5) : digits.slice(3);
+    return {e164: `+228${clean}`, rawDigits: clean};
+  }
+  if (str.startsWith("+233") || digits.startsWith("00233")) {
+    const clean = digits.startsWith("00233") ?
+      digits.slice(5) : digits.slice(3);
+    return {e164: `+233${clean}`, rawDigits: clean};
+  }
   if (
     str.startsWith("+91") ||
     digits.startsWith("0091") ||
@@ -64,10 +90,7 @@ function normalizeInternationalPhone(input: string): {
     if (clean.length === 11 && clean.startsWith("0")) {
       clean = clean.slice(1);
     }
-    return {
-      e164: `+91${clean}`,
-      rawDigits: clean,
-    };
+    return {e164: `+91${clean}`, rawDigits: clean};
   }
   return normalizeGabonPhone(input);
 }

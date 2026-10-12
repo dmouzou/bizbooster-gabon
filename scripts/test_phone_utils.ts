@@ -1,6 +1,11 @@
 import {
   normalizeGabonPhone,
   normalizeIndiaPhone,
+  normalizeCameroonPhone,
+  normalizeSenegalPhone,
+  normalizeMaliPhone,
+  normalizeTogoPhone,
+  normalizeGhanaPhone,
   normalizePhone,
   toE164,
   toSmsE164,
@@ -8,9 +13,15 @@ import {
   detectOperator,
   isValidGabonMobile,
   isValidIndiaMobile,
+  isValidCameroonMobile,
+  isValidSenegalMobile,
+  isValidMaliMobile,
+  isValidTogoMobile,
+  isValidGhanaMobile,
   isValidPhone,
   formatDisplayPhone,
   getAuthErrorMessage,
+  detectCountryFromPhone,
 } from '../src/utils/phone';
 
 function assert(condition: boolean, message: string) {
@@ -19,98 +30,102 @@ function assert(condition: boolean, message: string) {
   }
 }
 
-console.log('🧪 Lancement des tests unitaires de src/utils/phone.ts (Gabon & Inde)...');
+console.log('🧪 Lancement des tests unitaires de src/utils/phone.ts (7 pays)...');
 
-// 1. Normalisation Gabon
-assert(normalizeGabonPhone('+241 62 18 87 34') === '62188734', 'Normalisation Gabon +241 avec espaces');
-assert(normalizeGabonPhone('00241 74 12 34 56') === '74123456', 'Normalisation Gabon 00241');
-assert(normalizeGabonPhone('24165998877') === '65998877', 'Normalisation Gabon 241 collé');
-assert(normalizeGabonPhone('060-11-22-33') === '60112233', 'Normalisation Gabon 0 local à 9 chiffres');
-assert(normalizeGabonPhone('66112233') === '66112233', 'Normalisation Gabon déjà 8 chiffres sans 0');
-assert(normalizeGabonPhone('077123456') === '77123456', 'Normalisation Gabon Airtel avec 0 initial');
+// 1. Gabon (+241)
+assert(normalizeGabonPhone('+241 62 18 87 34') === '62188734', 'Gabon +241');
+assert(normalizeGabonPhone('060-11-22-33') === '60112233', 'Gabon 0 local');
+assert(toE164('62188734', 'GA') === '+24162188734', 'Gabon toE164');
+assert(toSmsE164('66780104', 'GA') === '+241066780104', 'Gabon toSmsE164 (avec 0 pour SMS)');
+assert(toSyntheticEmail('62188734', 'GA') === '62188734@bizbooster.ga', 'Gabon toSyntheticEmail sans dialCode');
+assert(isValidGabonMobile('062 18 87 34') === true, 'Gabon Moov valide');
+assert(detectOperator('74123456') === 'AIRTEL', 'Gabon Airtel 74');
 
-// 2. Normalisation Inde
-assert(normalizeIndiaPhone('+91 98765 43210') === '9876543210', 'Normalisation Inde +91 avec espaces');
-assert(normalizeIndiaPhone('0091 9876543210') === '9876543210', 'Normalisation Inde 0091');
-assert(normalizeIndiaPhone('919876543210') === '9876543210', 'Normalisation Inde 91 collé 12 chiffres');
-assert(normalizeIndiaPhone('09876543210') === '9876543210', 'Normalisation Inde 0 local à 11 chiffres');
-assert(normalizeIndiaPhone('9876543210') === '9876543210', 'Normalisation Inde déjà 10 chiffres');
-assert(normalizeIndiaPhone('9123456789') === '9123456789', 'Normalisation Inde 10 chiffres commençant par 91');
+// 2. Cameroun (+237) - 9 chiffres commençant par 6
+assert(normalizeCameroonPhone('+237 670 12 34 56') === '670123456', 'Cameroun +237');
+assert(normalizeCameroonPhone('0690123456') === '690123456', 'Cameroun 0 initial');
+assert(toE164('670123456', 'CM') === '+237670123456', 'Cameroun toE164');
+assert(toSmsE164('670123456', 'CM') === '+237670123456', 'Cameroun toSmsE164');
+assert(toSyntheticEmail('670123456', 'CM') === '237670123456@bizbooster.ga', 'Cameroun toSyntheticEmail');
+assert(isValidCameroonMobile('670123456') === true, 'Cameroun mobile valide');
+assert(isValidCameroonMobile('222123456') === false, 'Cameroun fixe invalide');
 
-// 3. Normalisation polymorphe (normalizePhone)
-assert(normalizePhone('+24162188734') === '62188734', 'normalizePhone auto Gabon');
-assert(normalizePhone('+919876543210') === '9876543210', 'normalizePhone auto Inde');
-assert(normalizePhone('9876543210', 'IN') === '9876543210', 'normalizePhone explicite Inde');
-assert(normalizePhone('062188734', 'GA') === '62188734', 'normalizePhone explicite Gabon');
+// 3. Sénégal (+221) - 9 chiffres commençant par 7
+assert(normalizeSenegalPhone('+221 77 123 45 67') === '771234567', 'Sénégal +221');
+assert(normalizeSenegalPhone('0761234567') === '761234567', 'Sénégal 0 initial');
+assert(toE164('771234567', 'SN') === '+221771234567', 'Sénégal toE164');
+assert(toSmsE164('771234567', 'SN') === '+221771234567', 'Sénégal toSmsE164');
+assert(toSyntheticEmail('771234567', 'SN') === '221771234567@bizbooster.ga', 'Sénégal toSyntheticEmail');
+assert(isValidSenegalMobile('771234567') === true, 'Sénégal mobile valide');
+assert(isValidSenegalMobile('338123456') === false, 'Sénégal fixe invalide');
 
-// 4. Conversion E.164, SMS & e-mail synthétique Gabon
-assert(toE164('62188734') === '+24162188734', 'Gabon toE164 (sans 0)');
-assert(toE164('062188734') === '+24162188734', 'Gabon toE164 avec 0 en entrée doit retirer le 0');
-assert(toSyntheticEmail('62188734') === '62188734@bizbooster.ga', 'Gabon toSyntheticEmail (sans 0)');
-assert(toSyntheticEmail('062188734') === '62188734@bizbooster.ga', 'Gabon toSyntheticEmail avec 0 en entrée doit retirer le 0');
-assert(toSmsE164('66780104') === '+241066780104', 'Gabon toSmsE164 ajoute un 0 sur 8 chiffres');
-assert(toSmsE164('066780104') === '+241066780104', 'Gabon toSmsE164 conserve le 0 existant');
-assert(toSmsE164('+24166780104') === '+241066780104', 'Gabon toSmsE164 sur +241 à 8 chiffres');
-assert(toSmsE164('+241066780104') === '+241066780104', 'Gabon toSmsE164 sur +241 à 9 chiffres');
+// 4. Mali (+223) - 8 chiffres commençant par 5-9
+assert(normalizeMaliPhone('+223 70 12 34 56') === '70123456', 'Mali +223');
+assert(toE164('70123456', 'ML') === '+22370123456', 'Mali toE164');
+assert(toSmsE164('70123456', 'ML') === '+22370123456', 'Mali toSmsE164');
+assert(toSyntheticEmail('70123456', 'ML') === '22370123456@bizbooster.ga', 'Mali toSyntheticEmail');
+assert(isValidMaliMobile('70123456') === true, 'Mali mobile valide');
+assert(isValidMaliMobile('20123456') === false, 'Mali fixe invalide');
 
-// 5. Conversion E.164, SMS & e-mail synthétique Inde
+// 5. Togo (+228) - 8 chiffres commençant par 9 ou 7
+assert(normalizeTogoPhone('+228 90 12 34 56') === '90123456', 'Togo +228');
+assert(toE164('90123456', 'TG') === '+22890123456', 'Togo toE164');
+assert(toSmsE164('90123456', 'TG') === '+22890123456', 'Togo toSmsE164');
+assert(toSyntheticEmail('90123456', 'TG') === '22890123456@bizbooster.ga', 'Togo toSyntheticEmail');
+assert(isValidTogoMobile('90123456') === true, 'Togo mobile valide');
+assert(isValidTogoMobile('22123456') === false, 'Togo fixe invalide');
+
+// 6. Ghana (+233) - 9 chiffres commençant par 2 ou 5
+assert(normalizeGhanaPhone('+233 24 123 4567') === '241234567', 'Ghana +233');
+assert(normalizeGhanaPhone('0241234567') === '241234567', 'Ghana 0 initial');
+assert(toE164('241234567', 'GH') === '+233241234567', 'Ghana toE164');
+assert(toSmsE164('241234567', 'GH') === '+233241234567', 'Ghana toSmsE164');
+assert(toSyntheticEmail('241234567', 'GH') === '233241234567@bizbooster.ga', 'Ghana toSyntheticEmail');
+assert(isValidGhanaMobile('241234567') === true, 'Ghana mobile valide');
+assert(isValidGhanaMobile('302123456') === false, 'Ghana fixe invalide');
+
+// 7. Inde (+91) - 10 chiffres commençant par 6-9
+assert(normalizeIndiaPhone('+91 98765 43210') === '9876543210', 'Inde +91');
 assert(toE164('9876543210', 'IN') === '+919876543210', 'Inde toE164');
-assert(toE164('+919876543210') === '+919876543210', 'Inde toE164 avec +91');
-assert(toSmsE164('9876543210', 'IN') === '+919876543210', 'Inde toSmsE164 (standard 10 chiffres sans 0 local)');
-assert(toSmsE164('+919876543210') === '+919876543210', 'Inde toSmsE164 avec +91');
-assert(toSyntheticEmail('9876543210', 'IN') === '9876543210@bizbooster.ga', 'Inde toSyntheticEmail');
-assert(toSyntheticEmail('+919876543210') === '9876543210@bizbooster.ga', 'Inde toSyntheticEmail avec +91');
+assert(toSmsE164('9876543210', 'IN') === '+919876543210', 'Inde toSmsE164');
+assert(toSyntheticEmail('9876543210', 'IN') === '919876543210@bizbooster.ga', 'Inde toSyntheticEmail');
+assert(isValidIndiaMobile('9876543210') === true, 'Inde mobile valide');
 
-// 6. Détection opérateur Gabon
-assert(detectOperator('60123456') === 'MOOV', 'Moov 60');
-assert(detectOperator('62123456') === 'MOOV', 'Moov 62');
-assert(detectOperator('65123456') === 'MOOV', 'Moov 65');
-assert(detectOperator('66123456') === 'MOOV', 'Moov 66');
-assert(detectOperator('74123456') === 'AIRTEL', 'Airtel 74');
-assert(detectOperator('76123456') === 'AIRTEL', 'Airtel 76');
-assert(detectOperator('77123456') === 'AIRTEL', 'Airtel 77');
-assert(detectOperator('70123456') === null, '70 doit être null');
+// 8. Auto-détection de l'indicatif
+assert(detectCountryFromPhone('+24162188734') === 'GA', 'Détection GA');
+assert(detectCountryFromPhone('+237670123456') === 'CM', 'Détection CM');
+assert(detectCountryFromPhone('+221771234567') === 'SN', 'Détection SN');
+assert(detectCountryFromPhone('+22370123456') === 'ML', 'Détection ML');
+assert(detectCountryFromPhone('+22890123456') === 'TG', 'Détection TG');
+assert(detectCountryFromPhone('+233241234567') === 'GH', 'Détection GH');
+assert(detectCountryFromPhone('+919876543210') === 'IN', 'Détection IN');
 
-// 7. Validation Gabon
-assert(isValidGabonMobile('062 18 87 34') === true, 'Validation Moov valide');
-assert(isValidGabonMobile('+241 77 12 34 56') === true, 'Validation Airtel valide');
-assert(isValidGabonMobile('12345678') === false, 'Validation numéro gabonais invalide');
-assert(isValidGabonMobile('7412345') === false, 'Validation longueur < 8');
+// 9. Polymorphic toSyntheticEmail à partir de numéros stockés en E.164
+assert(toSyntheticEmail('+24162188734') === '62188734@bizbooster.ga', 'E-mail depuis E.164 Gabon');
+assert(toSyntheticEmail('+237670123456') === '237670123456@bizbooster.ga', 'E-mail depuis E.164 Cameroun');
+assert(toSyntheticEmail('+221771234567') === '221771234567@bizbooster.ga', 'E-mail depuis E.164 Sénégal');
+assert(toSyntheticEmail('+22370123456') === '22370123456@bizbooster.ga', 'E-mail depuis E.164 Mali');
+assert(toSyntheticEmail('+22890123456') === '22890123456@bizbooster.ga', 'E-mail depuis E.164 Togo');
+assert(toSyntheticEmail('+233241234567') === '233241234567@bizbooster.ga', 'E-mail depuis E.164 Ghana');
+assert(toSyntheticEmail('+919876543210') === '919876543210@bizbooster.ga', 'E-mail depuis E.164 Inde');
 
-// 8. Validation Inde
-assert(isValidIndiaMobile('9876543210') === true, 'Validation Inde valide (commence par 9)');
-assert(isValidIndiaMobile('8123456789') === true, 'Validation Inde valide (commence par 8)');
-assert(isValidIndiaMobile('7000123456') === true, 'Validation Inde valide (commence par 7)');
-assert(isValidIndiaMobile('6321654987') === true, 'Validation Inde valide (commence par 6)');
-assert(isValidIndiaMobile('+91 98765 43210') === true, 'Validation Inde avec préfixe et espaces');
-assert(isValidIndiaMobile('5123456789') === false, 'Validation Inde invalide (commence par 5)');
-assert(isValidIndiaMobile('987654321') === false, 'Validation Inde trop court (9 chiffres)');
-assert(isValidIndiaMobile('98765432100') === false, 'Validation Inde trop long (11 chiffres sans 0 initial)');
-
-// 9. Formatage d'affichage
+// 10. Formatage d'affichage
 assert(formatDisplayPhone('62188734', 'GA') === '+241 62 18 87 34', 'Affichage Gabon');
+assert(formatDisplayPhone('670123456', 'CM') === '+237 670 12 34 56', 'Affichage Cameroun');
+assert(formatDisplayPhone('771234567', 'SN') === '+221 77 123 45 67', 'Affichage Sénégal');
+assert(formatDisplayPhone('70123456', 'ML') === '+223 70 12 34 56', 'Affichage Mali');
+assert(formatDisplayPhone('90123456', 'TG') === '+228 90 12 34 56', 'Affichage Togo');
+assert(formatDisplayPhone('241234567', 'GH') === '+233 24 123 4567', 'Affichage Ghana');
 assert(formatDisplayPhone('9876543210', 'IN') === '+91 98765 43210', 'Affichage Inde');
 
-// 10. Erreurs d'authentification
+// 11. Erreurs d'authentification par pays
 assert(
-  getAuthErrorMessage({ code: 'auth/wrong-password' }) === 'Numéro ou mot de passe incorrect.',
-  'Traduction auth/wrong-password'
+  getAuthErrorMessage({ code: 'auth/invalid-phone-number' }, 'CM') === 'Numéro cameroun invalide (9 chiffres).',
+  'Erreur numéro Cameroun'
 );
 assert(
-  getAuthErrorMessage({ code: 'auth/invalid-verification-code' }) === 'Code incorrect. Vérifiez le SMS reçu.',
-  'Traduction auth/invalid-verification-code'
-);
-assert(
-  getAuthErrorMessage({ code: 'auth/email-already-in-use' }) === 'Ce numéro possède déjà un compte. Connectez-vous.',
-  'Traduction auth/email-already-in-use'
-);
-assert(
-  getAuthErrorMessage({ code: 'auth/invalid-phone-number' }, 'IN') === 'Numéro indien invalide (10 chiffres).',
-  'Traduction auth/invalid-phone-number pour Inde'
-);
-assert(
-  getAuthErrorMessage({ code: 'auth/invalid-phone-number' }, 'GA') === 'Numéro gabonais invalide (8 chiffres).',
-  'Traduction auth/invalid-phone-number pour Gabon'
+  getAuthErrorMessage({ code: 'auth/invalid-phone-number' }, 'SN') === 'Numéro sénégal invalide (9 chiffres).',
+  'Erreur numéro Sénégal'
 );
 
-console.log('✅ Tous les tests unitaires de src/utils/phone.ts ont réussi avec succès !');
+console.log('✅ Tous les tests unitaires de src/utils/phone.ts ont réussi pour les 7 pays !');

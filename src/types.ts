@@ -231,10 +231,10 @@ export type UserRole = 'USER' | 'ADMIN' | 'SUPER_ADMIN';
 
 export interface UserProfile {
   id: string;
-  contactPhone?: string; // Format international E.164 (+241... ou +91...)
+  contactPhone?: string; // Format international E.164 (+241..., +237..., etc.)
   phoneNumber?: string;
   name: string;
-  country?: 'GA' | 'IN';
+  country?: 'GA' | 'IN' | 'CM' | 'ML' | 'TG' | 'SN' | 'GH';
   operator?: 'AIRTEL' | 'MOOV' | 'OTHER' | null;
   isVerified: boolean;
   termsAccepted: boolean;
