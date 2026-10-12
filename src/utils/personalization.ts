@@ -1,52 +1,583 @@
 import { Ad, MainCategory, SubscriptionTier, getTierPriority } from '../types';
 
+/**
+ * =================================================================================================
+ * ALGORITHME OFFICIEL DE ROTATION EN TÊTE D'AFFICHE ET CLASSEMENT (BIZBOOSTER GABON)
+ * Refonte Phase 4 : Équitable, borné, déterministe, testable et ultra-performant.
+ * =================================================================================================
+ */
+
+export type EffectiveAdTier = 'VIP' | SubscriptionTier;
+
+export interface RankingConfig {
+  windowDurationMs: number; // 120 min = 7 200 000 ms
+  slotDurationMs: number; // 12 min = 720 000 ms
+  totalSlots: number; // 10 créneaux
+  headBlockRatio: number; // 30% des 20 premières positions
+  headBlockSizeMax: number; // Jamais plus de 6
+  maxAdsPerAdvertiserInHead: number; // Au plus 2 par userId
+  boostDurationDays: number; // 7 jours
+  tierFrequencies: Record<string, number>;
+}
+
+export const DEFAULT_RANKING_CONFIG: RankingConfig = {
+  windowDurationMs: 120 * 60 * 1000,
+  slotDurationMs: 12 * 60 * 1000,
+  totalSlots: 10,
+  headBlockRatio: 0.3,
+  headBlockSizeMax: 6,
+  maxAdsPerAdvertiserInHead: 2,
+  boostDurationDays: 7,
+  tierFrequencies: {
+    STANDARD: 1,
+    PRO: 2,
+    ELITE: 6,
+    BUSINESS: 10,
+    VIP: 10,
+  },
+};
+
+export interface UserSignals {
+  categoryAffinities: Record<string, number>;
+  locationAffinities: Record<string, number>;
+  preferredCategories: string[];
+  preferredProvinces: string[];
+  viewedAdIds: string[];
+}
+
+export interface RankingContext {
+  now: number; // Heure serveur corrigée (ou fallback local)
+  signals: UserSignals; // Préférences et affinités déjà lues (1 seul parse)
+  favoriteIds: string[];
+  searchQuery?: string;
+  config: RankingConfig;
+}
+
+export interface SpotlightInfo {
+  tier: EffectiveAdTier;
+  frequencyPer2Hours: number;
+  dutyCyclePercent: number;
+  totalSlots: number;
+  currentSlot: number;
+  slotDurationMinutes: number;
+  isSpotlightActive: boolean;
+  activeSlots: number[];
+}
+
+export type TierRotationDetails = SpotlightInfo;
+
 const STORAGE_KEYS = {
   CATEGORIES: 'bizbooster_user_cat_affinities',
   LOCATIONS: 'bizbooster_user_loc_affinities',
   HISTORY: 'bizbooster_user_view_history',
+  PREFERENCES: 'bizbooster_user_preferences',
+  INTERACTIONS_TODAY: 'bizbooster_interactions_today',
 };
 
-interface UserPreferences {
+/**
+ * Fonction de hachage 32-bit rapide, déterministe et uniforme (FNV-1a variant).
+ * Fonction pure.
+ */
+export function hashString(str: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 16777619) >>> 0;
+  }
+  return h;
+}
+
+/**
+ * Détermine le palier effectif de l'annonce pour le classement.
+ * Fonction pure.
+ */
+export function getAdEffectiveTier(ad: Ad): EffectiveAdTier {
+  if (ad.isOwnerVip || (ad.ownerTier as any) === 'VIP') return 'VIP';
+  if (ad.ownerTier === 'BUSINESS') return 'BUSINESS';
+  if (ad.ownerTier === 'ELITE') return 'ELITE';
+  if (ad.ownerTier === 'PRO') return 'PRO';
+  return 'STANDARD';
+}
+
+/**
+ * Vérifie si le boost payant est actuellement actif.
+ * Règle Phase 4 : Absence de featuredUntil donne NON actif. Expire dès now >= featuredUntil.
+ * Fonction pure.
+ */
+export function isAdBoostFeatured(ad: Ad, now: number = Date.now()): boolean {
+  if (!ad.isFeatured || !ad.featuredUntil) return false;
+  const exp = new Date(ad.featuredUntil).getTime();
+  if (isNaN(exp)) return false;
+  return exp > now;
+}
+
+/**
+ * Calcule les créneaux d'apparition en tête d'affiche selon le palier.
+ * Sélection des créneaux sans corrélation (Phase 4.2) :
+ * Standard : h % 10 (1 créneau)
+ * Pro : p = h % 5, p et p + 5 (2 créneaux espacés de 60 min)
+ * Élite : 6 créneaux régulièrement répartis par la grille round(i * 10 / 6) pour i = 0..5, décalés de h % 10 modulo 10
+ * Business & VIP : 10 créneaux (100% du temps)
+ * Fonction pure.
+ */
+export function getSpotlightSlots(ad: Ad, now: number = Date.now()): SpotlightInfo {
+  const tier = getAdEffectiveTier(ad);
+  const TWO_HOURS_MS = 2 * 60 * 60 * 1000; // 120 minutes
+  const SLOT_DURATION_MS = 12 * 60 * 1000; // 12 minutes
+  const TOTAL_SLOTS = 10;
+
+  const epoch = Math.floor(now / TWO_HOURS_MS);
+  const currentSlot = Math.floor((now % TWO_HOURS_MS) / SLOT_DURATION_MS);
+  const h = hashString(`${ad.id || 'ad'}:${epoch}`);
+
+  let activeSlots: number[] = [];
+  let frequencyPer2Hours = 1;
+
+  switch (tier) {
+    case 'VIP':
+    case 'BUSINESS':
+      frequencyPer2Hours = 10;
+      activeSlots = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+      break;
+
+    case 'ELITE': {
+      frequencyPer2Hours = 6;
+      const offset = h % TOTAL_SLOTS;
+      const grid = [0, 1, 2, 3, 4, 5].map((i) => Math.round((i * 10) / 6));
+      activeSlots = Array.from(new Set(grid.map((g) => (g + offset) % TOTAL_SLOTS))).sort((a, b) => a - b);
+      break;
+    }
+
+    case 'PRO': {
+      frequencyPer2Hours = 2;
+      const p = h % 5;
+      activeSlots = [p, p + 5].sort((a, b) => a - b);
+      break;
+    }
+
+    case 'STANDARD':
+    default: {
+      frequencyPer2Hours = 1;
+      activeSlots = [h % TOTAL_SLOTS];
+      break;
+    }
+  }
+
+  const isSpotlightActive = activeSlots.includes(currentSlot);
+
+  return {
+    tier,
+    frequencyPer2Hours,
+    dutyCyclePercent: (frequencyPer2Hours / TOTAL_SLOTS) * 100,
+    totalSlots: TOTAL_SLOTS,
+    currentSlot,
+    slotDurationMinutes: 12,
+    isSpotlightActive,
+    activeSlots,
+  };
+}
+
+export const getTierRotationDetails = getSpotlightSlots;
+
+export function isAdSpotlightActive(ad: Ad, now: number = Date.now()): boolean {
+  if (isAdBoostFeatured(ad, now)) return true;
+  return getSpotlightSlots(ad, now).isSpotlightActive;
+}
+
+/**
+ * Calcul du score organique (Niveau 3) sans somme de constantes géantes.
+ * Fraîcheur exponentielle + affinités + préférences explicites + favoris - pénalité vue + pertinence recherche.
+ * Fonction pure.
+ */
+export function computeOrganicScore(
+  ad: Ad,
+  ctx: RankingContext,
+  favCatSet: Set<string>
+): number {
+  let score = 0;
+
+  // 1. Fraîcheur : décroissance exponentielle (demi-vie ~ 7 jours = 168h)
+  const pubTime = new Date(ad.publishedAt || 0).getTime();
+  const ageHours = Math.max(0, (ctx.now - pubTime) / 3600000);
+  const recencyScore = 100 * Math.exp(-ageHours / 168);
+  score += recencyScore;
+
+  // 2. Affinités implicites de catégories et lieux
+  const catViews = ctx.signals.categoryAffinities[ad.mainCategory] || 0;
+  score += Math.min(catViews * 4, 30);
+
+  if (ad.location?.province) {
+    const provViews = ctx.signals.locationAffinities[ad.location.province] || 0;
+    score += Math.min(provViews * 2, 15);
+  }
+  if (ad.location?.city) {
+    const cityViews = ctx.signals.locationAffinities[ad.location.city] || 0;
+    score += Math.min(cityViews * 3, 20);
+  }
+
+  // 3. Préférences explicites enregistrées
+  if (ctx.signals.preferredCategories.includes(ad.mainCategory)) {
+    score += 35;
+  }
+  if (ad.location?.province && ctx.signals.preferredProvinces.includes(ad.location.province)) {
+    score += 20;
+  }
+
+  // 4. Favoris
+  if (favCatSet.has(ad.mainCategory)) {
+    score += 25;
+  }
+  if (ctx.favoriteIds.includes(ad.id)) {
+    score += 40;
+  }
+
+  // 5. Pénalité pour annonces déjà consultées
+  if (ctx.signals.viewedAdIds.includes(ad.id)) {
+    score -= 30;
+  }
+
+  // 6. Pertinence de recherche si active
+  if (ctx.searchQuery && ctx.searchQuery.trim()) {
+    const q = ctx.searchQuery.trim().toLowerCase();
+    const title = (ad.title || '').toLowerCase();
+    const desc = (ad.description || '').toLowerCase();
+    if (title === q) {
+      score += 500;
+    } else if (title.includes(q)) {
+      score += 300;
+    } else if (desc.includes(q)) {
+      score += 80;
+    }
+  }
+
+  return score;
+}
+
+/**
+ * Algorithme principal de classement (rankAds).
+ * Entrelacement équitable et borné :
+ * - Niveau 1 : Boost payant actif
+ * - Niveau 2 : Spotlight dans son créneau
+ * - Niveau 3 : Flux organique
+ * Bloc de tête borné à au plus 30% des 20 premières positions (max 6), max 2 par annonceur.
+ * Technique decorate-sort : calcul des scores en Map avant le tri (< 50ms sur 2000 annonces).
+ * Fonction pure.
+ */
+export function rankAds(ads: Ad[], ctx: RankingContext): Ad[] {
+  if (!ads || ads.length === 0) return [];
+
+  const config = ctx.config || DEFAULT_RANKING_CONFIG;
+  const TWO_HOURS_MS = config.windowDurationMs;
+  const SLOT_DURATION_MS = config.slotDurationMs;
+  const epoch = Math.floor(ctx.now / TWO_HOURS_MS);
+  const slot = Math.floor((ctx.now % TWO_HOURS_MS) / SLOT_DURATION_MS);
+
+  // Ensemble des catégories favorites
+  const favCatSet = new Set<string>();
+  if (ctx.favoriteIds && ctx.favoriteIds.length > 0) {
+    for (const id of ctx.favoriteIds) {
+      const found = ads.find((a) => a.id === id);
+      if (found?.mainCategory) favCatSet.add(found.mainCategory);
+    }
+  }
+
+  // Decorate : calcul unique des scores organiques avant le tri
+  const scoreMap = new Map<string, number>();
+  for (const ad of ads) {
+    scoreMap.set(ad.id, computeOrganicScore(ad, ctx, favCatSet));
+  }
+
+  // Séparation en niveaux
+  const level1Boosted: Ad[] = [];
+  const level2Spotlight: Ad[] = [];
+  const level3Organic: Ad[] = [];
+
+  for (const ad of ads) {
+    if (isAdBoostFeatured(ad, ctx.now)) {
+      level1Boosted.push(ad);
+    } else if (getSpotlightSlots(ad, ctx.now).isSpotlightActive) {
+      level2Spotlight.push(ad);
+    } else {
+      level3Organic.push(ad);
+    }
+  }
+
+  // Niveau 1 : Tri par ancienneté du boost (le plus récent en premier), départage par score
+  level1Boosted.sort((a, b) => {
+    // Si recherche active avec forte pertinence organique, la pertinence prime
+    if (ctx.searchQuery) {
+      const sA = scoreMap.get(a.id) || 0;
+      const sB = scoreMap.get(b.id) || 0;
+      if (Math.abs(sB - sA) > 150) return sB - sA;
+    }
+    const tA = new Date(a.featuredAt || a.publishedAt || 0).getTime();
+    const tB = new Date(b.featuredAt || b.publishedAt || 0).getTime();
+    if (tB !== tA) return tB - tA;
+    return (scoreMap.get(b.id) || 0) - (scoreMap.get(a.id) || 0);
+  });
+
+  // Niveau 2 : Équité par tirage pseudo-aléatoire hash(adId:epoch:slot), départage par score
+  const getLottery = (ad: Ad) => hashString(`${ad.id}:${epoch}:${slot}`);
+  const tierBands: Record<EffectiveAdTier, Ad[]> = {
+    VIP: [],
+    BUSINESS: [],
+    ELITE: [],
+    PRO: [],
+    STANDARD: [],
+  };
+
+  for (const ad of level2Spotlight) {
+    const t = getAdEffectiveTier(ad);
+    tierBands[t].push(ad);
+  }
+
+  const sortBand = (list: Ad[]) => {
+    list.sort((a, b) => {
+      const lA = getLottery(a);
+      const lB = getLottery(b);
+      // Marge faible (2%) : départage par score
+      if (Math.abs(lB - lA) < 42949672) {
+        return (scoreMap.get(b.id) || 0) - (scoreMap.get(a.id) || 0);
+      }
+      return lB - lA;
+    });
+  };
+
+  sortBand(tierBands.VIP);
+  sortBand(tierBands.BUSINESS);
+  sortBand(tierBands.ELITE);
+  sortBand(tierBands.PRO);
+  sortBand(tierBands.STANDARD);
+
+  // Construction du bloc de tête borné (≤ 30% du top 20, max 6, max 2 par userId)
+  const topPageSize = Math.min(20, ads.length);
+  const maxHeadSize = Math.min(
+    config.headBlockSizeMax,
+    Math.max(1, Math.floor(topPageSize * config.headBlockRatio))
+  );
+
+  const headBlock: Ad[] = [];
+  const headAdIds = new Set<string>();
+  const userHeadCount: Record<string, number> = {};
+
+  const tryAddToHead = (ad: Ad): boolean => {
+    if (headBlock.length >= maxHeadSize) return false;
+    const uid = ad.userId || 'anon';
+    if ((userHeadCount[uid] || 0) >= config.maxAdsPerAdvertiserInHead) {
+      return false;
+    }
+    headBlock.push(ad);
+    headAdIds.add(ad.id);
+    userHeadCount[uid] = (userHeadCount[uid] || 0) + 1;
+    return true;
+  };
+
+  const highTierSpotlight = [...tierBands.VIP, ...tierBands.BUSINESS];
+  const midTierSpotlight = [...tierBands.ELITE, ...tierBands.PRO];
+  const standardSpotlight = [...tierBands.STANDARD];
+
+  const q = ctx.searchQuery ? ctx.searchQuery.trim().toLowerCase() : '';
+  const isExactSearchMatch = (ad: Ad) => q !== '' && (ad.title || '').trim().toLowerCase() === q;
+  const isPartialSearchMatch = (ad: Ad) =>
+    q !== '' &&
+    ((ad.title || '').toLowerCase().includes(q) || (ad.description || '').toLowerCase().includes(q));
+
+  if (q) {
+    // Phase 4.6 : Si une recherche est active, la pertinence prime sur le boost faible.
+    // Une correspondance exacte non boostée passe devant une annonce boostée non pertinente.
+    // 1. Annonces avec correspondance exacte (boostées ou non)
+    const exactMatches = ads.filter(isExactSearchMatch);
+    for (const ad of exactMatches) {
+      if (headBlock.length >= maxHeadSize) break;
+      tryAddToHead(ad);
+    }
+
+    // 2. Annonces boostées pertinentes
+    for (const ad of level1Boosted) {
+      if (headBlock.length >= maxHeadSize) break;
+      if (!headAdIds.has(ad.id) && isPartialSearchMatch(ad)) {
+        tryAddToHead(ad);
+      }
+    }
+
+    // 3. Annonces spotlight pertinentes
+    for (const ad of [...highTierSpotlight, ...midTierSpotlight, ...standardSpotlight]) {
+      if (headBlock.length >= maxHeadSize) break;
+      if (!headAdIds.has(ad.id) && isPartialSearchMatch(ad)) {
+        tryAddToHead(ad);
+      }
+    }
+
+    // 4. Boosts non pertinents
+    for (const ad of level1Boosted) {
+      if (headBlock.length >= maxHeadSize) break;
+      if (!headAdIds.has(ad.id)) {
+        tryAddToHead(ad);
+      }
+    }
+  } else {
+    // 1. Boosts payants prioritaires dans le bloc de tête
+    for (const ad of level1Boosted) {
+      if (headBlock.length >= maxHeadSize) break;
+      tryAddToHead(ad);
+    }
+  }
+
+  // 2. Entrelacement équitable des paliers en spotlight
+  // Garantit qu'un Standard ou Pro en spotlight ait une chance d'apparaître en tête
+  let hIdx = 0;
+  let mIdx = 0;
+  let sIdx = 0;
+
+  while (
+    headBlock.length < maxHeadSize &&
+    (hIdx < highTierSpotlight.length ||
+      mIdx < midTierSpotlight.length ||
+      sIdx < standardSpotlight.length)
+  ) {
+    if (hIdx < highTierSpotlight.length) {
+      tryAddToHead(highTierSpotlight[hIdx++]);
+    }
+    if (headBlock.length < maxHeadSize && mIdx < midTierSpotlight.length) {
+      tryAddToHead(midTierSpotlight[mIdx++]);
+    }
+    if (headBlock.length < maxHeadSize && sIdx < standardSpotlight.length) {
+      tryAddToHead(standardSpotlight[sIdx++]);
+    }
+  }
+
+  // 3. Toutes les annonces restantes tombent dans le flux organique
+  const remainingAds = ads.filter((ad) => !headAdIds.has(ad.id));
+
+  // Tri du flux restant par score organique
+  remainingAds.sort((a, b) => {
+    const sB = scoreMap.get(b.id) || 0;
+    const sA = scoreMap.get(a.id) || 0;
+    if (sB !== sA) return sB - sA;
+    return new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime();
+  });
+
+  return [...headBlock, ...remainingAds];
+}
+
+/**
+ * Mode "Plus récentes" (rankAdsRecent).
+ * Même bloc de tête borné (boost / rotation), puis tri chronologique sur les annonces restantes.
+ * Fonction pure.
+ */
+export function rankAdsRecent(ads: Ad[], ctx: RankingContext): Ad[] {
+  if (!ads || ads.length === 0) return [];
+
+  // Construit d'abord le classement complet pour obtenir le bloc de tête borné
+  const fullRanked = rankAds(ads, ctx);
+  const config = ctx.config || DEFAULT_RANKING_CONFIG;
+  const topPageSize = Math.min(20, ads.length);
+  const maxHeadSize = Math.min(
+    config.headBlockSizeMax,
+    Math.max(1, Math.floor(topPageSize * config.headBlockRatio))
+  );
+
+  const headBlock = fullRanked.slice(0, maxHeadSize);
+  const headIds = new Set(headBlock.map((a) => a.id));
+
+  const remaining = ads.filter((a) => !headIds.has(a.id));
+  remaining.sort(
+    (a, b) => new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime()
+  );
+
+  return [...headBlock, ...remaining];
+}
+
+/**
+ * =================================================================================================
+ * ADAPTATEURS ET EXPORTS DE COMPATIBILITÉ (App.tsx, AdCard.tsx, UserDashboard.tsx)
+ * =================================================================================================
+ */
+
+export function getUserPreferences(): {
   categories: Record<string, number>;
   locations: Record<string, number>;
   viewedAdIds: string[];
-}
-
-export function getUserPreferences(): UserPreferences {
+} {
   try {
     const catStr = localStorage.getItem(STORAGE_KEYS.CATEGORIES);
     const locStr = localStorage.getItem(STORAGE_KEYS.LOCATIONS);
     const histStr = localStorage.getItem(STORAGE_KEYS.HISTORY);
-
     return {
       categories: catStr ? JSON.parse(catStr) : {},
       locations: locStr ? JSON.parse(locStr) : {},
       viewedAdIds: histStr ? JSON.parse(histStr) : [],
     };
-  } catch (e) {
-    console.warn('Could not read user preferences from localStorage:', e);
+  } catch (_) {
     return { categories: {}, locations: {}, viewedAdIds: [] };
   }
 }
 
+export function getUserSelectedPreferences(): {
+  preferredCategories: string[];
+  preferredProvinces: string[];
+} {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.PREFERENCES);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        preferredCategories: parsed.preferredCategories || [],
+        preferredProvinces: parsed.preferredProvinces || [],
+      };
+    }
+  } catch (_) {}
+  return { preferredCategories: [], preferredProvinces: [] };
+}
+
+/**
+ * Construit un objet UserSignals complet en un seul passage (performance).
+ */
+export function buildUserSignals(): UserSignals {
+  const prefs = getUserPreferences();
+  const selected = getUserSelectedPreferences();
+  return {
+    categoryAffinities: prefs.categories,
+    locationAffinities: prefs.locations,
+    preferredCategories: selected.preferredCategories,
+    preferredProvinces: selected.preferredProvinces,
+    viewedAdIds: prefs.viewedAdIds,
+  };
+}
+
+/**
+ * Enregistrement avec plafond quotidien par annonce (Phase 5.5).
+ */
 export function recordAdInteraction(ad: Ad): void {
   try {
-    const prefs = getUserPreferences();
+    if (!ad?.id) return;
+    const today = new Date().toISOString().split('T')[0];
+    const interactionKey = `${ad.id}_${today}`;
 
-    // Increment category affinity
+    // Plafond d'une interaction par annonce et par jour pour limiter la dérive
+    let todayInteractions: Record<string, boolean> = {};
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.INTERACTIONS_TODAY);
+      if (raw) todayInteractions = JSON.parse(raw);
+    } catch (_) {}
+
+    if (todayInteractions[interactionKey]) {
+      return;
+    }
+    todayInteractions[interactionKey] = true;
+    try {
+      localStorage.setItem(STORAGE_KEYS.INTERACTIONS_TODAY, JSON.stringify(todayInteractions));
+    } catch (_) {}
+
+    const prefs = getUserPreferences();
     if (ad.mainCategory) {
       prefs.categories[ad.mainCategory] = (prefs.categories[ad.mainCategory] || 0) + 1;
     }
-
-    // Increment location affinity
     if (ad.location?.province) {
       prefs.locations[ad.location.province] = (prefs.locations[ad.location.province] || 0) + 1;
     }
     if (ad.location?.city) {
       prefs.locations[ad.location.city] = (prefs.locations[ad.location.city] || 0) + 1;
     }
-
-    // Record view in history (keep last 50)
     if (!prefs.viewedAdIds.includes(ad.id)) {
       prefs.viewedAdIds = [ad.id, ...prefs.viewedAdIds].slice(0, 50);
     }
@@ -70,27 +601,13 @@ export function recordCategoryInterest(category: MainCategory | string): void {
   }
 }
 
-export function isAdBoostFeatured(ad: Ad): boolean {
-  if (!ad.isFeatured) return false;
-  if (!ad.featuredUntil) return true;
-  return new Date(ad.featuredUntil).getTime() > Date.now();
-}
-
-export function getUserSelectedPreferences(): { preferredCategories: string[]; preferredProvinces: string[] } {
-  try {
-    const raw = localStorage.getItem('bizbooster_user_preferences');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        preferredCategories: parsed.preferredCategories || [],
-        preferredProvinces: parsed.preferredProvinces || [],
-      };
-    }
-  } catch (_) {}
-  return { preferredCategories: [], preferredProvinces: [] };
-}
-
-export function getUserFavoriteCategories(allAds?: Ad[], activeFavoriteIds?: string[]): Set<string> {
+/**
+ * Calcul des catégories favorites sur l'ensemble du catalogue.
+ */
+export function getUserFavoriteCategories(
+  allAds?: Ad[],
+  activeFavoriteIds?: string[]
+): Set<string> {
   const catSet = new Set<string>();
   if (!allAds) return catSet;
 
@@ -98,331 +615,90 @@ export function getUserFavoriteCategories(allAds?: Ad[], activeFavoriteIds?: str
   if (!favIds) {
     try {
       const favRaw = localStorage.getItem('bizbooster_guest_favorites');
-      if (favRaw) {
-        favIds = JSON.parse(favRaw);
-      }
+      if (favRaw) favIds = JSON.parse(favRaw);
     } catch (_) {}
   }
 
   if (favIds && favIds.length > 0) {
-    for (const id of favIds) {
-      const found = allAds.find((a) => a.id === id);
-      if (found?.mainCategory) catSet.add(found.mainCategory);
+    const idSet = new Set(favIds);
+    for (const ad of allAds) {
+      if (idSet.has(ad.id) && ad.mainCategory) {
+        catSet.add(ad.mainCategory);
+      }
     }
   }
   return catSet;
 }
 
-// -------------------------------------------------------------------------------------------------
-// Algorithme Équitable de Rotation en Tête d'Affiche selon l'Abonnement (Point 3)
-// -------------------------------------------------------------------------------------------------
-// Fenêtre temporelle maîtresse : 2 heures (120 minutes) découpée en 10 créneaux réguliers de 12 minutes.
-// Fréquences exactes garanties par tranche de 2 heures :
-// - STANDARD : 1 fois toutes les 2 heures (1 créneau sur 10, soit 12 min / 2h, 10% duty cycle)
-// - PRO      : 2 fois toutes les 2 heures (2 créneaux sur 10 espacés d'une heure, 24 min / 2h, 20% duty cycle)
-// - ÉLITE    : 6 fois toutes les 2 heures (6 créneaux sur 10, 72 min / 2h, 60% duty cycle)
-// - BUSINESS : 10 fois toutes les 2 heures (10 créneaux sur 10, en continu, 100% duty cycle)
-// - VIP      : 10 fois toutes les 2 heures (10 créneaux sur 10, en continu, 100% duty cycle)
-// -------------------------------------------------------------------------------------------------
-
-export type EffectiveAdTier = 'VIP' | SubscriptionTier;
-
-export interface TierRotationDetails {
-  tier: EffectiveAdTier;
-  frequencyPer2Hours: number;
-  dutyCyclePercent: number;
-  totalSlots: number;
-  currentSlot: number;
-  slotDurationMinutes: number;
-  isSpotlightActive: boolean;
-  activeSlots: number[];
-}
-
-export function getAdEffectiveTier(ad: Ad): EffectiveAdTier {
-  if (ad.isOwnerVip) return 'VIP';
-  if (ad.ownerTier === 'BUSINESS') return 'BUSINESS';
-  if (ad.ownerTier === 'ELITE') return 'ELITE';
-  if (ad.ownerTier === 'PRO') return 'PRO';
-  return 'STANDARD';
-}
-
-function hashString(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash * 31 + str.charCodeAt(i)) & 0x7fffffff;
-  }
-  return hash;
-}
-
 /**
- * Calcule l'état de rotation en tête d'affiche d'une annonce pour le moment `now`.
- * La répartition est déterministe et équitable : chaque annonce a un décalage unique
- * pour que les annonces d'un même palier se succèdent harmonieusement sans encombrement simultané.
+ * Adaptateur de compatibilité : sortAdsPersonalized
  */
-export function getTierRotationDetails(ad: Ad, now: number = Date.now()): TierRotationDetails {
-  const tier = getAdEffectiveTier(ad);
-  const TWO_HOURS_MS = 2 * 60 * 60 * 1000; // 120 minutes = 7 200 000 ms
-  const SLOT_DURATION_MS = 12 * 60 * 1000;  // 12 minutes = 720 000 ms
-  const TOTAL_SLOTS = 10;
-
-  const epoch = Math.floor(now / TWO_HOURS_MS);
-  const currentSlot = Math.floor((now % TWO_HOURS_MS) / SLOT_DURATION_MS);
-
-  // Décalage individuel pseudo-aléatoire mais déterministe par annonce.
-  // Le multiplicateur 3 (premier avec 10) fait évoluer équitablement le créneau au fil des cycles de 2 heures.
-  const adHash = hashString(ad.id || 'ad');
-  const baseOffset = Math.abs(adHash + epoch * 3) % TOTAL_SLOTS;
-
-  let activeSlots: number[] = [];
-  let frequencyPer2Hours = 1;
-
-  switch (tier) {
-    case 'VIP':
-    case 'BUSINESS':
-      // 10 fois toutes les 2 heures (présence permanente en tête d'affiche)
-      frequencyPer2Hours = 10;
-      activeSlots = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-      break;
-
-    case 'ELITE':
-      // 6 fois toutes les 2 heures (6 créneaux de 12 min harmonieusement répartis sur les 2h)
-      frequencyPer2Hours = 6;
-      activeSlots = [0, 1, 3, 5, 6, 8].map((s) => (baseOffset + s) % TOTAL_SLOTS);
-      break;
-
-    case 'PRO':
-      // 2 fois toutes les 2 heures (2 créneaux de 12 min espacés d'une heure / 5 créneaux)
-      frequencyPer2Hours = 2;
-      activeSlots = [0, 5].map((s) => (baseOffset + s) % TOTAL_SLOTS);
-      break;
-
-    case 'STANDARD':
-    default:
-      // 1 fois toutes les 2 heures (1 créneau unique de 12 min par bloc de 2 heures)
-      frequencyPer2Hours = 1;
-      activeSlots = [baseOffset % TOTAL_SLOTS];
-      break;
-  }
-
-  const isSpotlightActive = activeSlots.includes(currentSlot);
-
-  return {
-    tier,
-    frequencyPer2Hours,
-    dutyCyclePercent: (frequencyPer2Hours / TOTAL_SLOTS) * 100,
-    totalSlots: TOTAL_SLOTS,
-    currentSlot,
-    slotDurationMinutes: 12,
-    isSpotlightActive,
-    activeSlots,
+export function sortAdsPersonalized(
+  ads: Ad[],
+  activeFavoriteIds?: string[],
+  now: number = Date.now(),
+  searchQuery?: string
+): Ad[] {
+  const signals = buildUserSignals();
+  const ctx: RankingContext = {
+    now,
+    signals,
+    favoriteIds: activeFavoriteIds || [],
+    searchQuery,
+    config: DEFAULT_RANKING_CONFIG,
   };
+  return rankAds(ads, ctx);
 }
 
 /**
- * Indique si l'annonce est actuellement en tête d'affiche
- * (soit via Boost payant actif, soit via son créneau de rotation équitable selon son abonnement).
+ * Adaptateur de compatibilité : sortAdsRecent
  */
-export function isAdSpotlightActive(ad: Ad, now: number = Date.now()): boolean {
-  if (isAdBoostFeatured(ad)) return true;
-  return getTierRotationDetails(ad, now).isSpotlightActive;
+export function sortAdsRecent(
+  ads: Ad[],
+  now: number = Date.now(),
+  activeFavoriteIds?: string[],
+  searchQuery?: string
+): Ad[] {
+  const signals = buildUserSignals();
+  const ctx: RankingContext = {
+    now,
+    signals,
+    favoriteIds: activeFavoriteIds || [],
+    searchQuery,
+    config: DEFAULT_RANKING_CONFIG,
+  };
+  return rankAdsRecent(ads, ctx);
 }
 
 /**
- * Bonus de score alloué lorsqu'une annonce est dans sa phase active de passage en tête d'affiche.
+ * Tri par prix équitable (Phase 4.9) :
+ * Les annonces à 0 FCFA sont placées en fin de tri croissant.
+ * Normalise les durées de loyer (mois, jour, trimestre, an) pour une comparaison équitable.
  */
-export function computeTierRotationBonus(ad: Ad, now: number = Date.now()): number {
-  const details = getTierRotationDetails(ad, now);
-  if (!details.isSpotlightActive) return 0;
-
-  const tierWeights: Record<EffectiveAdTier, number> = {
-    VIP: 500_000,
-    BUSINESS: 400_000,
-    ELITE: 300_000,
-    PRO: 200_000,
-    STANDARD: 100_000,
+export function sortAdsByPriceAsc(ads: Ad[]): Ad[] {
+  const normalizePriceToMonthly = (ad: Ad): number => {
+    const p = Number(ad.price || 0);
+    if (p <= 0) return 0;
+    const unit = ad.priceUnit as string | undefined;
+    if (unit === 'jour') return p * 30;
+    if (unit === 'semaine') return p * 4;
+    if (unit === 'trimestre') return Math.round(p / 3);
+    if (unit === 'an') return Math.round(p / 12);
+    return p;
   };
 
-  // Base spotlight de 2 000 000 points + pondération selon le niveau d'abonnement
-  return 2_000_000 + (tierWeights[details.tier] || 100_000);
-}
-
-/**
- * Alias de compatibilité pour les appels existants.
- */
-export function computeStandardRotationBonus(adId: string, now: number = Date.now()): number {
-  const dummyAd = { id: adId, ownerTier: 'STANDARD' } as Ad;
-  return computeTierRotationBonus(dummyAd, now);
-}
-
-/**
- * Calcule le score global de pertinence et de classement d'une annonce :
- * 1. Annonces avec Boost payant actif ("Option En Tête de Liste") : 10M - 15M pts.
- * 2. Annonces en phase active de rotation selon leur abonnement : 2.1M - 2.5M pts
- *    (Standard 1x/2h, Pro 2x/2h, Elite 6x/2h, Business/VIP 10x/2h).
- * 3. Fraîcheur temporelle de publication (jusqu'à 50k pts).
- * 4. Affinités de navigation de l'utilisateur (catégories & villes jusqu'à 65k pts).
- * 5. Préférences explicites enregistrées (jusqu'à 90k pts).
- * 6. Catégories favorites de l'utilisateur (+50k pts).
- */
-export function computeAdScore(
-  ad: Ad,
-  prefs: UserPreferences,
-  favoriteCats?: Set<string>,
-  now: number = Date.now()
-): number {
-  let score = 0;
-
-  // 1. Boost Payant ("En Tête de Liste") prioritaire
-  if (isAdBoostFeatured(ad)) {
-    const tierPrio = getTierPriority(ad); // 5 (VIP) > 4 (Business) > 3 (Elite) > 2 (Pro) > 1 (Standard)
-    score += 10_000_000 + tierPrio * 1_000_000;
-
-    const boostTime = new Date(ad.featuredAt || ad.publishedAt || 0).getTime();
-    const hoursSinceBoost = Math.max(0, (now - boostTime) / (1000 * 60 * 60));
-    const boostRecencyScore = Math.max(0, 100_000 - hoursSinceBoost * 200);
-    score += boostRecencyScore;
-  } else {
-    // 2. Passage en tête d'affiche selon le rythme de l'abonnement
-    score += computeTierRotationBonus(ad, now);
-  }
-
-  // 3. Fraîcheur de publication
-  const pubTime = new Date(ad.publishedAt || 0).getTime();
-  const hoursOld = Math.max(0, (now - pubTime) / (1000 * 60 * 60));
-  const recencyBoost = Math.max(0, 50_000 - hoursOld * 150);
-  score += recencyBoost;
-
-  // 4. Affinité catégories
-  const catViews = prefs.categories[ad.mainCategory] || 0;
-  score += Math.min(catViews * 8_000, 40_000);
-
-  // 5. Affinité localisation
-  if (ad.location?.province) {
-    const provViews = prefs.locations[ad.location.province] || 0;
-    score += Math.min(provViews * 4_000, 20_000);
-  }
-  if (ad.location?.city) {
-    const cityViews = prefs.locations[ad.location.city] || 0;
-    score += Math.min(cityViews * 5_000, 25_000);
-  }
-
-  // 6. Préférences explicites sélectionnées
-  const explicitPrefs = getUserSelectedPreferences();
-  if (explicitPrefs.preferredCategories.includes(ad.mainCategory)) {
-    score += 60_000;
-  }
-  if (ad.location?.province && explicitPrefs.preferredProvinces.includes(ad.location.province)) {
-    score += 30_000;
-  }
-
-  // 7. Prise en compte immédiate des favoris
-  if (favoriteCats && favoriteCats.has(ad.mainCategory)) {
-    score += 50_000;
-  }
-
-  return score;
-}
-
-/**
- * Trie et harmonise le catalogue de façon personnalisée :
- * - Les annonces avec Boost payant et les annonces dans leur créneau de rotation
- *   (Standard 1x/2h, Pro 2x/2h, Elite 6x/2h, Business/VIP 10x/2h)
- *   sont montées en tête et entrelacées avec un ratio équilibré 2:1.
- * - Aucune annonce n'est reléguée ou oubliée.
- * - Le flux restant est ordonné par pertinence utilisateur et fraîcheur.
- */
-export function sortAdsPersonalized(ads: Ad[], activeFavoriteIds?: string[], now: number = Date.now()): Ad[] {
-  const prefs = getUserPreferences();
-  const favoriteCats = getUserFavoriteCategories(ads, activeFavoriteIds);
-
-  const paidBoostedAds: Ad[] = [];
-  const spotlightRotatingAds: Ad[] = [];
-  const generalFeedAds: Ad[] = [];
+  const nonZero: Ad[] = [];
+  const zeroPrice: Ad[] = [];
 
   for (const ad of ads) {
-    if (isAdBoostFeatured(ad)) {
-      paidBoostedAds.push(ad);
-    } else if (getTierRotationDetails(ad, now).isSpotlightActive) {
-      spotlightRotatingAds.push(ad);
+    const p = Number(ad.price || 0);
+    if (p <= 0 || ad.mainCategory === 'NECROLOGIE' || ad.mainCategory === 'AVIS_DE_RECHERCHE') {
+      zeroPrice.push(ad);
     } else {
-      generalFeedAds.push(ad);
+      nonZero.push(ad);
     }
   }
 
-  const sortByScore = (a: Ad, b: Ad) => {
-    const scoreA = computeAdScore(a, prefs, favoriteCats, now);
-    const scoreB = computeAdScore(b, prefs, favoriteCats, now);
-    if (scoreB !== scoreA) return scoreB - scoreA;
-    return new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime();
-  };
-
-  paidBoostedAds.sort(sortByScore);
-  spotlightRotatingAds.sort(sortByScore);
-  generalFeedAds.sort(sortByScore);
-
-  // Entrelacement régulier (2 annonces boostées payantes pour 1 annonce en tête d'affiche rotative)
-  const blended: Ad[] = [];
-  let bIdx = 0;
-  let sIdx = 0;
-
-  while (bIdx < paidBoostedAds.length || sIdx < spotlightRotatingAds.length) {
-    for (let i = 0; i < 2 && bIdx < paidBoostedAds.length; i++) {
-      blended.push(paidBoostedAds[bIdx++]);
-    }
-    if (sIdx < spotlightRotatingAds.length) {
-      blended.push(spotlightRotatingAds[sIdx++]);
-    }
-  }
-
-  // Suite du catalogue organique, classé selon l'intérêt de l'utilisateur
-  return blended.concat(generalFeedAds);
+  nonZero.sort((a, b) => normalizePriceToMonthly(a) - normalizePriceToMonthly(b));
+  return [...nonZero, ...zeroPrice];
 }
-
-/**
- * Tri chronologique avec mise en valeur équitable des annonces en tête d'affiche.
- */
-export function sortAdsRecent(ads: Ad[], now: number = Date.now()): Ad[] {
-  const paidBoostedAds: Ad[] = [];
-  const spotlightRotatingAds: Ad[] = [];
-  const generalFeedAds: Ad[] = [];
-
-  for (const ad of ads) {
-    if (isAdBoostFeatured(ad)) {
-      paidBoostedAds.push(ad);
-    } else if (getTierRotationDetails(ad, now).isSpotlightActive) {
-      spotlightRotatingAds.push(ad);
-    } else {
-      generalFeedAds.push(ad);
-    }
-  }
-
-  const sortByTierThenDate = (a: Ad, b: Ad) => {
-    const prioA = getTierPriority(a);
-    const prioB = getTierPriority(b);
-    if (prioB !== prioA) return prioB - prioA;
-    const timeA = new Date(a.featuredAt || a.publishedAt || 0).getTime();
-    const timeB = new Date(b.featuredAt || b.publishedAt || 0).getTime();
-    return timeB - timeA;
-  };
-
-  paidBoostedAds.sort(sortByTierThenDate);
-  spotlightRotatingAds.sort(sortByTierThenDate);
-  generalFeedAds.sort((a, b) => new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime());
-
-  const topPool = [...paidBoostedAds, ...spotlightRotatingAds];
-  const blended: Ad[] = [];
-  let tIdx = 0;
-  let gIdx = 0;
-
-  while (tIdx < topPool.length || gIdx < generalFeedAds.length) {
-    for (let i = 0; i < 2 && tIdx < topPool.length; i++) {
-      blended.push(topPool[tIdx++]);
-    }
-    if (gIdx < generalFeedAds.length) {
-      blended.push(generalFeedAds[gIdx++]);
-    }
-  }
-
-  return blended;
-}
-

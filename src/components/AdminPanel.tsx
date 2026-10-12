@@ -207,6 +207,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     try {
       localStorage.setItem('bizbooster_show_test_ads', String(nextVal));
       window.dispatchEvent(new CustomEvent('bizbooster_test_ads_toggled', { detail: { showTestAds: nextVal } }));
+      await setDoc(doc(db, 'settings', 'public_config'), { showTestAds: nextVal, updatedAt: new Date().toISOString() }, { merge: true });
       await setDoc(doc(db, 'settings', 'system_config'), { showTestAds: nextVal, updatedAt: new Date().toISOString() }, { merge: true });
     } catch (e) {
       console.warn('Could not persist test ads toggle to Firestore:', e);

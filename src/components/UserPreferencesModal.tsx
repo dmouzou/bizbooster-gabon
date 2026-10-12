@@ -31,8 +31,26 @@ export const UserPreferencesModal: React.FC<UserPreferencesModalProps> = ({
   onClose,
   onSavePreferences,
 }) => {
-  const [selectedCats, setSelectedCats] = useState<MainCategory[]>(['IMMOBILIER', 'MATERIEL_ROULANT']);
-  const [selectedProvinces, setSelectedProvinces] = useState<string[]>(['Estuaire']);
+  const [selectedCats, setSelectedCats] = useState<MainCategory[]>(() => {
+    try {
+      const raw = localStorage.getItem('bizbooster_user_preferences');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.preferredCategories)) return parsed.preferredCategories;
+      }
+    } catch {}
+    return [];
+  });
+  const [selectedProvinces, setSelectedProvinces] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('bizbooster_user_preferences');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.preferredProvinces)) return parsed.preferredProvinces;
+      }
+    } catch {}
+    return [];
+  });
 
   if (!isOpen) return null;
 

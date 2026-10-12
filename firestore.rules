@@ -25,8 +25,7 @@ service cloud.firestore {
       );
     }
 
-    // Admin = custom claim OR users/{uid}.role in ['ADMIN', 'SUPER_ADMIN', 'SUPER ADMIN'].
-    // L'accès admin vient uniquement du rôle ou des custom claims.
+    // Admin = custom claim OR users/{uid}.role in ['ADMIN', 'SUPER_ADMIN', 'SUPER ADMIN']
     function isAdmin() {
       return isSignedIn() && (
         isSuperAdmin() ||
@@ -37,7 +36,7 @@ service cloud.firestore {
       );
     }
 
-    // Champs privilégiés qu'un utilisateur ne peut jamais écrire (Section 5.1)
+    // Champs privilégiés d'un utilisateur (gérés exclusivement par le serveur ou admin)
     function privilegedKeys() {
       return [
         'isAdmin',
@@ -48,15 +47,39 @@ service cloud.firestore {
         'subscriptionExpiresAt',
         'subscriptionStartedAt',
         'freeBoostsRemaining',
+        'consumedFreeAdsCount',
         'activeBoosterPack',
         'activePack',
         'idVerifiedAt',
-        'password'
+        'password',
+        'lastPasswordChangeDate'
       ];
     }
 
-    // Fields an advertiser must never change on their own ad arbitrarily.
-    // They may only transition status to PENDING_REVIEW (e.g. when editing an active or pending ad for re-verification).
+    // Clés de classement, de paiement, de quota et de modération (Phase 1)
+    function rankingKeys() {
+      return [
+        'isFeatured',
+        'featuredUntil',
+        'featuredAt',
+        'ownerTier',
+        'isOwnerVip',
+        'isOwnerVerified',
+        'isVipCorner',
+        'paidAmount',
+        'paymentMethod',
+        'transactionRef',
+        'paymentVerified',
+        'viewsCount',
+        'reportsCount',
+        'pendingExtension',
+        'suspensionReason',
+        'suspendedAt',
+        'lastExtendedAt'
+      ];
+    }
+
+    // Champs sensibles d'une annonce qu'un propriétaire ne peut modifier arbitrairement
     function touchesProtectedAdFields() {
       return (
         request.resource.data.diff(resource.data).affectedKeys().hasAny([
@@ -64,54 +87,60 @@ service cloud.firestore {
           'expiresAt',
           'moderatedAt',
           'moderationReason',
-          'paymentVerified'
+          'userId'
         ]) || (
           request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
-          && !(request.resource.data.status in ['PENDING_REVIEW', 'SUSPENDED', 'ACTIVE'])
+          && request.resource.data.status != 'PENDING_REVIEW'
         )
       );
     }
 
     // ---------------------------------------------------------------
-    // ADS (Section 5.2)
+    // ADS (Phase 1 : protection stricte du classement et du statut)
     // ---------------------------------------------------------------
     match /ads/{adId} {
 
-      // Public: read any ad (active ads in catalog, advertiser checking their own ad, etc.)
-      allow read: if true;
+      // Lecture publique : uniquement annonces ACTIVE, ou propriétaire de l'annonce, ou admin
+      allow read: if resource.data.status == 'ACTIVE'
+                  || (isSignedIn() && resource.data.userId == request.auth.uid)
+                  || isAdmin();
 
-      // Create: strictly signed in advertiser owning their ad
+      // Création : utilisateur connecté, statut impérativement PENDING_REVIEW,
+      // aucune clé de rankingKeys() présente (paymentReference est autorisée pour vérification serveur)
       allow create: if isSignedIn()
-                    && request.resource.data.userId == request.auth.uid;
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.status == 'PENDING_REVIEW'
+                    && !request.resource.data.keys().hasAny(rankingKeys());
 
-      // Update: Admin, Owner (without touching protected fields), or atomic increments
+      // Mise à jour :
+      // - Admin complet
+      // - Propriétaire : userId inchangé, aucune modification sur rankingKeys(),
+      //   statut modifiable uniquement vers PENDING_REVIEW, champs protégés intacts
+      // - Signalement de fraude : incrément atomique unitaire de reportsCount (limité)
       allow update: if isAdmin()
-                    || (isSignedIn() && resource.data.userId == request.auth.uid && !touchesProtectedAdFields())
-                    || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewsCount'])
-                        && request.resource.data.viewsCount == resource.data.viewsCount + 1)
+                    || (isSignedIn()
+                        && resource.data.userId == request.auth.uid
+                        && request.resource.data.userId == request.auth.uid
+                        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(rankingKeys())
+                        && !touchesProtectedAdFields())
                     || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportsCount'])
                         && request.resource.data.reportsCount == resource.data.reportsCount + 1);
 
-      // Delete: Admin or Owner
+      // Suppression : Admin ou propriétaire
       allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
     }
 
     // ---------------------------------------------------------------
-    // USERS (Section 5.1)
+    // USERS
     // ---------------------------------------------------------------
     match /users/{userId} {
 
       allow read: if isOwner(userId) || isAdmin();
 
-      // Création : uniquement par le propriétaire, rôle USER, aucune clé privilégiée
       allow create: if isOwner(userId)
                     && request.resource.data.role == 'USER'
                     && !request.resource.data.keys().hasAny(privilegedKeys());
 
-      // Mise à jour :
-      // - Super Admin a tous les droits
-      // - Admin peut valider KYC mais ne peut toucher ni aux exemptions, rôle, abonnements
-      // - Propriétaire ne peut pas modifier les clés privilégiées ni s'auto-promouvoir
       allow update: if isSuperAdmin()
                     || (isAdmin() && !request.resource.data.diff(resource.data).affectedKeys()
                         .hasAny(['isExempt', 'exemptFromPaymentAndKyc', 'role', 'subscriptionTier',
@@ -143,7 +172,7 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // SYSTEM COUNTERS (Section 5.2 : écriture admin/serveur uniquement)
+    // SYSTEM COUNTERS (lecture publique, écriture admin/serveur)
     // ---------------------------------------------------------------
     match /system_counters/{counterId} {
       allow read: if true;
@@ -151,22 +180,27 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // SYSTEM SETTINGS (Section 5.2 : écriture réservée aux admins)
+    // SETTINGS (public_config lisible par tous, system_config réservé aux admins)
     // ---------------------------------------------------------------
     match /settings/{settingId} {
-      allow read: if settingId == 'payment_gateway' ? isSuperAdmin() : true;
+      allow read: if settingId == 'public_config'
+                  || (settingId == 'system_config' && isAdmin())
+                  || (settingId == 'payment_gateway' && isSuperAdmin())
+                  || (settingId != 'system_config' && settingId != 'payment_gateway');
       allow write: if settingId == 'payment_gateway' ? isSuperAdmin() : isAdmin();
     }
 
     // ---------------------------------------------------------------
-    // USER NOTIFICATIONS (Tracking notification history & anti-duplicate)
+    // USER NOTIFICATIONS (Restreint à l'utilisateur ciblé ou admin)
     // ---------------------------------------------------------------
     match /user_notifications/{notifId} {
-      allow read, write: if isSignedIn() || isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (isSignedIn() && request.resource.data.userId == request.auth.uid);
+      allow update, delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
     }
 
     // ---------------------------------------------------------------
-    // PAYMENTS (Section 5.2 : lecture propriétaire/admin, écritures client refusées)
+    // PAYMENTS (Lecture propriétaire/admin, écritures client strictement interdites)
     // ---------------------------------------------------------------
     match /payments/{paymentId} {
       allow read: if isAdmin()
@@ -175,7 +209,10 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // Everything else is denied by default.
+    // AD VIEWS (Dédoublonnage des vues par tranche de 24h, Cloud Function registerView)
     // ---------------------------------------------------------------
+    match /ad_views/{viewId} {
+      allow read, write: if isAdmin();
+    }
   }
 }

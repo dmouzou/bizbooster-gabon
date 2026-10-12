@@ -13,7 +13,8 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { auth, db } from './services/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { auth, db, functions } from './services/firebase';
 import { Ad, AdReport, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAdmin } from './types';
 import { AdminPanel } from './components/AdminPanel';
 import { AdDetailModal } from './components/AdDetailModal';
@@ -188,44 +189,19 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       ...(reason ? { reason } : {}),
     });
 
-  // 3. Approve ad or paid extension
+  // 3. Approve ad or paid extension via Cloud Function sécurisée
   const handleApproveAd = async (adId: string) => {
-    const ad = ads.find((a) => a.id === adId);
-    if (!ad) return;
-    const nowIso = new Date().toISOString();
-
     try {
-      if (ad.pendingExtension) {
-        const base = Math.max(new Date(ad.expiresAt).getTime(), Date.now());
-        const maxExpiry = Date.now() + 365 * 86400000;
-        const requestedDays = Math.min(ad.pendingExtension.days, 365);
-        const computedExpiry = base + requestedDays * 86400000;
-        const newExpiry = new Date(Math.min(computedExpiry, maxExpiry)).toISOString();
-        const effectiveAddedDays = Math.max(1, Math.round((new Date(newExpiry).getTime() - base) / 86400000));
-        await updateDoc(doc(db, 'ads', adId), {
-          status: 'ACTIVE',
-          expiresAt: newExpiry,
-          durationDays: Math.min(365, (ad.durationDays || 0) + effectiveAddedDays),
-          paymentMethod: ad.pendingExtension.operator,
-          transactionRef: ad.pendingExtension.transactionRef,
-          pendingExtension: deleteField(),
-          moderatedAt: nowIso,
-        });
-        await log(adId, 'EXTENSION_APPROVED');
-      } else {
-        const expiresAt = new Date(Date.now() + ad.durationDays * 86400000).toISOString();
-        await updateDoc(doc(db, 'ads', adId), {
-          status: 'ACTIVE',
-          publishedAt: nowIso,
-          expiresAt,
-          moderatedAt: nowIso,
-          moderationReason: deleteField(),
-        });
-        await log(adId, 'APPROVED');
-      }
-    } catch (e) {
+      const approveAdCallable = httpsCallable<{ adId: string }, { success: boolean; adId: string }>(
+        functions,
+        'approveAd'
+      );
+      await approveAdCallable({ adId });
+      await log(adId, 'APPROVED');
+      showAlert("Annonce approuvée avec succès !", 'success');
+    } catch (e: any) {
       console.error(e);
-      showAlert("Échec de l'approbation. Vérifiez votre connexion et vos droits.", 'error');
+      showAlert("Échec de l'approbation : " + (e?.message || 'Vérifiez votre connexion et vos droits.'), 'error');
     }
   };
 

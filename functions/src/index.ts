@@ -1,5 +1,9 @@
 import {onSchedule} from "firebase-functions/v2/scheduler";
-import {onDocumentWritten} from "firebase-functions/v2/firestore";
+import {
+  onDocumentCreated,
+  onDocumentUpdated,
+  onDocumentWritten,
+} from "firebase-functions/v2/firestore";
 import {onCall, onRequest, HttpsError} from "firebase-functions/v2/https";
 import {defineSecret} from "firebase-functions/params";
 import {
@@ -9,6 +13,8 @@ import {
 } from "firebase-admin/firestore";
 import {getAuth, UserRecord} from "firebase-admin/auth";
 import {initializeApp} from "firebase-admin/app";
+import {isAdVipCornerEligible} from "./vipCorner";
+import {calculateServerPrice} from "./pricing";
 
 initializeApp();
 
@@ -198,6 +204,22 @@ export const expireAds = onSchedule("every 60 minutes", async () => {
     await batch.commit();
   }
 
+  // A2. Terminer les boosts échus (isFeatured: false si featuredUntil <= now)
+  const expiredBoostsSnap = await db
+    .collection("ads")
+    .where("isFeatured", "==", true)
+    .where("featuredUntil", "<=", now)
+    .get();
+
+  for (let i = 0; i < expiredBoostsSnap.docs.length; i += CHUNK_SIZE) {
+    const chunk = expiredBoostsSnap.docs.slice(i, i + CHUNK_SIZE);
+    const boostBatch = db.batch();
+    chunk.forEach((d) => {
+      boostBatch.update(d.ref, {isFeatured: false, updatedAt: now});
+    });
+    await boostBatch.commit();
+  }
+
   // B. Détecter les utilisateurs dont l'abonnement mensuel a expiré
   const expiredUsersSnap = await db
     .collection("users")
@@ -222,6 +244,25 @@ export const expireAds = onSchedule("every 60 minutes", async () => {
       subscriptionExpiredAt: now,
       updatedAt: now,
     });
+
+    // Mettre à jour ownerTier sur les annonces de l'utilisateur rétrogradé
+    const userRemainingAdsSnap = await db
+      .collection("ads")
+      .where("userId", "==", userId)
+      .where("status", "in", ["ACTIVE", "PENDING_REVIEW"])
+      .get();
+    for (let i = 0; i < userRemainingAdsSnap.docs.length; i += CHUNK_SIZE) {
+      const chunk = userRemainingAdsSnap.docs.slice(i, i + CHUNK_SIZE);
+      const tierBatch = db.batch();
+      chunk.forEach((d) => {
+        tierBatch.update(d.ref, {
+          ownerTier: "STANDARD",
+          isOwnerVip: false,
+          updatedAt: now,
+        });
+      });
+      await tierBatch.commit();
+    }
 
     // Quota Standard partagé (3 annonces actives max)
     const standardQuota = SUBSCRIPTION_QUOTAS.STANDARD || 3;
@@ -371,16 +412,6 @@ export const SERVER_PRODUCTS: Record<string, number> = {
   BOOST_10: 25000,
 };
 
-const EXTENSION_PRICES: Record<number, number> = {
-  7: 2000,
-  15: 4000,
-  30: 7500,
-  60: 14000,
-  90: 20000,
-  180: 38000,
-  365: 75000,
-};
-
 /**
  * Récupère les secrets SingPay depuis Secret Manager / environnement.
  * Aucun secret n'est lu depuis Firestore.
@@ -417,68 +448,8 @@ function getSingPayConfig() {
   };
 }
 
-/**
- * Calcule le tarif garanti d'un produit côté serveur.
- * Ne fait jamais confiance au montant fourni par le client.
- *
- * @param {string} [productId] Identifiant du produit.
- * @param {Record<string, unknown>} [metadata] Métadonnées associées.
- * @param {string} [userTier] Niveau d'abonnement actuel de l'utilisateur.
- * @return {number} Prix garanti calculé en FCFA.
- */
-export function calculateServerPrice(
-  productId?: string,
-  metadata?: Record<string, unknown>,
-  userTier?: string
-): number {
-  if (productId && SERVER_PRODUCTS[productId] !== undefined) {
-    return SERVER_PRODUCTS[productId];
-  }
+export {calculateServerPrice};
 
-  if (productId === "AD_EXTEND" && metadata) {
-    const days = Number(metadata.days || 0);
-    const basePrice = EXTENSION_PRICES[days] || 2000;
-    if (userTier === "BUSINESS") return 0;
-    if (userTier === "ELITE") return Math.round(basePrice * 0.5);
-    if (userTier === "PRO") return Math.round(basePrice * 0.75);
-    return basePrice;
-  }
-
-  if (productId === "AD_PUBLISH" && metadata) {
-    const durationDays = Number(metadata.durationDays || 30);
-    const photoCount = Number(metadata.photoCount || 0);
-    const hasVideo = Boolean(metadata.hasVideo);
-    const withBoost = Boolean(metadata.withBoost);
-    const requiresSubscription = Boolean(metadata.requiresSubscription);
-    const selectedTier = String(metadata.selectedTierToBuy || "");
-
-    let total = 0;
-    if (requiresSubscription && SERVER_PRODUCTS[`SUB_${selectedTier}`]) {
-      total += SERVER_PRODUCTS[`SUB_${selectedTier}`];
-    } else {
-      if (durationDays <= 15) total += 1500;
-      else if (durationDays <= 30) total += 2500;
-      else if (durationDays <= 60) total += 4500;
-      else total += 6000;
-    }
-
-    if (photoCount > 5) {
-      total += (photoCount - 5) * 500;
-    }
-    if (hasVideo) {
-      total += 2000;
-    }
-    if (withBoost && !requiresSubscription) {
-      total += 5000;
-    }
-    return total;
-  }
-
-  throw new HttpsError(
-    "invalid-argument",
-    `Identifiant de produit inconnu ou non tarife: ${productId}`
-  );
-}
 
 /**
  * Attribution sécurisée des avantages après paiement validé SUCCESS.
@@ -545,6 +516,7 @@ export async function applyPaymentAttribution(
         now.getTime() + 30 * 86400000
       ).toISOString(),
       freeBoostsRemaining: Math.min(20, currentBoosts + 1),
+      consumedFreeAdsCount: 0,
       updatedAt: now.toISOString(),
     });
   } else if (productId === "SUB_ELITE" || productId === "ELITE") {
@@ -556,6 +528,7 @@ export async function applyPaymentAttribution(
         now.getTime() + 30 * 86400000
       ).toISOString(),
       freeBoostsRemaining: Math.min(20, currentBoosts + 3),
+      consumedFreeAdsCount: 0,
       updatedAt: now.toISOString(),
     });
   } else if (productId === "SUB_BUSINESS" || productId === "BUSINESS") {
@@ -567,6 +540,7 @@ export async function applyPaymentAttribution(
         now.getTime() + 30 * 86400000
       ).toISOString(),
       freeBoostsRemaining: Math.min(20, currentBoosts + 6),
+      consumedFreeAdsCount: 0,
       updatedAt: now.toISOString(),
     });
   } else if (productId === "BOOST_SINGLE" || productId === "SINGLE") {
@@ -576,10 +550,15 @@ export async function applyPaymentAttribution(
       const adRef = db.collection("ads").doc(adId);
       const adSnap = await adRef.get();
       if (adSnap.exists) {
+        const adData = adSnap.data() || {};
+        const existingUntil = adData.featuredUntil ?
+          new Date(adData.featuredUntil).getTime() : 0;
+        const baseUntil = Math.max(existingUntil, now.getTime());
         await adRef.update({
           isFeatured: true,
-          featuredAt: now.toISOString(),
-          featuredUntil: new Date(now.getTime() + 7 * 86400000).toISOString(),
+          featuredAt: (adData.isFeatured && adData.featuredAt) ?
+            adData.featuredAt : now.toISOString(),
+          featuredUntil: new Date(baseUntil + 7 * 86400000).toISOString(),
           updatedAt: now.toISOString(),
         });
       }
@@ -598,10 +577,15 @@ export async function applyPaymentAttribution(
       const adRef = db.collection("ads").doc(adId);
       const adSnap = await adRef.get();
       if (adSnap.exists) {
+        const adData = adSnap.data() || {};
+        const existingUntil = adData.featuredUntil ?
+          new Date(adData.featuredUntil).getTime() : 0;
+        const baseUntil = Math.max(existingUntil, now.getTime());
         await adRef.update({
           isFeatured: true,
-          featuredAt: now.toISOString(),
-          featuredUntil: new Date(now.getTime() + 7 * 86400000).toISOString(),
+          featuredAt: (adData.isFeatured && adData.featuredAt) ?
+            adData.featuredAt : now.toISOString(),
+          featuredUntil: new Date(baseUntil + 7 * 86400000).toISOString(),
           updatedAt: now.toISOString(),
         });
       }
@@ -625,10 +609,15 @@ export async function applyPaymentAttribution(
       const adRef = db.collection("ads").doc(adId);
       const adSnap = await adRef.get();
       if (adSnap.exists) {
+        const adData = adSnap.data() || {};
+        const existingUntil = adData.featuredUntil ?
+          new Date(adData.featuredUntil).getTime() : 0;
+        const baseUntil = Math.max(existingUntil, now.getTime());
         await adRef.update({
           isFeatured: true,
-          featuredAt: now.toISOString(),
-          featuredUntil: new Date(now.getTime() + 7 * 86400000).toISOString(),
+          featuredAt: (adData.isFeatured && adData.featuredAt) ?
+            adData.featuredAt : now.toISOString(),
+          featuredUntil: new Date(baseUntil + 7 * 86400000).toISOString(),
           updatedAt: now.toISOString(),
         });
       }
@@ -682,6 +671,7 @@ export async function applyPaymentAttribution(
           now.getTime() + 30 * 86400000
         ).toISOString(),
         freeBoostsRemaining: finalBoosts,
+        consumedFreeAdsCount: 0,
         updatedAt: now.toISOString(),
       });
     }
@@ -760,13 +750,23 @@ export const initiateSingPayPayment = onCall(
     const userDoc = await db.collection("users").doc(request.auth.uid).get();
     const userData = userDoc.exists ? userDoc.data() || {} : {};
 
+    const isExempt = Boolean(
+      userData.isExempt || userData.exemptFromPaymentAndKyc
+    );
+    const quota =
+      SUBSCRIPTION_QUOTAS[userData.subscriptionTier || "STANDARD"] || 3;
+    const consumed = Number(userData.consumedFreeAdsCount || 0);
+    const isCoveredByQuota = consumed < quota;
+
     // Calcul du prix côté serveur : ne jamais faire confiance au montant client
     let serverAmount = 0;
     if (productId) {
       serverAmount = calculateServerPrice(
         productId,
         metadata as Record<string, unknown> | undefined,
-        userData.subscriptionTier as string | undefined
+        userData.subscriptionTier as string | undefined,
+        isExempt,
+        isCoveredByQuota
       );
     } else if (amount && Number(amount) > 0) {
       serverAmount = Number(amount);
@@ -1288,6 +1288,742 @@ export const recordSmsSent = onCall(
       },
       {merge: true}
     );
+
+    return {success: true};
+  }
+);
+
+/**
+ * Vérifie si l'utilisateur appelant possède les prérogatives d'administrateur.
+ * @param {string} uid - L'identifiant utilisateur.
+ * @param {object} [authData] - Le contexte d'authentification.
+ * @return {Promise<boolean>} Vrai si administrateur.
+ */
+async function checkIsAdmin(
+  uid: string,
+  authData?: {token?: Record<string, unknown>}
+): Promise<boolean> {
+  const role = authData?.token?.role;
+  if (
+    role === "ADMIN" ||
+    role === "SUPER_ADMIN" ||
+    role === "SUPER ADMIN"
+  ) {
+    return true;
+  }
+  const db = getFirestore();
+  const userDoc = await db.collection("users").doc(uid).get();
+  if (!userDoc.exists) return false;
+  const data = userDoc.data() || {};
+  return (
+    data.role === "ADMIN" ||
+    data.role === "SUPER_ADMIN" ||
+    data.role === "SUPER ADMIN" ||
+    data.isAdmin === true ||
+    data.isSuperAdmin === true
+  );
+}
+
+/**
+ * Calcule le palier effectif et les badges VIP/Vérifié d'un utilisateur.
+ * @param {Record<string, unknown>} userData - Profil utilisateur.
+ * @return {object} Palier effectif et statuts VIP.
+ */
+function computeEffectiveOwnerTier(userData: Record<string, unknown>): {
+  ownerTier: string;
+  isOwnerVip: boolean;
+  isOwnerVerified: boolean;
+} {
+  const isExempt = Boolean(
+    userData.isExempt || userData.exemptFromPaymentAndKyc
+  );
+  let ownerTier = (userData.subscriptionTier as string) || "STANDARD";
+  if (!isExempt && ownerTier !== "STANDARD") {
+    const expiresAt = userData.subscriptionExpiresAt ?
+      new Date(userData.subscriptionExpiresAt as string).getTime() : 0;
+    if (expiresAt > 0 && expiresAt <= Date.now()) {
+      ownerTier = "STANDARD";
+    }
+  }
+  const isOwnerVip = ownerTier === "VIP" || isExempt;
+  const isOwnerVerified =
+    isOwnerVip ||
+    userData.idVerificationStatus === "VERIFIED" ||
+    userData.isKycVerified === true;
+  return {ownerTier, isOwnerVip, isOwnerVerified};
+}
+
+/**
+ * Phase 2 - 1. onAdCreated : Initialisation serveur des annonces.
+ * Pose ownerTier, isOwnerVip, isOwnerVerified, isVipCorner, vérifie le paiement
+ * ou applique le quota gratuit côté serveur.
+ */
+export const onAdCreated = onDocumentCreated(
+  "ads/{adId}",
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const adData = snap.data() || {};
+    const userId = adData.userId;
+    if (!userId) return;
+
+    const db = getFirestore();
+    const userDoc = await db.collection("users").doc(userId).get();
+    const userData = userDoc.exists ? userDoc.data() || {} : {};
+
+    const effective = computeEffectiveOwnerTier(userData);
+    const isVip = isAdVipCornerEligible({
+      ...adData,
+      isVipCorner: effective.isOwnerVip ? true : undefined,
+    });
+
+    const isExempt = Boolean(
+      userData.isExempt || userData.exemptFromPaymentAndKyc
+    );
+    const quota =
+      SUBSCRIPTION_QUOTAS[effective.ownerTier || "STANDARD"] || 3;
+    const consumed = Number(userData.consumedFreeAdsCount || 0);
+    const isCoveredByQuota = consumed < quota;
+
+    // Vérification du statut de l'annonceur dans l'annuaire (Phase 2 - 10)
+    let isRegistered = false;
+    try {
+      const sysConfigSnap = await db.doc("settings/system_config").get();
+      if (sysConfigSnap.exists) {
+        const sysConfig = sysConfigSnap.data() || {};
+        const registeredUserIds =
+          (sysConfig.registeredUserIds as string[]) || [];
+        const registeredPhones =
+          (sysConfig.registeredPhones as string[]) || [];
+        const rawPhone = (userData.contactPhone ||
+          userData.phoneNumber ||
+          adData.contactPhone ||
+          "") as string;
+        const cleanUserPhone = rawPhone.replace(/\D/g, "");
+        isRegistered =
+          registeredUserIds.includes(userId) ||
+          (cleanUserPhone.length >= 6 &&
+            registeredPhones.some((p: string) =>
+              p.includes(cleanUserPhone) || cleanUserPhone.includes(p)
+            ));
+      }
+    } catch (cfgErr) {
+      console.warn("onAdCreated: Erreur lecture system_config:", cfgErr);
+    }
+
+    const updates: Record<string, unknown> = {
+      ownerTier: effective.ownerTier,
+      isOwnerVip: effective.isOwnerVip,
+      isOwnerVerified: effective.isOwnerVerified,
+      isVipCorner: isVip,
+      advertiserApproved: isRegistered,
+      isTest: !isRegistered,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Vérification de couverture de paiement
+    const paymentReference = adData.paymentReference;
+    if (paymentReference) {
+      const paySnap = await db
+        .collection("payments")
+        .doc(String(paymentReference))
+        .get();
+      if (paySnap.exists) {
+        const payData = paySnap.data() || {};
+        if (
+          payData.status === "SUCCESS" &&
+          payData.userId === userId
+        ) {
+          updates.paidAmount = payData.amount || 0;
+          updates.paymentMethod = payData.operator || null;
+          updates.transactionRef =
+            payData.singpayTransactionId ||
+            payData.transactionId ||
+            paymentReference;
+          updates.paymentVerified = true;
+          if (payData.metadata?.withBoost) {
+            updates.boostRequested = true;
+          }
+        } else {
+          updates.status = "REJECTED";
+          updates.moderationReason = "PAIEMENT_NON_VERIFIE";
+          updates.paymentVerified = false;
+        }
+      } else {
+        updates.status = "REJECTED";
+        updates.moderationReason = "PAIEMENT_NON_VERIFIE";
+        updates.paymentVerified = false;
+      }
+    } else {
+      if (isExempt) {
+        updates.paymentVerified = true;
+      } else if (isCoveredByQuota) {
+        updates.paymentVerified = true;
+        // Incrémente le quota côté serveur
+        if (userDoc.exists) {
+          await userDoc.ref.update({
+            consumedFreeAdsCount: FieldValue.increment(1),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } else {
+        updates.status = "REJECTED";
+        updates.moderationReason = "PAIEMENT_NON_VERIFIE";
+        updates.paymentVerified = false;
+      }
+    }
+
+    await snap.ref.update(updates);
+  }
+);
+
+/**
+ * Phase 5 - 1. Mise en pause du boost si une annonce active
+ * repasse en modération.
+ */
+export const onAdStatusUpdated = onDocumentUpdated(
+  "ads/{adId}",
+  async (event) => {
+    const before = event.data?.before?.data() || {};
+    const after = event.data?.after?.data() || {};
+
+    if (
+      before.status === "ACTIVE" &&
+      after.status === "PENDING_REVIEW" &&
+      after.isFeatured
+    ) {
+      if (!after.featuredPausedAt) {
+        await event.data?.after?.ref.update({
+          featuredPausedAt: new Date().toISOString(),
+        });
+      }
+    }
+  }
+);
+
+/**
+ * Phase 2 - 2. approveAd : Validation d'annonce par un administrateur.
+ * Démarre le compteur de validité et le boost de 7 jours à la validation.
+ */
+export const approveAd = onCall(
+  {cors: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentification requise.");
+    }
+    const isAdmin = await checkIsAdmin(request.auth.uid, request.auth);
+    if (!isAdmin) {
+      throw new HttpsError(
+        "permission-denied",
+        "Accès réservé aux administrateurs."
+      );
+    }
+
+    const {adId} = request.data || {};
+    if (!adId) {
+      throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
+    }
+
+    const db = getFirestore();
+    const adRef = db.collection("ads").doc(String(adId));
+    const adSnap = await adRef.get();
+    if (!adSnap.exists) {
+      throw new HttpsError("not-found", "Annonce introuvable.");
+    }
+
+    const ad = adSnap.data() || {};
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+
+    if (ad.pendingExtension) {
+      const base = Math.max(
+        ad.expiresAt ? new Date(ad.expiresAt).getTime() : now,
+        now
+      );
+      const maxExpiry = now + 365 * 86400000;
+      const requestedDays = Math.min(
+        Number(ad.pendingExtension.days) || 30,
+        365
+      );
+      const computedExpiry = base + requestedDays * 86400000;
+      const newExpiry = new Date(
+        Math.min(computedExpiry, maxExpiry)
+      ).toISOString();
+      const effectiveAddedDays = Math.max(
+        1,
+        Math.round((new Date(newExpiry).getTime() - base) / 86400000)
+      );
+
+      await adRef.update({
+        status: "ACTIVE",
+        expiresAt: newExpiry,
+        durationDays: Math.min(
+          365,
+          (Number(ad.durationDays) || 0) + effectiveAddedDays
+        ),
+        paymentMethod:
+          ad.pendingExtension.operator || ad.paymentMethod || null,
+        transactionRef:
+          ad.pendingExtension.transactionRef || ad.transactionRef || null,
+        pendingExtension: FieldValue.delete(),
+        moderatedAt: nowIso,
+        moderationReason: FieldValue.delete(),
+        updatedAt: nowIso,
+      });
+    } else {
+      const durationDays = Number(ad.durationDays) || 30;
+      const expiresAt = new Date(now + durationDays * 86400000).toISOString();
+      const updates: Record<string, unknown> = {
+        status: "ACTIVE",
+        publishedAt: ad.publishedAt || nowIso,
+        expiresAt,
+        moderatedAt: nowIso,
+        moderationReason: FieldValue.delete(),
+        updatedAt: nowIso,
+      };
+
+      // Si le boost était en pause pendant la re-modération, le prolonger
+      if (ad.featuredPausedAt && ad.featuredUntil) {
+        const pausedAtMs = new Date(ad.featuredPausedAt).getTime();
+        const pauseDuration = Math.max(0, now - pausedAtMs);
+        const newFeaturedUntil = new Date(
+          new Date(ad.featuredUntil).getTime() + pauseDuration
+        ).toISOString();
+        updates.isFeatured = true;
+        updates.featuredUntil = newFeaturedUntil;
+        updates.featuredPausedAt = FieldValue.delete();
+      } else if (ad.boostRequested || ad.withBoost) {
+        updates.isFeatured = true;
+        updates.featuredAt = nowIso;
+        updates.featuredUntil = new Date(now + 7 * 86400000).toISOString();
+        updates.boostRequested = FieldValue.delete();
+        updates.withBoost = FieldValue.delete();
+      }
+
+      await adRef.update(updates);
+    }
+
+    return {success: true, adId};
+  }
+);
+
+/**
+ * Phase 2 - 3. boostAd : Activation d'un boost gratuit côté serveur.
+ * Transaction Firestore garantissant l'intégrité du solde et la prolongation.
+ */
+export const boostAd = onCall(
+  {cors: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Authentification requise pour booster une annonce."
+      );
+    }
+    const {adId} = request.data || {};
+    if (!adId) {
+      throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
+    }
+
+    const db = getFirestore();
+    const adRef = db.collection("ads").doc(String(adId));
+    const userRef = db.collection("users").doc(request.auth.uid);
+
+    return await db.runTransaction(async (transaction) => {
+      const adSnap = await transaction.get(adRef);
+      if (!adSnap.exists) {
+        throw new HttpsError("not-found", "Annonce introuvable.");
+      }
+      const ad = adSnap.data() || {};
+      if (ad.userId !== request.auth!.uid) {
+        throw new HttpsError(
+          "permission-denied",
+          "Vous n'êtes pas le propriétaire de cette annonce."
+        );
+      }
+      if (ad.status !== "ACTIVE") {
+        throw new HttpsError(
+          "failed-precondition",
+          "Seule une annonce active peut être boostée."
+        );
+      }
+      const now = Date.now();
+      const nowIso = new Date(now).toISOString();
+      if (ad.expiresAt && new Date(ad.expiresAt).getTime() <= now) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Impossible de booster une annonce expirée."
+        );
+      }
+
+      const userSnap = await transaction.get(userRef);
+      const userData = userSnap.exists ? userSnap.data() || {} : {};
+      const isExempt = Boolean(
+        userData.isExempt ||
+        userData.exemptFromPaymentAndKyc ||
+        userData.subscriptionTier === "VIP"
+      );
+      const freeBoosts = Number(userData.freeBoostsRemaining || 0);
+
+      if (!isExempt && freeBoosts <= 0) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Solde de boosters gratuit insuffisant."
+        );
+      }
+
+      if (!isExempt) {
+        transaction.update(userRef, {
+          freeBoostsRemaining: Math.max(0, freeBoosts - 1),
+          updatedAt: nowIso,
+        });
+      }
+
+      const existingUntil = ad.featuredUntil ?
+        new Date(ad.featuredUntil).getTime() : 0;
+      const baseUntil = Math.max(existingUntil, now);
+      const newFeaturedUntil = new Date(baseUntil + 7 * 86400000).toISOString();
+
+      const adUpdates: Record<string, unknown> = {
+        isFeatured: true,
+        featuredUntil: newFeaturedUntil,
+        updatedAt: nowIso,
+      };
+      if (!ad.isFeatured || !ad.featuredAt) {
+        adUpdates.featuredAt = nowIso;
+      }
+      transaction.update(adRef, adUpdates);
+
+      return {
+        success: true,
+        featuredUntil: newFeaturedUntil,
+        freeBoostsRemaining: isExempt ?
+          freeBoosts :
+          Math.max(0, freeBoosts - 1),
+      };
+    });
+  }
+);
+
+/**
+ * Phase 2 - 5. syncOwnerTierOnUserChange : Mise à jour en cascade des annonces
+ * lors de la modification de l'abonnement ou du statut KYC de l'utilisateur.
+ */
+export const syncOwnerTierOnUserChange = onDocumentUpdated(
+  "users/{uid}",
+  async (event) => {
+    const before = event.data?.before?.data() || {};
+    const after = event.data?.after?.data() || {};
+
+    const tierChanged = before.subscriptionTier !== after.subscriptionTier;
+    const expiryChanged =
+      before.subscriptionExpiresAt !== after.subscriptionExpiresAt;
+    const exemptChanged =
+      before.isExempt !== after.isExempt ||
+      before.exemptFromPaymentAndKyc !== after.exemptFromPaymentAndKyc;
+    const kycChanged =
+      before.idVerificationStatus !== after.idVerificationStatus ||
+      before.isKycVerified !== after.isKycVerified;
+
+    if (!tierChanged && !expiryChanged && !exemptChanged && !kycChanged) {
+      return;
+    }
+
+    const effective = computeEffectiveOwnerTier(after);
+    const db = getFirestore();
+    const CHUNK_SIZE = 500;
+
+    const adsSnap = await db
+      .collection("ads")
+      .where("userId", "==", event.params.uid)
+      .where("status", "in", ["ACTIVE", "PENDING_REVIEW"])
+      .get();
+
+    for (let i = 0; i < adsSnap.docs.length; i += CHUNK_SIZE) {
+      const chunk = adsSnap.docs.slice(i, i + CHUNK_SIZE);
+      const batch = db.batch();
+      chunk.forEach((d) => {
+        const adData = d.data();
+        const isVip = isAdVipCornerEligible({
+          ...adData,
+          isVipCorner: effective.isOwnerVip ? true : undefined,
+        });
+        batch.update(d.ref, {
+          ownerTier: effective.ownerTier,
+          isOwnerVip: effective.isOwnerVip,
+          isOwnerVerified: effective.isOwnerVerified,
+          isVipCorner: isVip,
+          updatedAt: new Date().toISOString(),
+        });
+      });
+      await batch.commit();
+    }
+  }
+);
+
+/**
+ * Phase 2 - 7. registerView : Enregistrement atomique des vues d'annonces.
+ * Ignore le propriétaire et déduplique par 24h.
+ */
+export const registerView = onCall(
+  {cors: true},
+  async (request) => {
+    const {adId, deviceId} = request.data || {};
+    if (!adId) {
+      throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
+    }
+
+    const db = getFirestore();
+    const adRef = db.collection("ads").doc(String(adId));
+    const adSnap = await adRef.get();
+    if (!adSnap.exists) {
+      return {counted: false, reason: "not_found"};
+    }
+    const ad = adSnap.data() || {};
+    if (ad.status !== "ACTIVE") {
+      return {counted: false, reason: "not_active"};
+    }
+    // Ignore le propriétaire de l'annonce
+    if (request.auth && ad.userId === request.auth.uid) {
+      return {counted: false, reason: "owner"};
+    }
+
+    const viewerKey = request.auth?.uid ?
+      `user_${request.auth.uid}` :
+      `device_${String(deviceId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+
+    const viewDocId = `${adId}_${viewerKey}`;
+    const viewRef = db.collection("ad_views").doc(viewDocId);
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+
+    const viewSnap = await viewRef.get();
+    if (viewSnap.exists) {
+      const lastViewed = viewSnap.data()?.viewedAt ?
+        new Date(viewSnap.data()?.viewedAt).getTime() : 0;
+      if (now - lastViewed < 24 * 3600 * 1000) {
+        return {counted: false, reason: "deduplicated"};
+      }
+    }
+
+    await viewRef.set(
+      {
+        adId: String(adId),
+        viewerKey,
+        viewedAt: nowIso,
+        expiresAt: new Date(now + 7 * 86400000).toISOString(),
+      },
+      {merge: true}
+    );
+
+    await adRef.update({
+      viewsCount: FieldValue.increment(1),
+    });
+
+    return {counted: true};
+  }
+);
+
+/**
+ * Phase 2 - 8. extendAdVip : Prolongation réservée aux VIP / exemptés.
+ */
+export const extendAdVip = onCall(
+  {cors: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentification requise.");
+    }
+    const {adId, days} = request.data || {};
+    if (!adId) {
+      throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
+    }
+
+    const db = getFirestore();
+    const userDoc = await db.collection("users").doc(request.auth.uid).get();
+    const userData = userDoc.exists ? userDoc.data() || {} : {};
+    const isVipExempt = Boolean(
+      userData.isExempt ||
+      userData.exemptFromPaymentAndKyc ||
+      userData.subscriptionTier === "VIP"
+    );
+    if (!isVipExempt) {
+      throw new HttpsError(
+        "permission-denied",
+        "Réservé aux membres VIP et partenaires exemptés."
+      );
+    }
+
+    const adRef = db.collection("ads").doc(String(adId));
+    const adSnap = await adRef.get();
+    if (!adSnap.exists) {
+      throw new HttpsError("not-found", "Annonce introuvable.");
+    }
+    const ad = adSnap.data() || {};
+    if (ad.userId !== request.auth.uid) {
+      throw new HttpsError("permission-denied", "Accès non autorisé.");
+    }
+
+    const now = Date.now();
+    const base = Math.max(
+      ad.expiresAt ? new Date(ad.expiresAt).getTime() : now,
+      now
+    );
+    const requestedDays = Math.min(Number(days) || 30, 365);
+    const maxExpiry = now + 365 * 86400000;
+    const computedExpiry = Math.min(base + requestedDays * 86400000, maxExpiry);
+    const newExpiresAt = new Date(computedExpiry).toISOString();
+    const effectiveAddedDays = Math.max(
+      1,
+      Math.round((computedExpiry - base) / 86400000)
+    );
+
+    await adRef.update({
+      status: "ACTIVE",
+      expiresAt: newExpiresAt,
+      durationDays: Math.min(
+        365,
+        (Number(ad.durationDays) || 0) + effectiveAddedDays
+      ),
+      lastExtendedAt: new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString(),
+    });
+
+    return {success: true, expiresAt: newExpiresAt};
+  }
+);
+
+/**
+ * Phase 2 - 8b. requestExtension : Enregistrement de prolongation payante.
+ */
+export const requestExtension = onCall(
+  {cors: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentification requise.");
+    }
+    const {
+      adId,
+      days,
+      operator,
+      transactionRef,
+      paymentReference,
+    } = request.data || {};
+    if (!adId) {
+      throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
+    }
+
+    const db = getFirestore();
+    const adRef = db.collection("ads").doc(String(adId));
+    const adSnap = await adRef.get();
+    if (!adSnap.exists) {
+      throw new HttpsError("not-found", "Annonce introuvable.");
+    }
+    const ad = adSnap.data() || {};
+    if (ad.userId !== request.auth.uid) {
+      throw new HttpsError("permission-denied", "Accès non autorisé.");
+    }
+
+    if (paymentReference) {
+      const paySnap = await db
+        .collection("payments")
+        .doc(String(paymentReference))
+        .get();
+      if (
+        !paySnap.exists ||
+        paySnap.data()?.status !== "SUCCESS" ||
+        paySnap.data()?.userId !== request.auth.uid
+      ) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Paiement non vérifié pour cette prolongation."
+        );
+      }
+    }
+
+    await adRef.update({
+      pendingExtension: {
+        days: Math.min(Number(days) || 30, 365),
+        operator: operator || null,
+        transactionRef: transactionRef || paymentReference || null,
+        requestedAt: new Date().toISOString(),
+      },
+      updatedAt: new Date().toISOString(),
+    });
+
+    return {success: true};
+  }
+);
+
+/**
+ * Phase 2 - 9. activateExemptSubscription : Activation d'abonnement
+ * ou booster VIP.
+ */
+export const activateExemptSubscription = onCall(
+  {cors: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentification requise.");
+    }
+    const db = getFirestore();
+    const userRef = db.collection("users").doc(request.auth.uid);
+    const userSnap = await userRef.get();
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+
+    const isExempt = Boolean(
+      userData.isExempt || userData.exemptFromPaymentAndKyc
+    );
+    if (!isExempt) {
+      throw new HttpsError(
+        "permission-denied",
+        "Action réservée aux comptes partenaires exemptés."
+      );
+    }
+
+    const {type, tier, packCount} = request.data || {};
+    const now = new Date();
+
+    if (type === "SUBSCRIPTION") {
+      const subTier = tier || "VIP";
+      await userRef.update({
+        subscriptionTier: subTier,
+        subscriptionStartedAt: now.toISOString(),
+        subscriptionExpiresAt: new Date(
+          now.getTime() + 365 * 86400000
+        ).toISOString(),
+        consumedFreeAdsCount: 0,
+        updatedAt: now.toISOString(),
+      });
+
+      // Mettre à jour les annonces actives de l'utilisateur
+      const adsSnap = await db
+        .collection("ads")
+        .where("userId", "==", request.auth.uid)
+        .where("status", "in", ["ACTIVE", "PENDING_REVIEW"])
+        .get();
+      const batch = db.batch();
+      adsSnap.docs.forEach((d) => {
+        batch.update(d.ref, {
+          ownerTier: subTier,
+          isOwnerVip: subTier === "VIP",
+          isOwnerVerified: true,
+          updatedAt: now.toISOString(),
+        });
+      });
+      await batch.commit();
+    } else if (type === "BOOSTER_PACK") {
+      const current = Number(userData.freeBoostsRemaining || 0);
+      const count = Math.min(Number(packCount) || 5, Math.max(0, 20 - current));
+      await userRef.update({
+        freeBoostsRemaining: Math.min(20, current + count),
+        activeBoosterPack: "BOOST_EXEMPT",
+        updatedAt: now.toISOString(),
+      });
+    } else {
+      throw new HttpsError(
+        "invalid-argument",
+        "Type invalide (SUBSCRIPTION ou BOOSTER_PACK requis)."
+      );
+    }
 
     return {success: true};
   }

@@ -164,7 +164,19 @@ async function uploadAdImage(file: File): Promise<string> {
   return getDownloadURL(storageRef);
 }
 
-export const PublishAdModal: React.FC<PublishAdModalProps> = ({
+async function uploadRawFile(file: File, folder: 'cvs' | 'videos'): Promise<string> {
+  const uid = auth.currentUser?.uid || 'user';
+  const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${folder}/${uid}/${Date.now()}_${cleanName}`;
+  const storageRef = ref(storage, path);
+  await uploadBytes(storageRef, file, {
+    contentType: file.type || (folder === 'videos' ? 'video/mp4' : 'application/pdf'),
+    cacheControl: 'public,max-age=31536000,immutable',
+  });
+  return getDownloadURL(storageRef);
+}
+
+const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
   isOpen,
   onClose,
   onAdPublished,
@@ -174,7 +186,6 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
   userAds,
   onUpdateUser,
 }) => {
-  if (!isOpen) return null;
 
   // Wizard Step: 1 = Categorization, 2 = Content & Media, 3 = Billing & Payment, 4 = Confirmation
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
@@ -891,7 +902,11 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
     } else if (cat === 'AUTRES_EMPLOIS') {
       setPriceUnit('mois');
       if (price === 0 || price === '') setPrice(250000);
-      setTransactionType(autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? 'CHERCHE_EMPLOI' : 'EMPLOYER');
+      setTransactionType(
+        (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI')
+          ? 'CHERCHE_EMPLOI'
+          : 'EMPLOYER'
+      );
     } else {
       setPriceUnit('total');
     }
@@ -917,27 +932,23 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
             const uploadedUrl = await uploadAdImage(item.file);
             finalImageUrls.push(uploadedUrl);
           } catch (imgErr) {
-            console.warn(`Could not upload photo ${i + 1} to storage, falling back to local data URL:`, imgErr);
-            finalImageUrls.push(item.url || SAMPLE_IMAGE_PRESETS[mainCategory][0]);
+            console.error(`Erreur téléversement photo ${i + 1}:`, imgErr);
+            throw new Error(`Échec du téléversement de la photo ${i + 1}. Veuillez vérifier votre connexion et réessayer.`);
           }
-        } else {
+        } else if (item.url) {
           finalImageUrls.push(item.url);
         }
       }
 
       // 2. Upload video file to Firebase Storage if option enabled
       let finalVideoUrl: string | undefined = undefined;
-      if (hasVideo) {
-        if (videoFile) {
-          setUploadProgressText('Téléversement de la vidéo descriptive (≤ 30s) en cours...');
-          try {
-            finalVideoUrl = await uploadAdImage(videoFile);
-          } catch (vidErr) {
-            console.warn('Could not upload video to storage, falling back to sample video:', vidErr);
-            finalVideoUrl = 'https://assets.mixkit.co/videos/preview/mixkit-modern-house-architecture-4247-large.mp4';
-          }
-        } else {
-          finalVideoUrl = 'https://assets.mixkit.co/videos/preview/mixkit-modern-house-architecture-4247-large.mp4';
+      if (hasVideo && videoFile) {
+        setUploadProgressText('Téléversement de la vidéo descriptive (≤ 30s) en cours...');
+        try {
+          finalVideoUrl = await uploadRawFile(videoFile, 'videos');
+        } catch (vidErr) {
+          console.error('Erreur téléversement vidéo:', vidErr);
+          throw new Error('Échec du téléversement de la vidéo descriptive. Veuillez vérifier la taille du fichier et réessayer.');
         }
       }
 
@@ -946,10 +957,10 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
       if (cvFile) {
         setUploadProgressText('Téléversement sécurisé de votre CV (.pdf, .docx, .md)...');
         try {
-          finalCvUrl = await uploadAdImage(cvFile);
+          finalCvUrl = await uploadRawFile(cvFile, 'cvs');
         } catch (cvErr) {
-          console.warn('Could not upload CV to storage, falling back to local data URL:', cvErr);
-          finalCvUrl = cvDataUrl;
+          console.error('Erreur téléversement CV:', cvErr);
+          throw new Error('Échec du téléversement du document CV. Veuillez vérifier le fichier et réessayer.');
         }
       } else if (cvDataUrl) {
         finalCvUrl = cvDataUrl;
@@ -970,7 +981,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
             : mainCategory === 'EMPLOI'
             ? (jobKind === 'DEMANDE_EMPLOI' ? 'CHERCHE_EMPLOI' : 'EMPLOYER')
             : mainCategory === 'AUTRES_EMPLOIS'
-            ? (autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? 'CHERCHE_EMPLOI' : 'EMPLOYER')
+            ? ((autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') ? 'CHERCHE_EMPLOI' : 'EMPLOYER')
             : 'VENTE',
         jobKind: mainCategory === 'EMPLOI' ? jobKind : undefined,
         propertyType: mainCategory === 'IMMOBILIER' ? propertyType : undefined,
@@ -1026,34 +1037,27 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                 profession: autresEmploisProfession,
                 contractType: autresEmploisContractType as any,
                 experienceYears: autresEmploisExperience,
-                cvUrl: autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? finalCvUrl : undefined,
-                cvFileName: autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? (cvFileName || undefined) : undefined,
-                cvFileType: autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? (cvFileType || undefined) : undefined,
-                cvFileSize: autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? (cvFileSize || undefined) : undefined,
-                jobDocUrl: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? finalCvUrl : undefined,
-                jobDocFileName: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileName || undefined) : undefined,
-                jobDocFileType: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileType || undefined) : undefined,
-                jobDocFileSize: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileSize || undefined) : undefined,
+                cvUrl: (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') ? finalCvUrl : undefined,
+                cvFileName: (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') ? (cvFileName || undefined) : undefined,
+                cvFileType: (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') ? (cvFileType || undefined) : undefined,
+                cvFileSize: (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') ? (cvFileSize || undefined) : undefined,
+                jobDocUrl: (autresEmploisSubCategory !== "Demandeur d'emploi" && (autresEmploisSubCategory as any) !== 'DEMANDE_EMPLOI') ? finalCvUrl : undefined,
+                jobDocFileName: (autresEmploisSubCategory !== "Demandeur d'emploi" && (autresEmploisSubCategory as any) !== 'DEMANDE_EMPLOI') ? (cvFileName || undefined) : undefined,
+                jobDocFileType: (autresEmploisSubCategory !== "Demandeur d'emploi" && (autresEmploisSubCategory as any) !== 'DEMANDE_EMPLOI') ? (cvFileType || undefined) : undefined,
+                jobDocFileSize: (autresEmploisSubCategory !== "Demandeur d'emploi" && (autresEmploisSubCategory as any) !== 'DEMANDE_EMPLOI') ? (cvFileSize || undefined) : undefined,
               }
             : undefined,
         cvUrl: finalCvUrl,
         cvFileName: cvFileName || undefined,
         cvFileType: cvFileType || undefined,
         cvFileSize: cvFileSize || undefined,
-        jobDocUrl: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? finalCvUrl : undefined,
-        jobDocFileName: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileName || undefined) : undefined,
-        jobDocFileType: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileType || undefined) : undefined,
-        jobDocFileSize: autresEmploisSubCategory !== 'DEMANDE_EMPLOI' ? (cvFileSize || undefined) : undefined,
-        isVipCorner: isVipEligible,
+        jobDocUrl: (autresEmploisSubCategory !== "Demandeur d'emploi" && (autresEmploisSubCategory as any) !== 'DEMANDE_EMPLOI') ? finalCvUrl : undefined,
+        jobDocFileName: (autresEmploisSubCategory !== "Demandeur d'emploi" && (autresEmploisSubCategory as any) !== 'DEMANDE_EMPLOI') ? (cvFileName || undefined) : undefined,
+        jobDocFileType: (autresEmploisSubCategory !== "Demandeur d'emploi" && (autresEmploisSubCategory as any) !== 'DEMANDE_EMPLOI') ? (cvFileType || undefined) : undefined,
+        jobDocFileSize: (autresEmploisSubCategory !== "Demandeur d'emploi" && (autresEmploisSubCategory as any) !== 'DEMANDE_EMPLOI') ? (cvFileSize || undefined) : undefined,
         price: (mainCategory === 'NECROLOGIE' || mainCategory === 'AVIS_DE_RECHERCHE') ? 0 : (Number(price) || 0),
         priceMax: (mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS') && priceMax !== '' && Number(priceMax) > (Number(price) || 0) ? Number(priceMax) : undefined,
         priceUnit,
-        isFeatured: isBoostFeatured,
-        featuredUntil: isBoostFeatured ? new Date(now.getTime() + 7 * 86400000).toISOString() : undefined,
-        featuredAt: isBoostFeatured ? now.toISOString() : undefined,
-        ownerTier: requiresSubscription ? selectedTierToBuy : (currentUser?.subscriptionTier || 'STANDARD'),
-        isOwnerVip: Boolean(currentUser?.exemptFromPaymentAndKyc || currentUser?.isExempt),
-        isOwnerVerified: Boolean(currentUser?.idVerificationStatus === 'VERIFIED' || !!currentUser?.idVerifiedAt || (!!currentUser?.idDocumentUrl && currentUser?.idVerificationStatus !== 'REJECTED' && currentUser?.idVerificationStatus !== 'PENDING')),
         description: description || 'Annonce vérifiée et publiée sur BIZBOOSTER Gabon.',
         images: finalImageUrls.length > 0 ? finalImageUrls : [SAMPLE_IMAGE_PRESETS[mainCategory][0]],
         videoUrl: finalVideoUrl,
@@ -1068,21 +1072,11 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
         expiresAt: expires.toISOString(),
         status: 'PENDING_REVIEW', // Post is sent to admin moderation before public live
         userId: currentUser?.id || auth.currentUser?.uid,
-        paidAmount: isExempt ? 0 : totalBillCalculated,
-        paymentMethod: isExempt ? ('AIRTEL_MONEY' as PaymentOperator) : paymentInfo.operator,
-        transactionRef: isExempt ? (paymentInfo.transactionRef || `VIP-${Date.now().toString(36).toUpperCase()}`) : paymentInfo.transactionRef,
-        viewsCount: 0,
+        paymentReference: (!isExempt && totalBillCalculated > 0) ? paymentInfo.transactionRef : undefined,
+        boostRequested: isBoostFeatured ? true : undefined,
       };
 
       const updatesToUser: Partial<UserProfile> = {};
-
-      if (requiresSubscription) {
-        updatesToUser.consumedFreeAdsCount = (currentUser?.consumedFreeAdsCount || 0) + 1;
-      } else {
-        if (isBasePostingCovered && !isExempt) {
-          updatesToUser.consumedFreeAdsCount = (currentUser?.consumedFreeAdsCount || 0) + 1;
-        }
-      }
 
       // Point 4: If advertiser chose to remember their neighborhood in profile
       if (saveNeighborhoodToProfile && neighborhood.trim() && currentUser?.id) {
@@ -1945,11 +1939,11 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          setAutresEmploisSubCategory('DEMANDE_EMPLOI');
+                          setAutresEmploisSubCategory("Demandeur d'emploi");
                           setTransactionType('CHERCHE_EMPLOI');
                         }}
                         className={`p-3 rounded-xl border-2 text-center text-xs font-black transition-all cursor-pointer ${
-                          autresEmploisSubCategory === 'DEMANDE_EMPLOI'
+                          autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI'
                             ? 'bg-teal-700 border-teal-800 text-white shadow-sm'
                             : 'bg-white border-slate-200 text-slate-700 hover:bg-teal-50/50'
                         }`}
@@ -1963,11 +1957,11 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          setAutresEmploisSubCategory('OFFRE_EMPLOI');
+                          setAutresEmploisSubCategory("Offre d'emploi");
                           setTransactionType('EMPLOYER');
                         }}
                         className={`p-3 rounded-xl border-2 text-center text-xs font-black transition-all cursor-pointer ${
-                          autresEmploisSubCategory === 'OFFRE_EMPLOI'
+                          autresEmploisSubCategory === "Offre d'emploi" || (autresEmploisSubCategory as any) === 'OFFRE_EMPLOI'
                             ? 'bg-teal-700 border-teal-800 text-white shadow-sm'
                             : 'bg-white border-slate-200 text-slate-700 hover:bg-teal-50/50'
                         }`}
@@ -2405,7 +2399,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
               })()}
 
               {/* OBLIGATION CV POUR DEMANDEUR D'EMPLOI (Point 2) */}
-              {mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === 'DEMANDE_EMPLOI' && (
+              {mainCategory === 'AUTRES_EMPLOIS' && (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') && (
                 <div className="bg-teal-50/90 border-2 border-teal-500 rounded-2xl p-4 space-y-3 shadow-xs animate-in fade-in">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -2484,7 +2478,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
               )}
 
               {/* OPTION FICHE DE POSTE POUR DONNEUR D'EMPLOI / OFFRE D'EMPLOI (Point 2 - Optionnel) */}
-              {mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory !== 'DEMANDE_EMPLOI' && (
+              {mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory !== "Demandeur d'emploi" && (autresEmploisSubCategory as any) !== 'DEMANDE_EMPLOI' && (
                 <div className="bg-teal-50/70 border border-teal-300 rounded-2xl p-4 space-y-3 shadow-2xs animate-in fade-in">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -2569,7 +2563,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     <Camera className="w-4 h-4 text-emerald-600" />
                     <span className="font-bold text-xs text-slate-800 uppercase tracking-wide">
                       Photos descriptives ({photos.length}/{PRICING_CONFIG.maxImages || 10})
-                      {mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === 'DEMANDE_EMPLOI' && (
+                      {mainCategory === 'AUTRES_EMPLOIS' && (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') && (
                         <span className="ml-1.5 text-teal-700 font-extrabold lowercase text-[11px]">
                           (optionnelles pour demandeur d'emploi)
                         </span>
@@ -2973,7 +2967,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                       )}
                       {mainCategory === 'AUTRES_EMPLOIS' && (
                         <span className="text-[10px] font-bold bg-teal-800 text-teal-100 px-2 py-0.5 rounded-md">
-                          {autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? "Demandeur d'emploi" : "Offre d'emploi"}
+                          {(autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') ? "Demandeur d'emploi" : "Offre d'emploi"}
                           {autresEmploisProfession ? ` • ${autresEmploisProfession}` : ''}
                         </span>
                       )}
@@ -3582,7 +3576,7 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
                     } else if (mainCategory === 'AVIS_DE_RECHERCHE') {
                       genTitle = `Avis de Recherche - ${avisCategory}: ${avisTargetName || 'Signalement'}`;
                     } else if (mainCategory === 'AUTRES_EMPLOIS') {
-                      genTitle = `${autresEmploisSubCategory === 'DEMANDE_EMPLOI' ? "Demandeur d'emploi" : "Offre d'emploi"} - ${autresEmploisProfession || 'Poste à pourvoir'}`;
+                      genTitle = `${(autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') ? "Demandeur d'emploi" : "Offre d'emploi"} - ${autresEmploisProfession || 'Poste à pourvoir'}`;
                     }
                     setTitle(genTitle || mainCategory);
                   }
@@ -3626,3 +3620,9 @@ export const PublishAdModal: React.FC<PublishAdModalProps> = ({
     </div>
   );
 };
+
+export const PublishAdModal: React.FC<PublishAdModalProps> = (props) => {
+  if (!props.isOpen) return null;
+  return <PublishAdModalContent {...props} />;
+};
+

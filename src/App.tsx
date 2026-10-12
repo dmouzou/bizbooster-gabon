@@ -20,6 +20,7 @@ import {
   Crown,
   ArrowUpDown,
   ArrowUp,
+  AlertCircle,
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CategoryBar } from './components/CategoryBar';
@@ -43,7 +44,7 @@ import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { LogoutConfirmModal } from './components/LogoutConfirmModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { isAdOwner } from './utils/formatters';
-import { sortAdsPersonalized, sortAdsRecent, recordCategoryInterest } from './utils/personalization';
+import { sortAdsPersonalized, sortAdsRecent, sortAdsByPriceAsc, recordCategoryInterest } from './utils/personalization';
 import { isAdVipCornerEligible, VIP_CORNER_INFO } from './utils/vipCorner';
 import { AVIS_RECHERCHE_CATEGORIES, AUTRES_EMPLOIS_SUBCATEGORIES } from './data/categoriesData';
 import {
@@ -61,8 +62,9 @@ import {
   UserProfile,
 } from './types';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment, writeBatch } from 'firebase/firestore';
-import { auth, db } from './services/firebase';
+import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment, writeBatch, deleteField } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { auth, db, functions } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
 import { isTestAd } from './components/AdminPanel';
 import { markNotificationAsSeenLocally } from './services/notificationService';
@@ -245,7 +247,7 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
   useEffect(() => {
     const unsub = onSnapshot(
-      doc(db, 'settings', 'system_config'),
+      doc(db, 'settings', 'public_config'),
       (snap) => {
         if (snap.exists()) {
           const data = snap.data();
@@ -255,15 +257,9 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
               localStorage.setItem('bizbooster_show_test_ads', String(data.showTestAds));
             } catch {}
           }
-          if (Array.isArray(data.registeredUserIds)) {
-            setRegisteredUserIds(data.registeredUserIds);
-          }
-          if (Array.isArray(data.registeredPhones)) {
-            setRegisteredPhones(data.registeredPhones);
-          }
         }
       },
-      (err) => console.warn('system_config listener error:', err)
+      (err) => console.warn('public_config listener error:', err)
     );
 
     const handleLocalToggle = (e: any) => {
@@ -281,12 +277,11 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
   // Check whether an ad belongs to a registered advertiser from the Admin Directory
   const isAdFromRegisteredAdvertiser = (ad: Ad): boolean => {
-    if (ad.isTest) return false;
-    // An ad must have a registered userId
+    if (ad.advertiserApproved !== undefined) return ad.advertiserApproved && !ad.isTest;
+    if (ad.isTest !== undefined) return !ad.isTest;
     if (!ad.userId || ad.userId.startsWith('demo-') || ad.userId.startsWith('test-')) {
       return false;
     }
-    // If registeredUserIds is available from system_config, check direct membership
     if (registeredUserIds.length > 0) {
       if (registeredUserIds.includes(ad.userId)) return true;
       const cleanPhone = (ad.contactPhone || '').replace(/\D/g, '');
@@ -295,7 +290,6 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       }
       return false;
     }
-    // Fallback if list not yet loaded
     return !isTestAd(ad);
   };
 
@@ -479,13 +473,33 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     document.body.scrollTop = 0;
   };
 
-  // Point 2: Ticker périodique pour rafraîchir l'algorithme de personnalisation
+  // Point 2 & Phase 4: Rafraîchissement au changement de créneau (12 min) ou au retour sur l'onglet
   const [personalizationTick, setPersonalizationTick] = useState(0);
   useEffect(() => {
-    const timer = setInterval(() => {
-      setPersonalizationTick((t) => t + 1);
-    }, 60000); // Mise à jour automatique toutes les 60 secondes
-    return () => clearInterval(timer);
+    const SLOT_DURATION_MS = 12 * 60 * 1000;
+    let timerId: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleNextSlot = () => {
+      const now = Date.now();
+      const delay = SLOT_DURATION_MS - (now % SLOT_DURATION_MS);
+      timerId = setTimeout(() => {
+        setPersonalizationTick((t) => t + 1);
+        scheduleNextSlot();
+      }, delay);
+    };
+    scheduleNextSlot();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        setPersonalizationTick((t) => t + 1);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (timerId) clearTimeout(timerId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   // Favorites management (Requirement 4)
@@ -890,11 +904,11 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
 
     // Requirement 5 & Point 2: Personalization, recency and dynamic sort options
     if (feedSortMode === 'RECOMMENDED') {
-      return sortAdsPersonalized(list, activeFavoriteIds);
+      return sortAdsPersonalized(list, activeFavoriteIds, Date.now(), searchQuery);
     } else if (feedSortMode === 'RECENT') {
-      return sortAdsRecent(list);
+      return sortAdsRecent(list, Date.now(), activeFavoriteIds, searchQuery);
     } else if (feedSortMode === 'PRICE_ASC') {
-      return [...list].sort((a, b) => (a.price || 0) - (b.price || 0));
+      return sortAdsByPriceAsc(list);
     } else if (feedSortMode === 'PRICE_DESC') {
       return [...list].sort((a, b) => (b.price || 0) - (a.price || 0));
     } else if (feedSortMode === 'POPULAR') {
@@ -931,6 +945,9 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     emploiCity,
     activeFavoriteIds,
     personalizationTick,
+    showTestAds,
+    registeredUserIds,
+    registeredPhones,
   ]);
 
   // Handle open publish flow with mandatory auth check
@@ -993,8 +1010,29 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       setIsPhoneAuthOpen(true);
       return;
     }
+    const {
+      isFeatured,
+      featuredUntil,
+      featuredAt,
+      ownerTier,
+      isOwnerVip,
+      isOwnerVerified,
+      isVipCorner,
+      paidAmount,
+      paymentMethod,
+      transactionRef,
+      paymentVerified,
+      viewsCount,
+      reportsCount,
+      pendingExtension,
+      suspensionReason,
+      suspendedAt,
+      lastExtendedAt,
+      ...safeAdData
+    } = newAd as any;
+
     await setDoc(doc(db, 'ads', newAd.id), {
-      ...newAd,
+      ...safeAdData,
       userId: auth.currentUser.uid,
       status: 'PENDING_REVIEW',
     });
@@ -1053,11 +1091,18 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       }));
 
       try {
-        await updateDoc(doc(db, 'ads', ad.id), {
-          viewsCount: increment(1),
-        });
+        const registerViewCallable = httpsCallable<{ adId: string; deviceId?: string }, { counted: boolean }>(functions, 'registerView');
+        let deviceId = '';
+        try {
+          deviceId = localStorage.getItem('bizbooster_device_id') || '';
+          if (!deviceId) {
+            deviceId = 'dev_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+            localStorage.setItem('bizbooster_device_id', deviceId);
+          }
+        } catch {}
+        await registerViewCallable({ adId: ad.id, deviceId });
       } catch (err) {
-        console.warn('Could not increment viewsCount in Firestore:', err);
+        console.warn('Could not register view via registerView:', err);
       }
     }
   };
@@ -1135,16 +1180,70 @@ function cleanUndefined(obj: any): any {
 
     const cleanedFields = cleanUndefined(updatedFields);
 
+    const CATEGORY_SPECIFIC_KEYS = [
+      'propertyType',
+      'vehicleData',
+      'tutoringData',
+      'necrologieData',
+      'avisRechercheData',
+      'autresEmploisData',
+      'domesticJobType',
+      'bricCategory',
+      'jobKind',
+      'cvUrl',
+      'cvFileName',
+      'cvFileType',
+      'cvFileSize',
+      'jobDocUrl',
+      'jobDocFileName',
+      'jobDocFileType',
+      'jobDocFileSize',
+    ];
+
+    const deletes: Record<string, any> = {};
+    if (updatedFields.mainCategory && targetAd.mainCategory !== updatedFields.mainCategory) {
+      for (const k of CATEGORY_SPECIFIC_KEYS) {
+        if (!(k in updatedFields)) {
+          deletes[k] = deleteField();
+        }
+      }
+    }
+
+    const RANKING_KEYS = [
+      'isFeatured',
+      'featuredUntil',
+      'featuredAt',
+      'ownerTier',
+      'isOwnerVip',
+      'isOwnerVerified',
+      'isVipCorner',
+      'paidAmount',
+      'paymentMethod',
+      'transactionRef',
+      'paymentVerified',
+      'viewsCount',
+      'reportsCount',
+      'pendingExtension',
+      'suspensionReason',
+      'suspendedAt',
+      'lastExtendedAt',
+    ];
+
     try {
       const adDocRef = doc(db, 'ads', adId);
       const adSnap = await getDoc(adDocRef);
 
       const payload: Record<string, any> = {
         ...cleanedFields,
+        ...deletes,
         ...(needsModeration ? { status: 'PENDING_REVIEW' } : {}),
         ...(!targetAd.userId && currentUser?.id ? { userId: currentUser.id } : {}),
         updatedAt: nowIso,
       };
+
+      for (const rk of RANKING_KEYS) {
+        delete payload[rk];
+      }
 
       if (adSnap.exists()) {
         await updateDoc(adDocRef, payload);
@@ -1271,33 +1370,35 @@ function cleanUndefined(obj: any): any {
 
     try {
       if (isVip) {
-        // VIP partner: instant free extension applied immediately to Firestore
-        await updateDoc(doc(db, 'ads', adId), {
-          expiresAt: new Date(finalExpiry).toISOString(),
-          durationDays: Math.min(365, (targetAd.durationDays || 0) + effectiveDays),
-          status: targetAd.status === 'EXPIRED' ? 'ACTIVE' : targetAd.status,
-          paymentMethod: 'AIRTEL_MONEY',
-          transactionRef: paymentInfo.transactionRef || `VIP-EXT-${Date.now().toString(36).toUpperCase()}`,
-          paidAmount: 0,
-          paymentVerified: true,
-          lastExtendedAt: new Date().toISOString(),
-        });
+        // VIP partner: instant free extension applied securely via Cloud Function
+        const extendVipCallable = httpsCallable<{ adId: string; days: number }, { success: boolean; expiresAt: string }>(
+          functions,
+          'extendAdVip'
+        );
+        await extendVipCallable({ adId, days: effectiveDays });
         showToast(`Prolongation de +${effectiveDays} jours appliquée avec succès !`);
       } else {
-        // Standard user: Filed for administrative payment check
-        await updateDoc(doc(db, 'ads', adId), {
-          pendingExtension: {
-            days: effectiveDays,
-            operator: paymentInfo.operator,
-            transactionRef: paymentInfo.transactionRef,
-            requestedAt: new Date().toISOString(),
-          },
+        // Standard user: Filed securely for administrative verification via Cloud Function
+        const reqExtCallable = httpsCallable<{
+          adId: string;
+          days: number;
+          operator?: PaymentOperator;
+          transactionRef?: string;
+          paymentReference?: string;
+        }, { success: boolean }>(functions, 'requestExtension');
+        await reqExtCallable({
+          adId,
+          days: effectiveDays,
+          operator: paymentInfo.operator,
+          transactionRef: paymentInfo.transactionRef,
+          paymentReference: paymentInfo.transactionRef,
         });
         showToast(`Prolongation de +${effectiveDays} jours demandée. Elle sera validée après vérification du paiement.`);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      showToast('Erreur lors de la prolongation.');
+      const msg = e?.message || 'Erreur lors de la prolongation.';
+      showToast(msg);
     }
     setSelectedAdForExtend(null);
   };
@@ -1359,10 +1460,20 @@ function cleanUndefined(obj: any): any {
       showToast("Erreur : utilisateur non identifié.");
       throw new Error("Utilisateur non identifié");
     }
-    const { password, ...safeUpdated } = updated as any;
+    // Filtrage strict : seules les clés autorisées non privilégiées peuvent être écrites par le client
+    const allowedKeys = ['name', 'location', 'favoriteAdIds', 'seenNotificationIds'];
+    const filteredUpdate: Record<string, any> = {};
+    for (const key of allowedKeys) {
+      if ((updated as any)[key] !== undefined) {
+        filteredUpdate[key] = (updated as any)[key];
+      }
+    }
+
     try {
-      await updateDoc(doc(db, 'users', uid), safeUpdated);
-      setCurrentUser((prev) => (prev ? { ...prev, ...safeUpdated, id: uid } : null));
+      if (Object.keys(filteredUpdate).length > 0) {
+        await updateDoc(doc(db, 'users', uid), filteredUpdate);
+        setCurrentUser((prev) => (prev ? { ...prev, ...filteredUpdate, id: uid } : null));
+      }
 
       // Point 1: If advertiser name is updated, automatically synchronize the new name on ALL their ads
       if (updated.name && updated.name.trim() && (!currentUser || updated.name.trim() !== currentUser.name)) {
@@ -1401,7 +1512,7 @@ function cleanUndefined(obj: any): any {
     }
   };
 
-  // Boost ad to top ("En Tête de Liste" - 7 jours)
+  // Boost ad to top ("En Tête de Liste" - 7 jours) via Cloud Function sécurisée
   const handleBoostAd = async (adId: string) => {
     const targetAd = ads.find((a) => a.id === adId);
     if (!targetAd || !isAdOwner(targetAd, currentUser)) {
@@ -1410,30 +1521,21 @@ function cleanUndefined(obj: any): any {
     }
 
     try {
-      const nowIso = new Date().toISOString();
-      const featuredUntil = new Date(Date.now() + 7 * 86400000).toISOString();
-      await updateDoc(doc(db, 'ads', adId), {
-        isFeatured: true,
-        featuredUntil,
-        featuredAt: nowIso,
-        ownerTier: currentUser?.subscriptionTier || 'STANDARD',
-        isOwnerVip: Boolean(currentUser?.exemptFromPaymentAndKyc || currentUser?.isExempt),
-      });
-
-      // If user has free boosts remaining, decrement exactly ONCE
-      const uid = currentUser?.id || auth.currentUser?.uid;
-      if (uid && (currentUser?.freeBoostsRemaining || 0) > 0) {
-        const newBalance = Math.max(0, (currentUser?.freeBoostsRemaining || 0) - 1);
-        await updateDoc(doc(db, 'users', uid), {
-          freeBoostsRemaining: newBalance,
-        });
-        setCurrentUser((prev) => (prev ? { ...prev, freeBoostsRemaining: newBalance } : null));
+      const boostCallable = httpsCallable<{ adId: string }, { success: boolean; featuredUntil: string; freeBoostsRemaining: number }>(
+        functions,
+        'boostAd'
+      );
+      const res = await boostCallable({ adId });
+      if (res.data?.success) {
+        if (typeof res.data.freeBoostsRemaining === 'number') {
+          setCurrentUser((prev) => (prev ? { ...prev, freeBoostsRemaining: res.data.freeBoostsRemaining } : null));
+        }
+        showToast("🚀 Votre annonce a été propulsée 'En Tête de Liste' pour 7 jours !");
       }
-
-      showToast("🚀 Votre annonce a été propulsée 'En Tête de Liste' pour 7 jours !");
     } catch (e: any) {
-      console.error('Failed to boost ad:', e);
-      showToast("Erreur lors de la mise en avant.");
+      console.error('Failed to boost ad via callable:', e);
+      const msg = e?.message || "Erreur lors de la mise en avant.";
+      showToast(msg);
       throw e;
     }
   };

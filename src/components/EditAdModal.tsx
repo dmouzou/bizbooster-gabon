@@ -62,14 +62,17 @@ interface EditAdModalProps {
   onSave: (adId: string, updatedFields: Partial<Ad>, wasActive: boolean) => Promise<void>;
 }
 
-export const EditAdModal: React.FC<EditAdModalProps> = ({
-  isOpen,
+interface EditAdModalContentProps {
+  onClose: () => void;
+  ad: Ad;
+  onSave: (adId: string, updatedFields: Partial<Ad>, wasActive: boolean) => Promise<void>;
+}
+
+const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
   onClose,
   ad,
   onSave,
 }) => {
-  if (!isOpen || !ad) return null;
-
   const wasActive = ad.status === 'ACTIVE';
   const isRejected = ad.status === 'REJECTED';
 
@@ -78,7 +81,7 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
   const [description, setDescription] = useState(ad.description || '');
   const [price, setPrice] = useState(ad.price ? String(ad.price) : '');
   const [priceMax, setPriceMax] = useState(ad.priceMax ? String(ad.priceMax) : '');
-  const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour' | 'heure'>(
+  const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour' | 'heure' | 'trimestre' | 'an'>(
     ad.priceUnit || 'total'
   );
   const [mainCategory, setMainCategory] = useState<MainCategory>(ad.mainCategory || 'IMMOBILIER');
@@ -136,9 +139,13 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
   const [avisEmergencyContact, setAvisEmergencyContact] = useState(ad.avisRechercheData?.contactEmergency || '');
 
   // Autres Emplois fields (Point 2: Demandeur d'emploi + CV)
-  const [autresEmploisSubCategory, setAutresEmploisSubCategory] = useState<AutresEmploisSubCategory>(
-    ad.autresEmploisData?.subCategory || "Demandeur d'emploi"
-  );
+  const initialAutresSub: AutresEmploisSubCategory =
+    (ad.autresEmploisData?.subCategory as any) === 'DEMANDE_EMPLOI'
+      ? "Demandeur d'emploi"
+      : (ad.autresEmploisData?.subCategory as any) === 'OFFRE_EMPLOI'
+      ? "Offre d'emploi"
+      : ad.autresEmploisData?.subCategory || "Demandeur d'emploi";
+  const [autresEmploisSubCategory, setAutresEmploisSubCategory] = useState<AutresEmploisSubCategory>(initialAutresSub);
   const [autresEmploisProfession, setAutresEmploisProfession] = useState(ad.autresEmploisData?.profession || '');
   const [autresEmploisContractType, setAutresEmploisContractType] = useState(ad.autresEmploisData?.contractType || 'CDI');
   const [autresEmploisExperience, setAutresEmploisExperience] = useState(ad.autresEmploisData?.experienceYears || '');
@@ -205,7 +212,13 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       setAvisHasReward(Boolean(ad.avisRechercheData?.hasReward || (ad.avisRechercheData?.rewardAmount && ad.avisRechercheData.rewardAmount > 0)));
       setAvisRewardAmount(ad.avisRechercheData?.rewardAmount ? String(ad.avisRechercheData.rewardAmount) : '');
       setAvisEmergencyContact(ad.avisRechercheData?.contactEmergency || '');
-      setAutresEmploisSubCategory(ad.autresEmploisData?.subCategory || "Demandeur d'emploi");
+      const resetSub: AutresEmploisSubCategory =
+        (ad.autresEmploisData?.subCategory as any) === 'DEMANDE_EMPLOI'
+          ? "Demandeur d'emploi"
+          : (ad.autresEmploisData?.subCategory as any) === 'OFFRE_EMPLOI'
+          ? "Offre d'emploi"
+          : ad.autresEmploisData?.subCategory || "Demandeur d'emploi";
+      setAutresEmploisSubCategory(resetSub);
       setAutresEmploisProfession(ad.autresEmploisData?.profession || '');
       setAutresEmploisContractType(ad.autresEmploisData?.contractType || 'CDI');
       setAutresEmploisExperience(ad.autresEmploisData?.experienceYears || '');
@@ -408,20 +421,12 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
 
     if (mainCategory === 'IMMOBILIER') {
       updatedData.propertyType = propertyType;
-      updatedData.isVipCorner = isAdVipCornerEligible({ mainCategory, transactionType, price: numPrice, priceUnit, propertyType });
     } else if (mainCategory === 'MATERIEL_ROULANT') {
       updatedData.vehicleData = {
         category: vehicleCategory,
         brand: vehicleBrand.trim() || undefined,
         model: vehicleModel.trim() || undefined,
       };
-      updatedData.isVipCorner = isAdVipCornerEligible({
-        mainCategory,
-        transactionType,
-        price: numPrice,
-        priceUnit,
-        vehicleData: { category: vehicleCategory },
-      });
     } else if (mainCategory === 'BRIC_A_BRAC') {
       updatedData.bricCategory = bricCategory;
     } else if (mainCategory === 'EMPLOI') {
@@ -1410,7 +1415,9 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
                               <>
                                 <option value="total">Prix Total (Achat / Vente)</option>
                                 <option value="mois">Par Mois (Location)</option>
-                                <option value="jour">Par Jour</option>
+                                <option value="jour">Par Jour (Location)</option>
+                                <option value="trimestre">Par Trimestre (Location)</option>
+                                <option value="an">Par An (Location)</option>
                                 <option value="heure">Par Heure</option>
                               </>
                             )}
@@ -1663,4 +1670,14 @@ export const EditAdModal: React.FC<EditAdModalProps> = ({
       </div>
     </div>
   );
+};
+
+export const EditAdModal: React.FC<EditAdModalProps> = ({
+  isOpen,
+  onClose,
+  ad,
+  onSave,
+}) => {
+  if (!isOpen || !ad) return null;
+  return <EditAdModalContent onClose={onClose} ad={ad} onSave={onSave} />;
 };

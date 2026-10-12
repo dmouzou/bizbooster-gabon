@@ -46,7 +46,8 @@ import {
   updatePassword,
 } from 'firebase/auth';
 import { doc, updateDoc } from 'firebase/firestore';
-import { auth, db } from '../services/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { auth, db, functions } from '../services/firebase';
 import { trackDownloadRequest } from '../services/platformMetrics';
 import { Ad, UserProfile, SubscriptionTier, BoosterPackType, AdPackType, PaymentOperator, isUserAdmin, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime, isAdOwner, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
@@ -379,37 +380,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     );
   }, [myAds]);
 
-  // Automatic suspension of excess active ads if quota is exceeded (the newest ads are suspended)
-  const [isSuspendingExcess, setIsSuspendingExcess] = useState(false);
-  useEffect(() => {
-    if (isExempt) return;
-    const activeAds = myAds.filter((a) => a.status === 'ACTIVE');
-    if (activeAds.length > maxQuota && !isSuspendingExcess) {
-      // Sort ascending: oldest ads stay active, newest excess ads are suspended
-      const sorted = [...activeAds].sort((a, b) => {
-        const tA = new Date(a.createdAt || a.publishedAt || 0).getTime();
-        const tB = new Date(b.createdAt || b.publishedAt || 0).getTime();
-        return tA - tB;
-      });
-      const excessAds = sorted.slice(maxQuota);
-      setIsSuspendingExcess(true);
-      (async () => {
-        try {
-          for (const excessAd of excessAds) {
-            await updateDoc(doc(db, 'ads', excessAd.id), {
-              status: 'SUSPENDED',
-              suspensionReason: 'FORFAIT_EXPIRE_QUOTA',
-              suspendedAt: new Date().toISOString(),
-            });
-          }
-        } catch (err) {
-          console.error('Error suspending excess quota ads:', err);
-        } finally {
-          setIsSuspendingExcess(false);
-        }
-      })();
-    }
-  }, [myAds, maxQuota, isExempt, isSuspendingExcess]);
+  // La suspension en cas de dépassement de quota est gérée exclusivement côté serveur (expireAds / Cloud Functions)
 
   const expiredCount = myAds.filter(
     (ad) => ad.status === 'EXPIRED' || new Date(ad.expiresAt).getTime() <= Date.now()
@@ -447,28 +418,24 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       return 0;
     });
 
-  // Requirement 4: Boost purchase success (Single Boost or Booster Pack)
-  const handleBoostPurchaseSuccess = async () => {
-    if (!adToBoost || !onBoostAd) return;
-    if (!isAllowedToTransact) {
-      showAlert("Vérification d'identité obligatoire : Votre identité doit être vérifiée avant tout paiement ou activation de boost.", 'error', "Identité requise");
-      setIsKycModalOpen(true);
-      return;
-    }
+  // Requirement 4: Boost purchase success (Single Boost ou Booster Pack géré côté serveur)
+  const handleBoostPurchaseSuccess = async (paymentInfo?: { operator?: PaymentOperator; transactionRef?: string }) => {
+    if (!adToBoost) return;
     setIsBoostingAd(true);
     try {
-      if (boostOption === 'SINGLE' || !selectedPackForBoost) {
-        await onBoostAd(adToBoost.id);
-        showAlert(`Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours.`, 'success', "Annonce Propulsée !");
-      } else {
-        await onBoostAd(adToBoost.id);
-        const remainingToCredit = selectedPackForBoost.boostsCount - 1;
-        showAlert(
-          `Félicitations ! Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours, et ${remainingToCredit} boosters supplémentaires ont été crédités sur votre compte via la validation sécurisée du serveur !`,
-          'success',
-          "Pack Boosters Activé !"
-        );
+      if (paymentInfo?.transactionRef) {
+        try {
+          const claimCallable = httpsCallable<{ reference: string }, { success: boolean }>(functions, 'claimPaymentBenefits');
+          await claimCallable({ reference: paymentInfo.transactionRef });
+        } catch (claimErr) {
+          console.warn('claimPaymentBenefits warning:', claimErr);
+        }
       }
+      showAlert(
+        `Félicitations ! Votre paiement a été validé. Votre annonce "${adToBoost.title}" est propulsée En Tête pour 7 jours.`,
+        'success',
+        "Annonce Propulsée !"
+      );
       setAdToBoost(null);
       setShowBoostPayment(false);
       setSelectedPackForBoost(null);
@@ -583,20 +550,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   const handleSelectSubscription = async (tier: (typeof SUBSCRIPTION_TIERS)[number]) => {
     if (isExempt) {
-      if (!onUpdateUser) return;
       try {
-        const boostsToAdd = tier.tier === 'BUSINESS' ? 6 : tier.tier === 'ELITE' ? 3 : 1;
-        const currentBoosts = currentUser.freeBoostsRemaining || 0;
-        const newBoosts = Math.min(20, currentBoosts + boostsToAdd);
-        await onUpdateUser({
-          subscriptionTier: tier.tier,
-          subscriptionExpiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
-          subscriptionStartedAt: new Date().toISOString(),
-          freeBoostsRemaining: newBoosts,
-        });
+        const activateCallable = httpsCallable<{ type: string; tier?: string }, { success: boolean }>(functions, 'activateExemptSubscription');
+        await activateCallable({ type: 'SUBSCRIPTION', tier: tier.tier });
         setUpgradedTierModal(tier.tier);
       } catch (err: any) {
-        console.error('Error activating plan:', err);
+        console.error('Error activating plan for VIP:', err);
         showAlert(`Erreur lors de l'activation du forfait ${tier.name} : ${err?.message || 'Vérifiez votre connexion et réessayez.'}`, 'error');
       }
       return;
@@ -640,15 +599,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   const handleSelectBoosterPack = async (pack: (typeof BOOSTER_PACKS)[number]) => {
     if (isExempt) {
-      if (!onUpdateUser) return;
       try {
-        const currentBoosts = currentUser.freeBoostsRemaining || 0;
-        const newBoosts = Math.min(20, currentBoosts + pack.boostsCount);
-        await onUpdateUser({
-          freeBoostsRemaining: newBoosts,
-          activeBoosterPack: pack.type,
-        });
-        showAlert(`${pack.name} activé avec succès ! Votre nouveau solde est de ${newBoosts} boosters disponibles (max 20).`, 'success', "Pack Boosters Activé !");
+        const activateCallable = httpsCallable<{ type: string; packCount?: number }, { success: boolean }>(functions, 'activateExemptSubscription');
+        await activateCallable({ type: 'BOOSTER_PACK', packCount: pack.boostsCount });
+        showAlert(`${pack.name} activé avec succès pour votre compte partenaire VIP (max 20) !`, 'success', "Pack Boosters Activé !");
       } catch (err: any) {
         console.error('Error adding booster pack for VIP:', err);
         showAlert(`Erreur lors de l'activation des boosters : ${err?.message || 'Vérifiez votre connexion et réessayez.'}`, 'error');
@@ -665,9 +619,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     });
   };
 
-  const handlePurchaseSuccess = async (_paymentInfo: { operator: PaymentOperator; transactionRef: string }) => {
+  const handlePurchaseSuccess = async (paymentInfo: { operator: PaymentOperator; transactionRef: string }) => {
     if (!itemToPurchase) return;
     try {
+      if (paymentInfo?.transactionRef) {
+        try {
+          const claimCallable = httpsCallable<{ reference: string }, { success: boolean }>(functions, 'claimPaymentBenefits');
+          await claimCallable({ reference: paymentInfo.transactionRef });
+        } catch (claimErr) {
+          console.warn('claimPaymentBenefits warning:', claimErr);
+        }
+      }
       if (itemToPurchase.type === 'SUBSCRIPTION' && itemToPurchase.tier) {
         const upgradedTier = itemToPurchase.tier;
         setItemToPurchase(null);

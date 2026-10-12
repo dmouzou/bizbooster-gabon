@@ -199,20 +199,28 @@ export interface Ad {
   durationDays: number;
   createdAt?: string; // ISO string
   publishedAt: string; // ISO string
+  updatedAt?: string; // ISO string
   expiresAt: string; // ISO string
   status: 'ACTIVE' | 'EXPIRED' | 'PENDING_PAYMENT' | 'PENDING_REVIEW' | 'REJECTED' | 'SUSPENDED';
   moderationReason?: string;
+  rejectionReason?: string; // Alias de moderationReason
   moderatedAt?: string;
   suspensionReason?: string; // Ex: 'FORFAIT_EXPIRE_QUOTA'
   suspendedAt?: string;
   userId?: string; // Links ad to the authenticated phone user
   isTest?: boolean; // Flag to identify test or demo ads
-  
+  advertiserApproved?: boolean; // Annonceur vérifié par le répertoire officiel
+  boostRequested?: boolean; // Intention de boost lors de la publication
+  featuredPausedAt?: string; // Pause du temps de boost pendant modération
+
   // Payment information
-  paidAmount: number;
+  paidAmount?: number;
   paymentMethod?: PaymentOperator;
   transactionRef?: string;
-  viewsCount: number;
+  paymentReference?: string;
+  paymentVerified?: boolean;
+  lastExtendedAt?: string;
+  viewsCount?: number;
   reportsCount?: number;
 
   // Extension request filed by the advertiser, applied by an admin after payment check
@@ -261,7 +269,9 @@ export interface UserProfile {
   idVerificationStatus?: 'NOT_SUBMITTED' | 'PENDING' | 'VERIFIED' | 'REJECTED';
   idRejectionReason?: string;
   idSubmittedAt?: string;
-  // Security & Location
+  idVerifiedAt?: string;
+  isKycVerified?: boolean;
+  // Security & Location (pas de champ password)
   lastPasswordChangeDate?: string; // ISO string to enforce 1 change per 24h
   location?: {
     province?: string;
