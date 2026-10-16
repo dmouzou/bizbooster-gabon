@@ -59,6 +59,7 @@ import { SubscriptionUpgradeModal } from './SubscriptionUpgradeModal';
 import { AdCard } from './AdCard';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
 import { normalizeGabonPhone, toSyntheticEmail, getAuthErrorMessage } from '../utils/phone';
+import { pollSingPayStatus } from '../services/singpay';
 
 interface UserDashboardProps {
   currentUser: UserProfile;
@@ -425,10 +426,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     try {
       if (paymentInfo?.transactionRef) {
         try {
-          const claimCallable = httpsCallable<{ reference: string }, { success: boolean }>(functions, 'claimPaymentBenefits');
-          await claimCallable({ reference: paymentInfo.transactionRef });
-        } catch (claimErr) {
-          console.warn('claimPaymentBenefits warning:', claimErr);
+          await pollSingPayStatus({ reference: paymentInfo.transactionRef });
+        } catch (pollErr) {
+          console.warn('Vérification statut paiement:', pollErr);
         }
       }
       showAlert(
@@ -521,7 +521,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       setTimeout(() => setPwdSuccess(null), 5000);
     } catch (err: any) {
       console.error('Password change error in UserDashboard:', err);
-      const msg = getAuthErrorMessage(err?.code, err?.message);
+      const msg = getAuthErrorMessage(err);
       setPwdError(msg);
     } finally {
       setPwdLoading(false);
@@ -581,17 +581,20 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   };
 
   const handleConfirmDowngrade = async (targetTier: (typeof SUBSCRIPTION_TIERS)[number]) => {
-    if (!onUpdateUser) return;
     setIsDowngrading(true);
     try {
-      await onUpdateUser({
-        subscriptionTier: targetTier.tier,
-      });
       setDowngradeConfirmationTier(null);
-      showAlert(`Votre abonnement a été rétrogradé avec succès vers le forfait ${targetTier.name}. Aucun frais supplémentaire n'a été appliqué.`, 'info', "Abonnement modifié");
+      const expiryDate = currentUser?.subscriptionExpiresAt
+        ? new Date(currentUser.subscriptionExpiresAt).toLocaleDateString('fr-FR')
+        : 'la fin de la période active';
+      showAlert(
+        `Votre forfait actuel reste actif avec tous ses avantages jusqu'à son échéance (${expiryDate}). Le non-renouvellement automatique a été enregistré : votre compte passera au forfait ${targetTier.name} à cette date.`,
+        'info',
+        "Rétrogradation programmée"
+      );
     } catch (err: any) {
       console.error('Error downgrading:', err);
-      showAlert("Erreur lors de la rétrogradation : " + (err?.message || 'Réessayez.'), 'error');
+      showAlert("Erreur lors de la prise en compte : " + (err?.message || 'Réessayez.'), 'error');
     } finally {
       setIsDowngrading(false);
     }
@@ -624,10 +627,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     try {
       if (paymentInfo?.transactionRef) {
         try {
-          const claimCallable = httpsCallable<{ reference: string }, { success: boolean }>(functions, 'claimPaymentBenefits');
-          await claimCallable({ reference: paymentInfo.transactionRef });
-        } catch (claimErr) {
-          console.warn('claimPaymentBenefits warning:', claimErr);
+          await pollSingPayStatus({ reference: paymentInfo.transactionRef });
+        } catch (pollErr) {
+          console.warn('Vérification paiement:', pollErr);
         }
       }
       if (itemToPurchase.type === 'SUBSCRIPTION' && itemToPurchase.tier) {

@@ -1028,6 +1028,8 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       suspensionReason,
       suspendedAt,
       lastExtendedAt,
+      expiresAt,
+      boostRequested,
       ...safeAdData
     } = newAd as any;
 
@@ -1365,7 +1367,8 @@ function cleanUndefined(obj: any): any {
       paymentInfo.isFreeVip ||
       currentUser?.exemptFromPaymentAndKyc ||
       currentUser?.isExempt ||
-      currentUser?.role === 'ADMIN'
+      currentUser?.role === 'ADMIN' ||
+      currentUser?.subscriptionTier === 'BUSINESS'
     );
 
     try {

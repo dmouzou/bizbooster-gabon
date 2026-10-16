@@ -3,6 +3,7 @@ import { X, RefreshCw, Clock, ShieldCheck, CheckCircle2, Crown, AlertTriangle } 
 import { Ad, PaymentOperator, UserProfile } from '../types';
 import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
+import { previewQuote, PreviewQuoteResult } from '../services/singpay';
 
 interface ExtendAdModalProps {
   ad: Ad | null;
@@ -64,6 +65,8 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
   const defaultPackage = extensions.find((ext) => ext.days <= maxExtendableDays) || extensions[0];
   const [selectedExtension, setSelectedExtension] = useState<{ days: number; price: number }>(defaultPackage);
   const [showPayment, setShowPayment] = useState(false);
+  const [serverQuote, setServerQuote] = useState<PreviewQuoteResult | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
 
   useEffect(() => {
     const valid = extensions.find((ext) => ext.days <= maxExtendableDays);
@@ -71,6 +74,32 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
       setSelectedExtension(valid);
     }
   }, [ad.id, maxExtendableDays]);
+
+  // Récupération dynamique du devis officiel côté serveur (Phase 8.4)
+  useEffect(() => {
+    let cancelled = false;
+    const fetchQuote = async () => {
+      setQuoteLoading(true);
+      try {
+        const q = await previewQuote({
+          productId: 'AD_EXTEND',
+          metadata: {
+            adId: ad.id,
+            days: selectedExtension.days,
+          },
+        });
+        if (!cancelled) setServerQuote(q);
+      } catch (e) {
+        console.warn('Erreur devis serveur prolongation:', e);
+      } finally {
+        if (!cancelled) setQuoteLoading(false);
+      }
+    };
+    fetchQuote();
+    return () => {
+      cancelled = true;
+    };
+  }, [ad.id, selectedExtension.days]);
 
   const { isExpired, label: remainingLabel } = formatRemainingTime(ad.expiresAt);
 
@@ -87,7 +116,9 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
     if (isAtMaxLimit) return;
     onExtendSuccess(ad.id, selectedExtension.days, {
       operator: 'AIRTEL_MONEY',
-      transactionRef: `VIP-EXT-${Date.now().toString(36).toUpperCase()}`,
+      transactionRef: isVip
+        ? `VIP-EXT-${Date.now().toString(36).toUpperCase()}`
+        : `BIZ-EXT-${Date.now().toString(36).toUpperCase()}`,
       isFreeVip: true,
     });
     onClose();
@@ -325,7 +356,7 @@ export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
                 adId: ad.id,
                 days: selectedExtension.days,
               }}
-              amount={getExtensionPrice(selectedExtension.price)}
+              amount={serverQuote?.amount ?? getExtensionPrice(selectedExtension.price)}
               itemDescription={`Prolongation +${selectedExtension.days} jours - ${ad.title}`}
               onSuccess={handlePaymentSuccess}
               onCancel={() => setShowPayment(false)}

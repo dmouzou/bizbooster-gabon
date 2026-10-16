@@ -38,8 +38,9 @@ import {
   Download,
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection } from 'firebase/firestore';
 import { storage, auth, db } from '../services/firebase';
+import { previewQuote, PreviewQuoteResult } from '../services/singpay';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
 import {
   Ad,
@@ -320,13 +321,14 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
   const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour' | 'trimestre' | 'an' | 'heure'>('mois');
   const [description, setDescription] = useState('');
 
-  // Boost "En tête de liste" (7 days)
+  // Identifiant d'annonce généré avant paiement pour traçabilité serveur (Phase 8.3)
+  const [preGeneratedAdId] = useState<string>(() => doc(collection(db, 'ads')).id);
+
+  // Boost "En tête de liste" (7 jours)
   const [isBoostFeatured, setIsBoostFeatured] = useState(false);
-  const BOOST_PRICE = 5000;
   const hasFreeBoost = Boolean(
     currentUser?.freeBoostsRemaining && currentUser.freeBoostsRemaining > 0
   );
-  const boostCost = isBoostFeatured && !isExempt && !hasFreeBoost ? BOOST_PRICE : 0;
   
   // Media State: photos (max 5) with support for presets and local File uploads
   const [photos, setPhotos] = useState<PhotoMediaItem[]>([
@@ -645,36 +647,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     return simultaneousAdsCount >= maxQuota && maxQuota < 20;
   }, [isExempt, simultaneousAdsCount, maxQuota]);
 
-  const SUBSCRIPTION_PRICES: Record<'PRO' | 'ELITE' | 'BUSINESS', number> = {
-    PRO: 29000,
-    ELITE: 59000,
-    BUSINESS: 99000,
-  };
-
   const [selectedTierToBuy, setSelectedTierToBuy] = useState<'PRO' | 'ELITE' | 'BUSINESS'>('PRO');
-
-  // Subscription upgrade rule (Point 5): surplus only within 1 week, else full price
-  const subscriptionAgeDays = useMemo(() => {
-    if (!isSubscriber || !currentUser?.subscriptionExpiresAt) return 0;
-    const startedMs = currentUser.subscriptionStartedAt 
-      ? new Date(currentUser.subscriptionStartedAt).getTime()
-      : new Date(currentUser.subscriptionExpiresAt).getTime() - 30 * 86400000;
-    return Math.max(0, (Date.now() - startedMs) / (24 * 3600 * 1000));
-  }, [isSubscriber, currentUser?.subscriptionStartedAt, currentUser?.subscriptionExpiresAt]);
-
-  const hasExceededOneWeek = subscriptionAgeDays > 7;
-
-  const subscriptionCost = useMemo(() => {
-    if (!requiresSubscription) return 0;
-    const targetPrice = SUBSCRIPTION_PRICES[selectedTierToBuy];
-    if (isSubscriber && currentUser?.subscriptionTier && currentUser.subscriptionTier !== 'STANDARD') {
-      const currentPrice = SUBSCRIPTION_PRICES[currentUser.subscriptionTier as 'PRO' | 'ELITE' | 'BUSINESS'] || 0;
-      if (!hasExceededOneWeek && targetPrice > currentPrice) {
-        return Math.max(0, targetPrice - currentPrice);
-      }
-    }
-    return targetPrice;
-  }, [requiresSubscription, selectedTierToBuy, isSubscriber, currentUser?.subscriptionTier, hasExceededOneWeek]);
 
   // Dynamic Gabon city and neighborhood lists
   const currentProvinceData = useMemo(() => {
@@ -691,27 +664,49 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     return brand ? brand.models : ['Standard'];
   }, [vehicleBrand]);
 
-  // Dynamic Bill Calculation (Section C-d) based on photos count and video option
-  const bill = useMemo(() => {
-    return calculateBill(durationDays, photos.length, hasVideo, currentUser?.subscriptionTier);
-  }, [durationDays, photos.length, hasVideo, currentUser?.subscriptionTier]);
-
-  // Point 3: Subscription free ads are strictly consumable (e.g. Pro: 8 free ads total).
-  // Once consumed, subsequent ads (from 9th onward) are billed at standard price, even if an old ad is deleted.
+  // Point 3: Subscription free ads are strictly consumable
   const consumedFreeAdsCount = currentUser?.consumedFreeAdsCount || 0;
   const hasFreeAdQuotaRemaining = Boolean(isExempt || consumedFreeAdsCount < maxQuota);
 
-  // Base price is waived if VIP, currently buying a subscription, or subscriber with remaining free quota
-  const isBasePostingCovered = Boolean(
-    isExempt ||
-    requiresSubscription ||
-    (isSubscriber && hasFreeAdQuotaRemaining)
-  );
+  // Devis officiel calculé par le serveur (Phase 8.3)
+  const [serverQuote, setServerQuote] = useState<PreviewQuoteResult | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
 
-  const basePriceToPay = isBasePostingCovered ? 0 : bill.basePrice;
-  const totalBillCalculated = isExempt
-    ? 0
-    : basePriceToPay + bill.extraPhotosCost + bill.videoCost + boostCost + subscriptionCost;
+  useEffect(() => {
+    let cancelled = false;
+    const fetchQuote = async () => {
+      setQuoteLoading(true);
+      setQuoteError(null);
+      try {
+        const q = await previewQuote({
+          productId: 'AD_PUBLISH',
+          metadata: {
+            adId: preGeneratedAdId,
+            durationDays,
+            photoCount: photos.length,
+            hasVideo,
+            withBoost: isBoostFeatured,
+            requiresSubscription,
+            selectedTierToBuy,
+          },
+        });
+        if (!cancelled) setServerQuote(q);
+      } catch (e: any) {
+        if (!cancelled) {
+          setQuoteError(e.message || 'Erreur lors du calcul du devis.');
+        }
+      } finally {
+        if (!cancelled) setQuoteLoading(false);
+      }
+    };
+    fetchQuote();
+    return () => {
+      cancelled = true;
+    };
+  }, [preGeneratedAdId, durationDays, photos.length, hasVideo, isBoostFeatured, requiresSubscription, selectedTierToBuy]);
+
+  const totalBillCalculated = isExempt ? 0 : (serverQuote?.amount ?? 0);
 
   // File selection for photos (limit: max 5 photos total, max 10 Mo/image)
   const handlePhotoFilesSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -969,10 +964,9 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
       setUploadProgressText("Finalisation et enregistrement de l'annonce...");
 
       const now = new Date();
-      const expires = new Date(now.getTime() + durationDays * 86400000);
 
       const newAd: Ad = {
-        id: `ad-${Date.now().toString(36)}`,
+        id: preGeneratedAdId,
         title: title || `${transactionType === 'VENTE' ? 'Vente' : 'Location'} - ${mainCategory}`,
         mainCategory,
         transactionType:
@@ -1069,11 +1063,9 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
         contactName: contactName || 'Annonceur BIZBOOSTER',
         durationDays,
         publishedAt: now.toISOString(),
-        expiresAt: expires.toISOString(),
-        status: 'PENDING_REVIEW', // Post is sent to admin moderation before public live
+        status: 'PENDING_REVIEW', // L'échéance et le statut final sont gérés exclusivement par le serveur
         userId: currentUser?.id || auth.currentUser?.uid,
         paymentReference: (!isExempt && totalBillCalculated > 0) ? paymentInfo.transactionRef : undefined,
-        boostRequested: isBoostFeatured ? true : undefined,
       };
 
       const updatesToUser: Partial<UserProfile> = {};
@@ -3215,74 +3207,19 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                 </div>
 
                 <div className="space-y-2 text-xs">
-                  {/* Point 3: Information claire sur le quota d'annonces gratuites de l'abonnement */}
-                  {isSubscriber && !hasFreeAdQuotaRemaining && !requiresSubscription && (
-                    <div className="bg-amber-950/60 border border-amber-500/50 p-2.5 rounded-xl text-[11px] text-amber-200 leading-relaxed mb-2">
-                      ⚠️ <strong>Quota gratuit atteint :</strong> Vos <strong>{maxQuota} annonces gratuites</strong> incluses dans votre forfait <strong>{currentUser?.subscriptionTier}</strong> ont été utilisées ({consumedFreeAdsCount}/{maxQuota}). À partir de cette annonce, la publication est facturée au tarif standard ({formatFCFA(bill.basePrice)}).
-                    </div>
-                  )}
-                  {isSubscriber && hasFreeAdQuotaRemaining && !requiresSubscription && (
-                    <div className="bg-emerald-950/60 border border-emerald-500/50 p-2 rounded-xl text-[11px] text-emerald-200 leading-relaxed mb-2">
-                      ✨ <strong>Annonce gratuite incluse :</strong> {maxQuota - consumedFreeAdsCount} restante{(maxQuota - consumedFreeAdsCount) > 1 ? 's' : ''} sur vos {maxQuota} annonces incluses ({currentUser?.subscriptionTier}).
-                    </div>
-                  )}
-
-                  <div className="flex justify-between text-slate-300">
-                    <span>Forfait durée ({durationDays} jours) :</span>
-                    <span className="font-mono font-bold text-white">
-                      {isExempt
-                        ? '0 FCFA'
-                        : isBasePostingCovered
-                        ? 'Inclus (Abonnement)'
-                        : formatFCFA(bill.basePrice)}
-                    </span>
-                  </div>
-
-                  {requiresSubscription && (
-                    <div className="flex justify-between text-amber-300">
-                      <span>Abonnement {selectedTierToBuy} (1 mois) :</span>
-                      <span className="font-mono font-bold">+{formatFCFA(subscriptionCost)}</span>
-                    </div>
-                  )}
-
-                  {isBoostFeatured && (
-                    <div className="flex justify-between text-amber-300">
-                      <span>Option "En Tête de Liste" (7 jours) :</span>
-                      <span className="font-mono font-bold">
-                        {hasFreeBoost ? '0 FCFA (Inclus)' : isExempt ? '0 FCFA (VIP)' : '+5 000 FCFA'}
-                      </span>
-                    </div>
-                  )}
-
-                  {bill.extraPhotosCount > 0 ? (
-                    <div className="flex justify-between text-slate-300">
-                      <span>{bill.extraPhotosCount} photo(s) au-delà des {bill.includedPhotos} incluses :</span>
-                      <span className="font-mono font-bold text-white">
-                        {isExempt ? '0 FCFA' : formatFCFA(bill.extraPhotosCost)}
-                      </span>
-                    </div>
+                  {quoteLoading ? (
+                    <div className="text-slate-400 py-1">Calcul du devis officiel en cours...</div>
+                  ) : serverQuote?.lines && serverQuote.lines.length > 0 ? (
+                    serverQuote.lines.map((line, idx) => (
+                      <div key={idx} className="flex justify-between text-slate-300">
+                        <span>{line.label} :</span>
+                        <span className="font-mono font-bold text-white">
+                          {formatFCFA(line.amount)}
+                        </span>
+                      </div>
+                    ))
                   ) : (
-                    <div className="flex justify-between text-slate-400 text-[11px]">
-                      <span>Photos descriptives ({photos.length}/{bill.includedPhotos} incluses gratuites) :</span>
-                      <span className="font-mono text-emerald-400 font-bold">0 FCFA</span>
-                    </div>
-                  )}
-
-                  {hasVideo && (
-                    <div className="flex justify-between text-slate-300">
-                      <span>
-                        Option courte vidéo descriptive :
-                        {currentUser?.subscriptionTier === 'BUSINESS' && (
-                          <span className="text-emerald-400 font-bold ml-1.5">(Gratuit • Business)</span>
-                        )}
-                        {currentUser?.subscriptionTier === 'ELITE' && (
-                          <span className="text-purple-400 font-bold ml-1.5">(-50% • Élite)</span>
-                        )}
-                      </span>
-                      <span className="font-mono font-bold text-white">
-                        {isExempt || currentUser?.subscriptionTier === 'BUSINESS' ? '0 FCFA' : formatFCFA(bill.videoCost)}
-                      </span>
-                    </div>
+                    <div className="text-slate-400 py-1">Devis prêt.</div>
                   )}
 
                   {isExempt && (
@@ -3316,7 +3253,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                     <p className="text-xs text-slate-600 max-w-sm mx-auto mt-0.5">
                       {isExempt
                         ? "Aucun débit Mobile Money requis pour les partenaires VIP. Votre annonce est directement transmise à l'équipe de modération."
-                        : "Cette annonce est couverte par votre pack ou abonnement actif. Aucun frais supplémentaire requis."}
+                        : "Cette annonce est couverte par votre quota d'abonnement actif. Aucun frais supplémentaire requis."}
                     </p>
                   </div>
                   <button
@@ -3327,7 +3264,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                         contactPhone: contactPhone,
                         transactionRef: isExempt
                           ? `VIP-${Date.now().toString(36).toUpperCase()}`
-                          : `PACK-${Date.now().toString(36).toUpperCase()}`,
+                          : `QUOTA-${Date.now().toString(36).toUpperCase()}`,
                       })
                     }
                     className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm rounded-xl shadow-lg transition-all inline-flex items-center gap-2 cursor-pointer"
@@ -3347,7 +3284,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                     </h4>
                   </div>
 
-                  {/* CGU Acceptance & Disclaimer Notice (Point 2) */}
+                  {/* CGU Acceptance & Disclaimer Notice */}
                   <div className="mb-3 bg-slate-50 border border-slate-200 rounded-xl p-3 text-[11px] text-slate-600 flex items-center justify-between gap-3">
                     <span>
                       En procédant au règlement, vous reconnaissez avoir pris connaissance des <strong>Conditions Générales d'Utilisation</strong> et de la <strong>Clause de non-responsabilité</strong> de BIZBOOSTER Gabon.
@@ -3365,6 +3302,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                     <MobilePaymentSimulator
                       productId="AD_PUBLISH"
                       metadata={{
+                        adId: preGeneratedAdId,
                         durationDays,
                         photoCount: photos.length,
                         hasVideo,
