@@ -13,6 +13,7 @@ import {
 } from "firebase-admin/firestore";
 import {getAuth, UserRecord} from "firebase-admin/auth";
 import {initializeApp} from "firebase-admin/app";
+import * as crypto from "crypto";
 import {isAdVipCornerEligible} from "./vipCorner";
 import {calculateServerPrice} from "./pricing";
 
@@ -151,9 +152,9 @@ export async function resolveAuthUser(
   );
 }
 
-// Table des quotas partagée (Phase 7)
+// Table des quotas partagée (Phase 7 - Décision D3: Standard = 0)
 export const SUBSCRIPTION_QUOTAS: Record<string, number> = {
-  STANDARD: 3,
+  STANDARD: 0,
   PRO: 8,
   ELITE: 14,
   BUSINESS: 20,
@@ -412,41 +413,483 @@ export const SERVER_PRODUCTS: Record<string, number> = {
   BOOST_10: 25000,
 };
 
-/**
- * Récupère les secrets SingPay depuis Secret Manager / environnement.
- * Aucun secret n'est lu depuis Firestore.
- *
- * @return {Record<string, string>} Configuration et secrets SingPay.
- */
-function getSingPayConfig() {
-  const clientId =
-    singpayClientId.value() || process.env.SINGPAY_CLIENT_ID || "";
-  const clientSecret =
-    singpayClientSecret.value() || process.env.SINGPAY_CLIENT_SECRET || "";
-  const walletId =
-    singpayWalletId.value() || process.env.SINGPAY_WALLET_ID || "";
-  const webhookSecret =
-    singpayWebhookSecret.value() ||
-    process.env.SINGPAY_WEBHOOK_SECRET ||
-    clientSecret;
-  const moovDisbursement =
-    singpayMoovDisbursement.value() ||
-    process.env.SINGPAY_MOOV_DISBURSEMENT ||
-    "";
-  const airtelDisbursement =
-    singpayAirtelDisbursement.value() ||
-    process.env.SINGPAY_AIRTEL_DISBURSEMENT ||
-    "";
+export interface SingPayConfigData {
+  clientId: string;
+  clientSecret: string;
+  walletId: string;
+  webhookSecret: string;
+  moovDisbursement: string;
+  airtelDisbursement: string;
+  isLive: boolean;
+  version?: number;
+  updatedAt?: string;
+  updatedBy?: string;
+}
 
-  return {
+let cachedSingPayConfig: SingPayConfigData | null = null;
+let cachedConfigExpiry = 0;
+
+export function clearSingPayConfigCache() {
+  cachedSingPayConfig = null;
+  cachedConfigExpiry = 0;
+}
+
+/**
+ * Récupère la configuration SingPay :
+ * 1. Document Firestore private_config/singpay (source de vérité)
+ * 2. Repli sur Secret Manager / process.env si non configuré
+ * 3. Cache mémoire de 60 secondes
+ * 4. Aucun repli webhookSecret = clientSecret
+ */
+export async function getSingPayConfig(): Promise<SingPayConfigData> {
+  const now = Date.now();
+  if (cachedSingPayConfig && cachedConfigExpiry > now) {
+    return cachedSingPayConfig;
+  }
+
+  const db = getFirestore();
+  let firestoreDoc: Record<string, unknown> | null = null;
+  try {
+    const snap = await db.collection("private_config").doc("singpay").get();
+    if (snap.exists) {
+      firestoreDoc = snap.data() || null;
+    }
+  } catch (err) {
+    console.warn("getSingPayConfig: Erreur lecture private_config/singpay:", err);
+  }
+
+  let secClientId = "";
+  let secClientSecret = "";
+  let secWalletId = "";
+  let secWebhookSecret = "";
+  let secMoovDisbursement = "";
+  let secAirtelDisbursement = "";
+
+  try {
+    secClientId = singpayClientId.value() || process.env.SINGPAY_CLIENT_ID || "";
+  } catch {
+    secClientId = process.env.SINGPAY_CLIENT_ID || "";
+  }
+  try {
+    secClientSecret = singpayClientSecret.value() || process.env.SINGPAY_CLIENT_SECRET || "";
+  } catch {
+    secClientSecret = process.env.SINGPAY_CLIENT_SECRET || "";
+  }
+  try {
+    secWalletId = singpayWalletId.value() || process.env.SINGPAY_WALLET_ID || "";
+  } catch {
+    secWalletId = process.env.SINGPAY_WALLET_ID || "";
+  }
+  try {
+    secWebhookSecret = singpayWebhookSecret.value() || process.env.SINGPAY_WEBHOOK_SECRET || "";
+  } catch {
+    secWebhookSecret = process.env.SINGPAY_WEBHOOK_SECRET || "";
+  }
+  try {
+    secMoovDisbursement = singpayMoovDisbursement.value() || process.env.SINGPAY_MOOV_DISBURSEMENT || "";
+  } catch {
+    secMoovDisbursement = process.env.SINGPAY_MOOV_DISBURSEMENT || "";
+  }
+  try {
+    secAirtelDisbursement = singpayAirtelDisbursement.value() || process.env.SINGPAY_AIRTEL_DISBURSEMENT || "";
+  } catch {
+    secAirtelDisbursement = process.env.SINGPAY_AIRTEL_DISBURSEMENT || "";
+  }
+
+  const clientId = (firestoreDoc?.clientId as string) || secClientId;
+  const clientSecret = (firestoreDoc?.clientSecret as string) || secClientSecret;
+  const walletId = (firestoreDoc?.walletId as string) || secWalletId;
+  const webhookSecret = (firestoreDoc?.webhookSecret as string) || secWebhookSecret;
+  const moovDisbursement = (firestoreDoc?.moovDisbursement as string) || secMoovDisbursement;
+  const airtelDisbursement = (firestoreDoc?.airtelDisbursement as string) || secAirtelDisbursement;
+  const isLive = firestoreDoc?.isLive !== undefined ? Boolean(firestoreDoc.isLive) : true;
+  const version = typeof firestoreDoc?.version === "number" ? firestoreDoc.version : 1;
+  const updatedAt = (firestoreDoc?.updatedAt as string) || undefined;
+  const updatedBy = (firestoreDoc?.updatedBy as string) || undefined;
+
+  cachedSingPayConfig = {
     clientId,
     clientSecret,
     walletId,
     webhookSecret,
     moovDisbursement,
     airtelDisbursement,
+    isLive,
+    version,
+    updatedAt,
+    updatedBy,
   };
+  cachedConfigExpiry = now + 60000;
+
+  return cachedSingPayConfig;
 }
+
+/**
+ * Vérifie les privilèges Super Admin.
+ * Exige request.auth, puis vérifie le rôle SUPER_ADMIN ou SUPER ADMIN
+ * dans le jeton ou dans users/{uid}.role (ou users/{uid}.isSuperAdmin === true).
+ */
+export async function assertSuperAdmin(request: {
+  auth?: {
+    uid: string;
+    token: Record<string, unknown>;
+  };
+}): Promise<string> {
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError(
+      "unauthenticated",
+      "Authentification requise pour cette opération."
+    );
+  }
+
+  const tokenRole = request.auth.token.role;
+  const isTokenSuperAdmin =
+    tokenRole === "SUPER_ADMIN" ||
+    tokenRole === "SUPER ADMIN" ||
+    request.auth.token.isSuperAdmin === true;
+
+  if (isTokenSuperAdmin) {
+    return request.auth.uid;
+  }
+
+  const db = getFirestore();
+  const userDoc = await db.collection("users").doc(request.auth.uid).get();
+  if (userDoc.exists) {
+    const userData = userDoc.data() || {};
+    const dbRole = userData.role;
+    if (
+      dbRole === "SUPER_ADMIN" ||
+      dbRole === "SUPER ADMIN" ||
+      userData.isSuperAdmin === true
+    ) {
+      return request.auth.uid;
+    }
+  }
+
+  throw new HttpsError(
+    "permission-denied",
+    "Accès réservé exclusivement au Super Administrateur."
+  );
+}
+
+export function maskNumber(val?: string): string {
+  if (!val) return "";
+  const digits = val.replace(/\D/g, "");
+  if (digits.length <= 4) return "••••";
+  return `+241 •• •• ${digits.slice(-4)}`;
+}
+
+export function validateNoControlOrWhitespace(value: string, fieldName: string) {
+  if (/\s/.test(value)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Le champ ${fieldName} ne doit pas contenir d'espaces internes.`
+    );
+  }
+  if (/[\x00-\x1F\x7F]/.test(value)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Le champ ${fieldName} contient des caractères de contrôle non autorisés.`
+    );
+  }
+}
+
+export function normalizeMoovDisbursement(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  let clean = digits;
+  if (clean.startsWith("241")) clean = clean.slice(3);
+  if (clean.startsWith("0")) clean = clean.slice(1);
+  if (clean.length !== 8) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Le numéro Moov Money doit comporter 8 chiffres après l'indicatif."
+    );
+  }
+  const prefix = clean.slice(0, 2);
+  if (!MOOV_PREFIXES.includes(prefix)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Le numéro Moov doit commencer par un préfixe Moov (${MOOV_PREFIXES.join(", ")}).`
+    );
+  }
+  return `241${clean}`;
+}
+
+export function normalizeAirtelDisbursement(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  let clean = digits;
+  if (clean.startsWith("241")) clean = clean.slice(3);
+  if (clean.startsWith("0")) clean = clean.slice(1);
+  if (clean.length !== 8) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Le numéro Airtel Money doit comporter 8 chiffres après l'indicatif."
+    );
+  }
+  const prefix = clean.slice(0, 2);
+  if (!AIRTEL_PREFIXES.includes(prefix)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Le numéro Airtel doit commencer par un préfixe Airtel (${AIRTEL_PREFIXES.join(", ")}).`
+    );
+  }
+  return `241${clean}`;
+}
+
+/**
+ * Renvoie la configuration de la passerelle au Super Admin (masquage strict des secrets).
+ */
+export const getGatewayConfig = onCall(
+  {
+    cors: true,
+    secrets: [
+      singpayClientId,
+      singpayClientSecret,
+      singpayWalletId,
+      singpayWebhookSecret,
+      singpayMoovDisbursement,
+      singpayAirtelDisbursement,
+    ],
+  },
+  async (request) => {
+    await assertSuperAdmin(request);
+    const cfg = await getSingPayConfig();
+
+    const maskedClientId = cfg.clientId
+      ? (cfg.clientId.length > 4 ? `••••••••••••${cfg.clientId.slice(-4)}` : "••••")
+      : "";
+
+    const projectId = process.env.GCLOUD_PROJECT || "bizbooster-gabon";
+    const webhookUrl = `https://us-central1-${projectId}.cloudfunctions.net/singpayWebhook`;
+
+    return {
+      clientId: maskedClientId,
+      hasClientSecret: Boolean(cfg.clientSecret),
+      hasWebhookSecret: Boolean(cfg.webhookSecret),
+      walletId: cfg.walletId,
+      moovDisbursement: cfg.moovDisbursement,
+      airtelDisbursement: cfg.airtelDisbursement,
+      isLive: cfg.isLive,
+      updatedAt: cfg.updatedAt || null,
+      updatedBy: cfg.updatedBy || null,
+      version: cfg.version || 1,
+      webhookUrl,
+    };
+  }
+);
+
+/**
+ * Enregistre les clés et numéros de reversement configurés par le Super Admin.
+ */
+export const saveGatewayConfig = onCall(
+  {
+    cors: true,
+    secrets: [
+      singpayClientId,
+      singpayClientSecret,
+      singpayWalletId,
+      singpayWebhookSecret,
+      singpayMoovDisbursement,
+      singpayAirtelDisbursement,
+    ],
+  },
+  async (request) => {
+    const uid = await assertSuperAdmin(request);
+
+    // Reconnexion récente exigée (max 10 minutes)
+    const authTime = Number(request.auth?.token?.auth_time || 0);
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (authTime > 0 && (nowSec - authTime > 600)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "reauth-required"
+      );
+    }
+
+    const data = (request.data || {}) as {
+      clientId?: string;
+      clientSecret?: string;
+      walletId?: string;
+      moovDisbursement?: string;
+      airtelDisbursement?: string;
+      isLive?: boolean;
+      rotateWebhookSecret?: boolean;
+    };
+
+    const db = getFirestore();
+
+    // Limite de débit : 10 enregistrements par heure
+    const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
+    const recentAudits = await db
+      .collection("gateway_audit")
+      .where("at", ">=", oneHourAgo)
+      .get();
+    if (recentAudits.size >= 10) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Limite de 10 enregistrements par heure atteinte pour la passerelle."
+      );
+    }
+
+    const projectId = process.env.GCLOUD_PROJECT || "bizbooster-gabon";
+    const webhookBaseUrl = `https://us-central1-${projectId}.cloudfunctions.net/singpayWebhook`;
+    let generatedWebhookUrl: string | null = null;
+    let newWebhookSecret: string | null = null;
+
+    if (data.rotateWebhookSecret === true) {
+      newWebhookSecret = crypto.randomBytes(32).toString("hex");
+      generatedWebhookUrl = `${webhookBaseUrl}?secret=${newWebhookSecret}`;
+    }
+
+    if (data.clientId !== undefined && data.clientId !== "") {
+      validateNoControlOrWhitespace(data.clientId, "Client ID");
+      if (data.clientId.length > 256) {
+        throw new HttpsError("invalid-argument", "Client ID trop long (max 256).");
+      }
+    }
+    if (data.clientSecret !== undefined && data.clientSecret !== "") {
+      validateNoControlOrWhitespace(data.clientSecret, "Client Secret");
+      if (data.clientSecret.length > 256) {
+        throw new HttpsError("invalid-argument", "Client Secret trop long (max 256).");
+      }
+    }
+    if (data.walletId !== undefined && data.walletId !== "") {
+      validateNoControlOrWhitespace(data.walletId, "Wallet ID");
+      if (data.walletId.length > 128) {
+        throw new HttpsError("invalid-argument", "Wallet ID trop long (max 128).");
+      }
+    }
+
+    let normalizedMoov: string | undefined;
+    if (data.moovDisbursement !== undefined && data.moovDisbursement !== "") {
+      validateNoControlOrWhitespace(data.moovDisbursement, "Numéro Moov");
+      normalizedMoov = normalizeMoovDisbursement(data.moovDisbursement);
+    }
+
+    let normalizedAirtel: string | undefined;
+    if (data.airtelDisbursement !== undefined && data.airtelDisbursement !== "") {
+      validateNoControlOrWhitespace(data.airtelDisbursement, "Numéro Airtel");
+      normalizedAirtel = normalizeAirtelDisbursement(data.airtelDisbursement);
+    }
+
+    const configRef = db.collection("private_config").doc("singpay");
+    const nowIso = new Date().toISOString();
+
+    const result = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(configRef);
+      const current = snap.exists ? (snap.data() as SingPayConfigData) : ({} as Partial<SingPayConfigData>);
+      const version = ((current.version as number) || 0) + 1;
+
+      const changedFields: string[] = [];
+      const updates: Record<string, unknown> = {
+        version,
+        updatedAt: nowIso,
+        updatedBy: uid,
+      };
+
+      if (data.clientId !== undefined && data.clientId !== "") {
+        updates.clientId = data.clientId;
+        changedFields.push("clientId");
+      }
+      if (data.clientSecret !== undefined && data.clientSecret !== "") {
+        updates.clientSecret = data.clientSecret;
+        changedFields.push("clientSecret");
+      }
+      if (data.walletId !== undefined && data.walletId !== "") {
+        updates.walletId = data.walletId;
+        changedFields.push("walletId");
+      }
+      if (data.isLive !== undefined) {
+        updates.isLive = Boolean(data.isLive);
+        changedFields.push("isLive");
+      }
+      if (newWebhookSecret) {
+        updates.webhookSecret = newWebhookSecret;
+        changedFields.push("webhookSecret");
+      }
+
+      let disbursementChanged = false;
+      let oldMoovMasked = maskNumber(current.moovDisbursement);
+      let newMoovMasked = oldMoovMasked;
+      if (normalizedMoov !== undefined) {
+        updates.moovDisbursement = normalizedMoov;
+        changedFields.push("moovDisbursement");
+        disbursementChanged = true;
+        newMoovMasked = maskNumber(normalizedMoov);
+      }
+
+      let oldAirtelMasked = maskNumber(current.airtelDisbursement);
+      let newAirtelMasked = oldAirtelMasked;
+      if (normalizedAirtel !== undefined) {
+        updates.airtelDisbursement = normalizedAirtel;
+        changedFields.push("airtelDisbursement");
+        disbursementChanged = true;
+        newAirtelMasked = maskNumber(normalizedAirtel);
+      }
+
+      tx.set(configRef, updates, {merge: true});
+
+      // Ligne d'audit (sans aucune valeur secrète)
+      const auditRef = db.collection("gateway_audit").doc();
+      tx.set(auditRef, {
+        at: nowIso,
+        uid,
+        changedFields,
+        disbursementChanged,
+        oldMoovMasked,
+        newMoovMasked,
+        oldAirtelMasked,
+        newAirtelMasked,
+        version,
+      });
+
+      return {
+        success: true,
+        version,
+        changedFields,
+        webhookUrl: generatedWebhookUrl,
+      };
+    });
+
+    clearSingPayConfigCache();
+    return result;
+  }
+);
+
+/**
+ * Migration ponctuelle depuis settings/payment_gateway vers private_config/singpay.
+ */
+export const migrateGatewayConfig = onCall(
+  {cors: true},
+  async (request) => {
+    const uid = await assertSuperAdmin(request);
+    const db = getFirestore();
+    const oldRef = db.collection("settings").doc("payment_gateway");
+    const oldSnap = await oldRef.get();
+    if (!oldSnap.exists) {
+      return {migrated: false, message: "Aucune ancienne configuration à migrer."};
+    }
+
+    const data = oldSnap.data() || {};
+    const newDoc: Record<string, unknown> = {
+      clientId: data.singpayClientId || data.clientId || "",
+      clientSecret: data.singpayClientSecret || data.clientSecret || "",
+      walletId: data.singpayWalletId || data.walletId || "",
+      webhookSecret: data.singpayWebhookSecret || data.webhookSecret || "",
+      moovDisbursement: data.moovDisbursementNumber || data.moovDisbursement || "",
+      airtelDisbursement: data.airtelDisbursementNumber || data.airtelDisbursement || "",
+      isLive: data.isLive ?? true,
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      updatedBy: uid,
+    };
+
+    await db.collection("private_config").doc("singpay").set(newDoc, {merge: true});
+    await oldRef.delete();
+    clearSingPayConfigCache();
+    return {migrated: true, version: 1};
+  }
+);
 
 export {calculateServerPrice};
 
@@ -789,8 +1232,8 @@ export const initiateSingPayPayment = onCall(
 
     const clientMsisdn = `241${rawDigits}`;
 
-    // Récupération des secrets SingPay depuis Secret Manager
-    const cfg = getSingPayConfig();
+    // Récupération des secrets SingPay
+    const cfg = await getSingPayConfig();
     const clientId = cfg.clientId;
     const clientSecret = cfg.clientSecret;
     const walletId = cfg.walletId;
@@ -959,7 +1402,7 @@ export const checkSingPayPaymentStatus = onCall(
       };
     }
 
-    const cfg = getSingPayConfig();
+    const cfg = await getSingPayConfig();
     const clientId = cfg.clientId;
     const clientSecret = cfg.clientSecret;
     const walletId = cfg.walletId;
@@ -1098,7 +1541,7 @@ export const singpayWebhook = onRequest(
         return;
       }
 
-      const cfg = getSingPayConfig();
+      const cfg = await getSingPayConfig();
       const expectedSecret = cfg.webhookSecret;
 
       const receivedSecret =

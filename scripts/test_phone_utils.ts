@@ -33,12 +33,12 @@ function assert(condition: boolean, message: string) {
 console.log('🧪 Lancement des tests unitaires de src/utils/phone.ts (7 pays)...');
 
 // 1. Gabon (+241)
-assert(normalizeGabonPhone('+241 62 18 87 34') === '62188734', 'Gabon +241');
+assert(normalizeGabonPhone('+241 62 99 88 77') === '62998877', 'Gabon +241');
 assert(normalizeGabonPhone('060-11-22-33') === '60112233', 'Gabon 0 local');
-assert(toE164('62188734', 'GA') === '+24162188734', 'Gabon toE164');
+assert(toE164('62998877', 'GA') === '+24162998877', 'Gabon toE164');
 assert(toSmsE164('66780104', 'GA') === '+241066780104', 'Gabon toSmsE164 (avec 0 pour SMS)');
-assert(toSyntheticEmail('62188734', 'GA') === '62188734@bizbooster.ga', 'Gabon toSyntheticEmail sans dialCode');
-assert(isValidGabonMobile('062 18 87 34') === true, 'Gabon Moov valide');
+assert(toSyntheticEmail('62998877', 'GA') === '62998877@bizbooster.ga', 'Gabon toSyntheticEmail sans dialCode');
+assert(isValidGabonMobile('062 99 88 77') === true, 'Gabon Moov valide');
 assert(detectOperator('74123456') === 'AIRTEL', 'Gabon Airtel 74');
 
 // 2. Cameroun (+237) - 9 chiffres commençant par 6
@@ -92,7 +92,7 @@ assert(toSyntheticEmail('9876543210', 'IN') === '919876543210@bizbooster.ga', 'I
 assert(isValidIndiaMobile('9876543210') === true, 'Inde mobile valide');
 
 // 8. Auto-détection de l'indicatif
-assert(detectCountryFromPhone('+24162188734') === 'GA', 'Détection GA');
+assert(detectCountryFromPhone('+24162998877') === 'GA', 'Détection GA');
 assert(detectCountryFromPhone('+237670123456') === 'CM', 'Détection CM');
 assert(detectCountryFromPhone('+221771234567') === 'SN', 'Détection SN');
 assert(detectCountryFromPhone('+22370123456') === 'ML', 'Détection ML');
@@ -101,7 +101,7 @@ assert(detectCountryFromPhone('+233241234567') === 'GH', 'Détection GH');
 assert(detectCountryFromPhone('+919876543210') === 'IN', 'Détection IN');
 
 // 9. Polymorphic toSyntheticEmail à partir de numéros stockés en E.164
-assert(toSyntheticEmail('+24162188734') === '62188734@bizbooster.ga', 'E-mail depuis E.164 Gabon');
+assert(toSyntheticEmail('+24162998877') === '62998877@bizbooster.ga', 'E-mail depuis E.164 Gabon');
 assert(toSyntheticEmail('+237670123456') === '237670123456@bizbooster.ga', 'E-mail depuis E.164 Cameroun');
 assert(toSyntheticEmail('+221771234567') === '221771234567@bizbooster.ga', 'E-mail depuis E.164 Sénégal');
 assert(toSyntheticEmail('+22370123456') === '22370123456@bizbooster.ga', 'E-mail depuis E.164 Mali');
@@ -110,7 +110,7 @@ assert(toSyntheticEmail('+233241234567') === '233241234567@bizbooster.ga', 'E-ma
 assert(toSyntheticEmail('+919876543210') === '919876543210@bizbooster.ga', 'E-mail depuis E.164 Inde');
 
 // 10. Formatage d'affichage
-assert(formatDisplayPhone('62188734', 'GA') === '+241 62 18 87 34', 'Affichage Gabon');
+assert(formatDisplayPhone('62998877', 'GA') === '+241 62 99 88 77', 'Affichage Gabon');
 assert(formatDisplayPhone('670123456', 'CM') === '+237 670 12 34 56', 'Affichage Cameroun');
 assert(formatDisplayPhone('771234567', 'SN') === '+221 77 123 45 67', 'Affichage Sénégal');
 assert(formatDisplayPhone('70123456', 'ML') === '+223 70 12 34 56', 'Affichage Mali');

@@ -14,7 +14,7 @@ import {
 import confetti from 'canvas-confetti';
 import { PaymentOperator } from '../types';
 import { formatFCFA } from '../utils/formatters';
-import { initiateSingPay, pollSingPayStatus, MOOV_MERCHANT_NUMBER } from '../services/singpay';
+import { initiateSingPay, pollSingPayStatus } from '../services/singpay';
 import { GABON_MOBILE_PREFIXES } from '../utils/phone';
 
 interface MobilePaymentSimulatorProps {
@@ -328,7 +328,7 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
                 type="tel"
                 value={mobileNumber}
                 onChange={(e) => handlePhoneChange(e.target.value)}
-                placeholder={operator === 'AIRTEL_MONEY' ? 'Ex: 074 56 78 21 ou 77 00 00 00' : 'Ex: 062 18 87 34 ou 66 00 00 00'}
+                placeholder={operator === 'AIRTEL_MONEY' ? 'Ex: 074 56 78 21 ou 77 00 00 00' : 'Ex: 062 00 00 00 ou 66 00 00 00'}
                 required
                 className={`w-full bg-slate-800 border border-slate-700 rounded-xl pl-14 pr-3.5 py-2.5 text-sm font-mono font-bold text-white focus:outline-hidden focus:ring-2 ${
                   operator === 'AIRTEL_MONEY' ? 'focus:ring-red-500' : 'focus:ring-blue-500'

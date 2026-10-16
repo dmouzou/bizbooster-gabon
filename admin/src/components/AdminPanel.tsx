@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -41,9 +41,10 @@ import {
   EyeOff,
   Save,
 } from 'lucide-react';
-import { signOut } from 'firebase/auth';
+import { signOut, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { auth, db } from '../services/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { auth, db, functions } from '../services/firebase';
 import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
 import { getFirebaseQuotaComparison, trackSmsSent, trackDownloadRequest, resetSmsCounters, resetDownloadCounters } from '../services/platformMetrics';
@@ -207,6 +208,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     try {
       localStorage.setItem('bizbooster_show_test_ads', String(nextVal));
       window.dispatchEvent(new CustomEvent('bizbooster_test_ads_toggled', { detail: { showTestAds: nextVal } }));
+      await setDoc(doc(db, 'settings', 'public_config'), { showTestAds: nextVal, updatedAt: new Date().toISOString() }, { merge: true });
       await setDoc(doc(db, 'settings', 'system_config'), { showTestAds: nextVal, updatedAt: new Date().toISOString() }, { merge: true });
     } catch (e) {
       console.warn('Could not persist test ads toggle to Firestore:', e);
@@ -225,51 +227,106 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     totalDownloadBandwidthBytes?: number;
   }>({});
 
-  // Configuration Passerelle SingPay Gabon
+  // Configuration Passerelle SingPay Gabon (Phase 2 - Document privé & fonctions appelables)
   const [gatewayConfig, setGatewayConfig] = useState<{
-    singpayClientId: string;
-    singpayClientSecret: string;
-    singpayWalletId: string;
-    moovDisbursementNumber: string;
-    airtelDisbursementNumber: string;
+    clientId: string;
+    clientSecret: string;
+    hasClientSecret: boolean;
+    hasWebhookSecret: boolean;
+    walletId: string;
+    moovDisbursement: string;
+    airtelDisbursement: string;
     isLive: boolean;
-    updatedAt?: string;
+    updatedAt?: string | null;
+    updatedBy?: string | null;
+    version?: number;
+    webhookUrl?: string;
   }>({
-    singpayClientId: '',
-    singpayClientSecret: '',
-    singpayWalletId: '',
-    moovDisbursementNumber: '62 18 87 34',
-    airtelDisbursementNumber: '',
+    clientId: '',
+    clientSecret: '',
+    hasClientSecret: false,
+    hasWebhookSecret: false,
+    walletId: '',
+    moovDisbursement: '',
+    airtelDisbursement: '',
     isLive: true,
   });
+
+  const [initialDisbursement, setInitialDisbursement] = useState<{
+    moov: string;
+    airtel: string;
+  }>({ moov: '', airtel: '' });
+
+  const [disbursementConfirmModal, setDisbursementConfirmModal] = useState<{
+    isOpen: boolean;
+    oldMoov: string;
+    newMoov: string;
+    oldAirtel: string;
+    newAirtel: string;
+    confirmInput: string;
+  }>({
+    isOpen: false,
+    oldMoov: '',
+    newMoov: '',
+    oldAirtel: '',
+    newAirtel: '',
+    confirmInput: '',
+  });
+
+  const [reauthModal, setReauthModal] = useState<{
+    isOpen: boolean;
+    password: string;
+    error: string | null;
+    loading: boolean;
+  }>({
+    isOpen: false,
+    password: '',
+    error: null,
+    loading: false,
+  });
+
+  const [rotatedWebhookUrl, setRotatedWebhookUrl] = useState<string | null>(null);
+  const [isRotatingSecret, setIsRotatingSecret] = useState(false);
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [isSavingGateway, setIsSavingGateway] = useState(false);
   const [showSecretKey, setShowSecretKey] = useState(false);
   const [gatewaySaveSuccess, setGatewaySaveSuccess] = useState(false);
 
-  useEffect(() => {
+  const loadGatewayConfig = useCallback(async () => {
     if (!isSuper) return;
-    const unsub = onSnapshot(
-      doc(db, 'settings', 'payment_gateway'),
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          setGatewayConfig({
-            singpayClientId: data.singpayClientId || '',
-            singpayClientSecret: data.singpayClientSecret || '',
-            singpayWalletId: data.singpayWalletId || '',
-            moovDisbursementNumber: data.moovDisbursementNumber || '62 18 87 34',
-            airtelDisbursementNumber: data.airtelDisbursementNumber || '',
-            isLive: data.isLive ?? true,
-            updatedAt: data.updatedAt,
-          });
-        }
-      },
-      (err) => {
-        console.warn('payment_gateway snapshot notice:', err);
-      }
-    );
-    return () => unsub();
+    try {
+      const getCfg = httpsCallable<void, any>(functions, 'getGatewayConfig');
+      const res = await getCfg();
+      const data = res.data || {};
+      setGatewayConfig((prev) => ({
+        ...prev,
+        clientId: data.clientId || '',
+        clientSecret: '',
+        hasClientSecret: Boolean(data.hasClientSecret),
+        hasWebhookSecret: Boolean(data.hasWebhookSecret),
+        walletId: data.walletId || '',
+        moovDisbursement: data.moovDisbursement || '',
+        airtelDisbursement: data.airtelDisbursement || '',
+        isLive: data.isLive ?? true,
+        updatedAt: data.updatedAt || null,
+        updatedBy: data.updatedBy || null,
+        version: data.version || 1,
+        webhookUrl: data.webhookUrl || '',
+      }));
+      setInitialDisbursement({
+        moov: data.moovDisbursement || '',
+        airtel: data.airtelDisbursement || '',
+      });
+    } catch (err) {
+      console.warn('loadGatewayConfig notice:', err);
+    }
   }, [isSuper]);
+
+  useEffect(() => {
+    if (isSuper) {
+      loadGatewayConfig();
+    }
+  }, [isSuper, loadGatewayConfig]);
 
   // Si un non-super admin se retrouve sur l'onglet PAYMENTS, redirection automatique vers MODERATION
   useEffect(() => {
@@ -277,6 +334,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setActiveTab('MODERATION');
     }
   }, [isSuper, activeTab]);
+
+  const executeSaveGatewayConfig = async () => {
+    setIsSavingGateway(true);
+    try {
+      const saveCfg = httpsCallable<any, any>(functions, 'saveGatewayConfig');
+      const payload: Record<string, unknown> = {
+        walletId: gatewayConfig.walletId.trim(),
+        isLive: gatewayConfig.isLive,
+      };
+      if (gatewayConfig.clientId && !gatewayConfig.clientId.startsWith('••••')) {
+        payload.clientId = gatewayConfig.clientId.trim();
+      }
+      if (gatewayConfig.clientSecret.trim()) {
+        payload.clientSecret = gatewayConfig.clientSecret.trim();
+      }
+      if (gatewayConfig.moovDisbursement.trim()) {
+        payload.moovDisbursement = gatewayConfig.moovDisbursement.trim();
+      }
+      if (gatewayConfig.airtelDisbursement.trim()) {
+        payload.airtelDisbursement = gatewayConfig.airtelDisbursement.trim();
+      }
+
+      await saveCfg(payload);
+      setGatewaySaveSuccess(true);
+      setTimeout(() => setGatewaySaveSuccess(false), 4000);
+      await loadGatewayConfig();
+    } catch (err: any) {
+      const errMsg = err?.message || '';
+      if (errMsg.includes('reauth-required') || err?.code === 'failed-precondition') {
+        setReauthModal({
+          isOpen: true,
+          password: '',
+          error: null,
+          loading: false,
+        });
+        return;
+      }
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'error',
+        title: 'Erreur',
+        message: "Erreur lors de l'enregistrement de la configuration SingPay: " + errMsg,
+      });
+    } finally {
+      setIsSavingGateway(false);
+    }
+  };
 
   const handleSaveGatewayConfig = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -289,33 +393,67 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       });
       return;
     }
-    setIsSavingGateway(true);
+
+    const moovChanged =
+      gatewayConfig.moovDisbursement.trim() !== '' &&
+      gatewayConfig.moovDisbursement.trim() !== initialDisbursement.moov;
+    const airtelChanged =
+      gatewayConfig.airtelDisbursement.trim() !== '' &&
+      gatewayConfig.airtelDisbursement.trim() !== initialDisbursement.airtel;
+
+    if (moovChanged || airtelChanged) {
+      setDisbursementConfirmModal({
+        isOpen: true,
+        oldMoov: initialDisbursement.moov,
+        newMoov: gatewayConfig.moovDisbursement.trim(),
+        oldAirtel: initialDisbursement.airtel,
+        newAirtel: gatewayConfig.airtelDisbursement.trim(),
+        confirmInput: '',
+      });
+      return;
+    }
+
+    await executeSaveGatewayConfig();
+  };
+
+  const handleReauthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!auth.currentUser || !currentUser) return;
+    setReauthModal((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      const configRef = doc(db, 'settings', 'payment_gateway');
-      await setDoc(
-        configRef,
-        {
-          singpayClientId: gatewayConfig.singpayClientId.trim(),
-          singpayClientSecret: gatewayConfig.singpayClientSecret.trim(),
-          singpayWalletId: gatewayConfig.singpayWalletId.trim(),
-          moovDisbursementNumber: gatewayConfig.moovDisbursementNumber.trim() || '24162188734',
-          airtelDisbursementNumber: gatewayConfig.airtelDisbursementNumber.trim(),
-          isLive: gatewayConfig.isLive,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
-      setGatewaySaveSuccess(true);
-      setTimeout(() => setGatewaySaveSuccess(false), 4000);
+      const email = auth.currentUser.email || `${currentUser.phoneNumber?.replace(/\D/g, '')}@bizbooster.ga`;
+      const cred = EmailAuthProvider.credential(email, reauthModal.password);
+      await reauthenticateWithCredential(auth.currentUser, cred);
+      setReauthModal({ isOpen: false, password: '', error: null, loading: false });
+      await executeSaveGatewayConfig();
+    } catch (err: any) {
+      setReauthModal((prev) => ({
+        ...prev,
+        loading: false,
+        error: 'Mot de passe incorrect ou échec de reconnexion. Veuillez réessayer.',
+      }));
+    }
+  };
+
+  const handleRotateWebhookSecret = async () => {
+    if (!isSuper) return;
+    setIsRotatingSecret(true);
+    try {
+      const saveCfg = httpsCallable<any, any>(functions, 'saveGatewayConfig');
+      const res = await saveCfg({ rotateWebhookSecret: true });
+      if (res.data?.webhookUrl) {
+        setRotatedWebhookUrl(res.data.webhookUrl);
+      }
+      await loadGatewayConfig();
     } catch (err: any) {
       setAlertModalConfig({
         isOpen: true,
         type: 'error',
         title: 'Erreur',
-        message: "Erreur lors de l'enregistrement des clés SingPay: " + (err?.message || 'Permission refusée.'),
+        message: 'Impossible de régénérer le secret de webhook : ' + (err?.message || ''),
       });
     } finally {
-      setIsSavingGateway(false);
+      setIsRotatingSecret(false);
     }
   };
 
@@ -2702,14 +2840,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <span className="bg-blue-100 text-blue-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-sm">
                     Passerelle Officielle Gabon
                   </span>
-                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
-                    Moov Money Actif
-                  </span>
-                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
-                    Airtel Money Actif
-                  </span>
+                  {gatewayConfig.clientId && gatewayConfig.hasClientSecret && gatewayConfig.walletId && gatewayConfig.moovDisbursement ? (
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+                      Moov Actif
+                    </span>
+                  ) : (
+                    <span className="bg-slate-100 text-slate-600 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-slate-300 flex items-center gap-1">
+                      Moov Inactif
+                    </span>
+                  )}
+                  {gatewayConfig.clientId && gatewayConfig.hasClientSecret && gatewayConfig.walletId && gatewayConfig.airtelDisbursement ? (
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+                      Airtel Actif
+                    </span>
+                  ) : (
+                    <span className="bg-slate-100 text-slate-600 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-slate-300 flex items-center gap-1">
+                      Airtel Inactif
+                    </span>
+                  )}
                 </div>
                 <h2 className="text-xl sm:text-2xl font-black text-slate-900 mt-2">
                   Passerelle de Paiement SingPay Gabon
@@ -2719,25 +2869,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </p>
               </div>
 
-              <a
-                href="https://client.singpay.ga/doc/reference/index.html"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 shrink-0 cursor-pointer"
-              >
-                <span>Documentation SingPay</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+              <div className="flex items-center gap-3">
+                <a
+                  href="https://client.singpay.ga/doc/reference/index.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 shrink-0 cursor-pointer"
+                >
+                  <span>Documentation SingPay</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
             </div>
 
             {/* Status Alert Banner */}
-            {gatewayConfig.singpayClientId && gatewayConfig.singpayClientSecret && gatewayConfig.singpayWalletId ? (
+            {gatewayConfig.clientId && gatewayConfig.hasClientSecret && gatewayConfig.walletId ? (
               <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-900 flex items-start gap-3">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="font-extrabold text-emerald-950">Passerelle SingPay opérationnelle</p>
                   <p className="text-emerald-800 leading-relaxed text-[11px]">
-                    Les identifiants API sont enregistrés. Les demandes de paiement Moov Money déclenchent un appel direct à l'API SingPay (<code>POST /v1/62/paiement</code>) avec envoi de l'invite USSD sur le téléphone du client et redirection des fonds vers le numéro marchand <strong>{gatewayConfig.moovDisbursementNumber || '62 18 87 34'}</strong>.
+                    Les identifiants API sont enregistrés de façon confidentielle sur le serveur.
+                    Reversement Moov : <strong>{gatewayConfig.moovDisbursement || 'Non configuré'}</strong> |
+                    Reversement Airtel : <strong>{gatewayConfig.airtelDisbursement || 'Non configuré'}</strong>.
                   </p>
                 </div>
               </div>
@@ -2756,14 +2910,80 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
           {/* Form Card */}
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 border-b border-slate-100 gap-2">
               <div>
                 <h3 className="font-extrabold text-slate-900 text-base">Configuration des Clés API SingPay</h3>
-                <p className="text-xs text-slate-500">Ces clés sont stockées de façon sécurisée et utilisées exclusivement par le serveur Cloud Functions.</p>
+                <p className="text-xs text-slate-500">Ces clés sont stockées dans un document fermé et utilisées exclusivement par le serveur Cloud Functions.</p>
               </div>
-              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
-                {gatewayConfig.updatedAt ? `Dernière mise à jour : ${new Date(gatewayConfig.updatedAt).toLocaleDateString('fr-FR')}` : 'Configuration initiale'}
+              <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
+                {gatewayConfig.updatedAt ? `Dernière modification : ${new Date(gatewayConfig.updatedAt).toLocaleDateString('fr-FR')} par ${gatewayConfig.updatedBy ? gatewayConfig.updatedBy.slice(0, 8) : 'Super Admin'}` : 'Configuration initiale'}
               </span>
+            </div>
+
+            {/* Section Webhook */}
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 block">URL de Webhook SingPay</span>
+                  <span className="text-[11px] text-slate-500">À enregistrer dans la console partenaire SingPay.</span>
+                </div>
+                <button
+                  type="button"
+                  disabled={isRotatingSecret}
+                  onClick={handleRotateWebhookSecret}
+                  className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRotatingSecret ? 'animate-spin' : ''}`} />
+                  <span>Régénérer le secret</span>
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={gatewayConfig.webhookUrl || ''}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-700 select-all"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (gatewayConfig.webhookUrl) {
+                      navigator.clipboard.writeText(gatewayConfig.webhookUrl);
+                      setCopiedWebhook(true);
+                      setTimeout(() => setCopiedWebhook(false), 2000);
+                    }
+                  }}
+                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold shrink-0 cursor-pointer"
+                >
+                  {copiedWebhook ? 'Copié !' : 'Copier'}
+                </button>
+              </div>
+              {rotatedWebhookUrl && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-1.5">
+                  <p className="text-xs font-bold text-amber-900">
+                    Nouveau secret généré ! Copiez l'URL complète ci-dessous (affichée une seule fois) :
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={rotatedWebhookUrl}
+                      className="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-xs font-mono text-amber-950 select-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(rotatedWebhookUrl);
+                        setCopiedWebhook(true);
+                        setTimeout(() => setCopiedWebhook(false), 2000);
+                      }}
+                      className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shrink-0 cursor-pointer"
+                    >
+                      Copier
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <form onSubmit={handleSaveGatewayConfig} className="space-y-5">
@@ -2775,12 +2995,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </label>
                   <input
                     type="text"
-                    value={gatewayConfig.singpayClientId}
-                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, singpayClientId: e.target.value })}
+                    value={gatewayConfig.clientId}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, clientId: e.target.value })}
                     placeholder="Ex: 9b2d3e4f-..."
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   />
-                  <span className="text-[10px] text-slate-400">Identifiant client fourni dans votre compte SingPay Workspace.</span>
+                  <span className="text-[10px] text-slate-400">Identifiant client (masqué une fois enregistré).</span>
                 </div>
 
                 {/* Client Secret */}
@@ -2791,9 +3011,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <div className="relative">
                     <input
                       type={showSecretKey ? 'text' : 'password'}
-                      value={gatewayConfig.singpayClientSecret}
-                      onChange={(e) => setGatewayConfig({ ...gatewayConfig, singpayClientSecret: e.target.value })}
-                      placeholder="••••••••••••••••••••••••••••••••"
+                      value={gatewayConfig.clientSecret}
+                      onChange={(e) => setGatewayConfig({ ...gatewayConfig, clientSecret: e.target.value })}
+                      placeholder={gatewayConfig.hasClientSecret ? 'Laisser vide pour conserver •••• 1234' : 'Saisir le Client Secret'}
                       className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-3.5 pr-10 py-2.5 text-xs font-mono text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                     />
                     <button
@@ -2805,7 +3025,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       {showSecretKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
-                  <span className="text-[10px] text-slate-400">Clé secrète OAuth 2.0 confidentielle.</span>
+                  <span className="text-[10px] text-slate-400">
+                    {gatewayConfig.hasClientSecret ? 'Clé secrète enregistrée. Laisser vide pour la conserver.' : 'Clé secrète OAuth 2.0 confidentielle.'}
+                  </span>
                 </div>
 
                 {/* Wallet ID */}
@@ -2815,12 +3037,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </label>
                   <input
                     type="text"
-                    value={gatewayConfig.singpayWalletId}
-                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, singpayWalletId: e.target.value })}
+                    value={gatewayConfig.walletId}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, walletId: e.target.value })}
                     placeholder="Ex: 60a7e4b9c..."
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   />
-                  <span className="text-[10px] text-slate-400">ID du portefeuille à récupérer dans le détail du portefeuille sur SingPay.</span>
+                  <span className="text-[10px] text-slate-400">ID du portefeuille sur SingPay (affiché en clair pour vérification).</span>
                 </div>
 
                 {/* Moov Money Disbursement Phone */}
@@ -2829,18 +3051,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
                       Numéro Moov Récepteur (<code className="text-blue-600 lowercase">disbursement</code>)
                     </label>
-                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.2 rounded-full">
-                      Actif
-                    </span>
+                    {gatewayConfig.moovDisbursement && (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.2 rounded-full">
+                        Actif
+                      </span>
+                    )}
                   </div>
                   <input
                     type="text"
-                    value={gatewayConfig.moovDisbursementNumber}
-                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, moovDisbursementNumber: e.target.value })}
-                    placeholder="62 18 87 34"
+                    value={gatewayConfig.moovDisbursement}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, moovDisbursement: e.target.value })}
+                    placeholder="060, 062, 065 ou 066"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   />
-                  <span className="text-[10px] text-slate-400">Numéro Moov Money recevant les fonds collectés (62 18 87 34).</span>
+                  <span className="text-[10px] text-slate-400">Numéro Moov Money recevant les fonds (préfixes : 60, 62, 65, 66).</span>
                 </div>
 
                 {/* Airtel Money Disbursement Phone */}
@@ -2849,23 +3073,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
                       Numéro Airtel Récepteur (<code className="text-red-600 lowercase">disbursement</code>)
                     </label>
-                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.2 rounded-full">
-                      Actif
-                    </span>
+                    {gatewayConfig.airtelDisbursement && (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.2 rounded-full">
+                        Actif
+                      </span>
+                    )}
                   </div>
                   <input
                     type="text"
-                    value={gatewayConfig.airtelDisbursementNumber}
-                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, airtelDisbursementNumber: e.target.value })}
-                    placeholder="74 00 00 00"
+                    value={gatewayConfig.airtelDisbursement}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, airtelDisbursement: e.target.value })}
+                    placeholder="074, 076 ou 077"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-red-500 focus:outline-hidden"
                   />
-                  <span className="text-[10px] text-slate-400">Numéro Airtel Money recevant les fonds collectés (074, 076 ou 077).</span>
+                  <span className="text-[10px] text-slate-400">Numéro Airtel Money recevant les fonds (préfixes : 74, 76, 77).</span>
+                </div>
+
+                {/* Interrupteur Paiements actifs */}
+                <div className="space-y-1.5 flex flex-col justify-center">
+                  <span className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                    État des Paiements
+                  </span>
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={gatewayConfig.isLive}
+                      onChange={(e) => setGatewayConfig({ ...gatewayConfig, isLive: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                    <span className="ml-3 text-xs font-extrabold text-slate-800">
+                      {gatewayConfig.isLive ? 'Paiements actifs' : 'Paiements suspendus'}
+                    </span>
+                  </label>
+                  <span className="text-[10px] text-slate-400">Permet de suspendre temporairement les paiements sans effacer les clés.</span>
                 </div>
               </div>
 
               {/* Feedback and submit */}
-              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+              <div className="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-100 gap-3">
                 <div>
                   {gatewaySaveSuccess && (
                     <span className="text-xs font-bold text-emerald-700 flex items-center gap-1.5">
@@ -2878,7 +3124,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <button
                   type="submit"
                   disabled={isSavingGateway}
-                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold shadow-md transition-all flex items-center gap-2 cursor-pointer"
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold shadow-md transition-all flex items-center gap-2 cursor-pointer w-full sm:w-auto justify-center"
                 >
                   {isSavingGateway ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
@@ -2899,25 +3145,132 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-300">
               <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/60 space-y-1.5">
-                <span className="font-bold text-blue-300 block">1. Secret Client Inviolable</span>
+                <span className="font-bold text-blue-300 block">1. Document Fermé au Navigateur</span>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Le <code>x-client-secret</code> n'est jamais présent dans le code frontend ou visible par les utilisateurs. Tous les appels passent par Firebase Cloud Functions sécurisé.
+                  Les identifiants API et secrets de reversement sont stockés dans le document privé Firestore <code>private_config/singpay</code>, inaccessible aux clients web et uniquement géré par le SDK Admin côté Cloud Functions.
                 </p>
               </div>
               <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/60 space-y-1.5">
-                <span className="font-bold text-emerald-300 block">2. Code PIN sur le Téléphone</span>
+                <span className="font-bold text-emerald-300 block">2. Journalisation d'Audit & Reconnexion</span>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  L'utilisateur saisit son code PIN secret à 4 chiffres directement sur son propre téléphone mobile via le push USSD natif Moov Money, garantissant une conformité bancaire totale.
+                  Chaque modification de clés ou de numéros génère un enregistrement immuable dans <code>gateway_audit</code> (numéros masqués, jamais de secret) et exige une session connectée depuis moins de 10 minutes.
                 </p>
               </div>
               <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/60 space-y-1.5">
-                <span className="font-bold text-purple-300 block">3. Validation Temps Réel</span>
+                <span className="font-bold text-purple-300 block">3. Masquage Strict & Validation</span>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Le statut de la transaction est vérifié en continu auprès de SingPay (<code>/v1/transaction/api/status</code>). L'annonce est publiée dès confirmation de la réussite du paiement.
+                  Le Client Secret ne revient jamais à l'écran du navigateur une fois enregistré. Les numéros sont strictement validés selon les préfixes officiels Moov (60, 62, 65, 66) et Airtel (74, 76, 77).
                 </p>
               </div>
             </div>
           </div>
+
+          {/* Modal de Confirmation de changement de numéro marchand */}
+          {disbursementConfirmModal.isOpen && (
+            <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 overflow-hidden p-6 space-y-4">
+                <div className="flex items-center gap-2 text-amber-600 font-extrabold text-base">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+                  <span>Confirmation de changement de numéro marchand</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Attention : modifier un numéro de reversement redirige l'intégralité des paiements clients collectés vers ce nouveau compte mobile.
+                </p>
+                <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-xs space-y-2">
+                  {disbursementConfirmModal.newMoov !== disbursementConfirmModal.oldMoov && (
+                    <div>
+                      <span className="font-bold text-slate-700 block">Compte Moov Money :</span>
+                      <span className="text-slate-400">Ancien : {disbursementConfirmModal.oldMoov ? `•••• •• ${disbursementConfirmModal.oldMoov.slice(-4)}` : 'Non défini'}</span>
+                      <span className="text-emerald-700 font-bold block">Nouveau : {disbursementConfirmModal.newMoov}</span>
+                    </div>
+                  )}
+                  {disbursementConfirmModal.newAirtel !== disbursementConfirmModal.oldAirtel && (
+                    <div>
+                      <span className="font-bold text-slate-700 block">Compte Airtel Money :</span>
+                      <span className="text-slate-400">Ancien : {disbursementConfirmModal.oldAirtel ? `•••• •• ${disbursementConfirmModal.oldAirtel.slice(-4)}` : 'Non défini'}</span>
+                      <span className="text-emerald-700 font-bold block">Nouveau : {disbursementConfirmModal.newAirtel}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    Saisissez <span className="font-mono text-red-600 font-black">CONFIRMER</span> pour valider :
+                  </label>
+                  <input
+                    type="text"
+                    value={disbursementConfirmModal.confirmInput}
+                    onChange={(e) => setDisbursementConfirmModal({ ...disbursementConfirmModal, confirmInput: e.target.value })}
+                    placeholder="CONFIRMER"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setDisbursementConfirmModal({ isOpen: false, oldMoov: '', newMoov: '', oldAirtel: '', newAirtel: '', confirmInput: '' })}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="button"
+                    disabled={disbursementConfirmModal.confirmInput !== 'CONFIRMER'}
+                    onClick={async () => {
+                      setDisbursementConfirmModal((prev) => ({ ...prev, isOpen: false }));
+                      await executeSaveGatewayConfig();
+                    }}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold shadow-md cursor-pointer"
+                  >
+                    Confirmer la modification
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal de Reconnexion récente exigée */}
+          {reauthModal.isOpen && (
+            <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 overflow-hidden p-6 space-y-4">
+                <div className="flex items-center gap-2 text-red-600 font-extrabold text-base">
+                  <Lock className="w-5 h-5 text-red-600 shrink-0" />
+                  <span>Reconnexion de sécurité requise</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Votre dernière connexion date de plus de 10 minutes. Veuillez saisir votre mot de passe pour autoriser la modification critique des clés de paiement.
+                </p>
+                <form onSubmit={handleReauthSubmit} className="space-y-3">
+                  <input
+                    type="password"
+                    value={reauthModal.password}
+                    onChange={(e) => setReauthModal({ ...reauthModal, password: e.target.value })}
+                    placeholder="Votre mot de passe"
+                    required
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                  />
+                  {reauthModal.error && (
+                    <p className="text-xs text-red-600 font-bold">{reauthModal.error}</p>
+                  )}
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setReauthModal({ isOpen: false, password: '', error: null, loading: false })}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={reauthModal.loading || !reauthModal.password}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold shadow-md cursor-pointer"
+                    >
+                      {reauthModal.loading ? 'Vérification...' : 'Valider la reconnexion'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

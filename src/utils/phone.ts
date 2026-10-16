@@ -31,7 +31,7 @@ export const COUNTRIES: Record<SupportedCountry, CountryInfo> = {
     name: 'Gabon',
     flag: '🇬🇦',
     dialCode: '+241',
-    placeholder: '074 56 78 21 ou 062 18 87 34',
+    placeholder: '074 56 78 21 ou 062 00 00 00',
     digitsLength: 8,
     label: 'Gabon (+241)',
   },

@@ -180,14 +180,25 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // SETTINGS (public_config lisible par tous, system_config réservé aux admins)
+    // SETTINGS (public_config lisible par tous, system_config réservé aux admins, payment_gateway fermé au client)
     // ---------------------------------------------------------------
     match /settings/{settingId} {
       allow read: if settingId == 'public_config'
                   || (settingId == 'system_config' && isAdmin())
-                  || (settingId == 'payment_gateway' && isSuperAdmin())
                   || (settingId != 'system_config' && settingId != 'payment_gateway');
-      allow write: if settingId == 'payment_gateway' ? isSuperAdmin() : isAdmin();
+      allow write: if settingId != 'payment_gateway' && isAdmin();
+    }
+
+    // ---------------------------------------------------------------
+    // CONFIG PRIVEE & AUDIT PASSERELLE (Annexe A)
+    // ---------------------------------------------------------------
+    match /private_config/{id} {
+      allow read, write: if false;
+    }
+
+    match /gateway_audit/{id} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
     }
 
     // ---------------------------------------------------------------
