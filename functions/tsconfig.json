@@ -15,5 +15,9 @@
   "compileOnSave": true,
   "include": [
     "src"
+  ],
+  "exclude": [
+    "src/**/__tests__/**",
+    "src/**/seed_emulator_accounts.ts"
   ]
 }
