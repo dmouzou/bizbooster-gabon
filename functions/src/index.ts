@@ -15,7 +15,13 @@ import {getAuth, UserRecord} from "firebase-admin/auth";
 import {initializeApp} from "firebase-admin/app";
 import * as crypto from "crypto";
 import {isAdVipCornerEligible} from "./vipCorner";
-import {calculateServerPrice} from "./pricing";
+import {
+  calculateServerPrice,
+  quoteOrder,
+  PricingError,
+  PriceContext,
+  Quote,
+} from "./pricing";
 
 initializeApp();
 
@@ -265,8 +271,8 @@ export const expireAds = onSchedule("every 60 minutes", async () => {
       await tierBatch.commit();
     }
 
-    // Quota Standard partagé (3 annonces actives max)
-    const standardQuota = SUBSCRIPTION_QUOTAS.STANDARD || 3;
+    // Quota Standard partagé (0 annonce gratuite pour Standard)
+    const standardQuota = SUBSCRIPTION_QUOTAS.STANDARD ?? 0;
     const activeAdsSnap = await db
       .collection("ads")
       .where("userId", "==", userId)
@@ -1133,6 +1139,173 @@ export async function applyPaymentAttribution(
  * 4. Passerelle SingPay Gabon (Paiement Moov Money / Airtel Money réel)
  * Déclenche un appel à l'API SingPay pour envoyer un USSD Push sur le mobile.
  */
+/**
+ * Appel HTTP vers SingPay avec délai d'attente strict (20s) et aucun retry (Phase 3.6).
+ */
+export async function singpayFetch(
+  url: string,
+  init: RequestInit,
+  timeoutMs = 20000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    return res;
+  } catch (err: unknown) {
+    if ((err as Error)?.name === "AbortError") {
+      throw new Error(`Délai d'attente SingPay dépassé (${timeoutMs / 1000}s).`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Construit le contexte de tarification PriceContext (Phase 3.2).
+ */
+export function buildPriceContext(
+  userData: Record<string, unknown>,
+  adData?: Record<string, unknown> | null
+): PriceContext {
+  const isExempt = Boolean(
+    userData.isExempt || userData.exemptFromPaymentAndKyc
+  );
+
+  const rawTier = String(userData.subscriptionTier || "STANDARD").toUpperCase();
+  let effectiveTier = ["PRO", "ELITE", "BUSINESS"].includes(rawTier)
+    ? rawTier
+    : "STANDARD";
+
+  const expiresAt = userData.subscriptionExpiresAt;
+  if (effectiveTier !== "STANDARD" && expiresAt) {
+    const expTime =
+      typeof expiresAt === "string"
+        ? new Date(expiresAt).getTime()
+        : typeof expiresAt === "object" &&
+          expiresAt !== null &&
+          "toMillis" in (expiresAt as Record<string, unknown>)
+        ? (expiresAt as { toMillis: () => number }).toMillis()
+        : 0;
+    if (expTime > 0 && expTime < Date.now()) {
+      effectiveTier = "STANDARD";
+    }
+  }
+
+  let subscriptionAgeDays = 0;
+  if (effectiveTier !== "STANDARD" && userData.subscriptionStartedAt) {
+    const startTime =
+      typeof userData.subscriptionStartedAt === "string"
+        ? new Date(userData.subscriptionStartedAt).getTime()
+        : typeof userData.subscriptionStartedAt === "object" &&
+          userData.subscriptionStartedAt !== null &&
+          "toMillis" in (userData.subscriptionStartedAt as Record<string, unknown>)
+        ? (userData.subscriptionStartedAt as { toMillis: () => number }).toMillis()
+        : 0;
+    if (startTime > 0 && Date.now() > startTime) {
+      subscriptionAgeDays = Math.floor(
+        (Date.now() - startTime) / (1000 * 60 * 60 * 24)
+      );
+    }
+  }
+
+  // Quota gratuit : STANDARD = 0 (Décision D3)
+  const tierQuota = SUBSCRIPTION_QUOTAS[effectiveTier] ?? 0;
+  const consumed = Number(userData.consumedFreeAdsCount || 0);
+  const hasFreeAdQuota = isExempt || (tierQuota > 0 && consumed < tierQuota);
+
+  const freeBoosts = Math.max(0, Number(userData.freeBoosts || 0));
+
+  let adRemainingDays: number | undefined;
+  if (adData && adData.expiresAt) {
+    const expTime =
+      typeof adData.expiresAt === "string"
+        ? new Date(adData.expiresAt).getTime()
+        : typeof adData.expiresAt === "object" &&
+          adData.expiresAt !== null &&
+          "toMillis" in (adData.expiresAt as Record<string, unknown>)
+        ? (adData.expiresAt as { toMillis: () => number }).toMillis()
+        : 0;
+    if (expTime > Date.now()) {
+      adRemainingDays = Math.ceil(
+        (expTime - Date.now()) / (1000 * 60 * 60 * 24)
+      );
+    } else {
+      adRemainingDays = 0;
+    }
+  }
+
+  return {
+    isExempt,
+    effectiveTier,
+    subscriptionAgeDays,
+    hasFreeAdQuota,
+    freeBoosts,
+    adRemainingDays,
+  };
+}
+
+/**
+ * Prévisualisation du devis côté serveur pour affichage dans l'interface client (Phase 8.1).
+ */
+export const previewQuote = onCall(
+  {cors: true},
+  async (request) => {
+    if (!request.auth || !request.auth.uid) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Authentification requise pour prévisualiser un devis."
+      );
+    }
+
+    const {productId, metadata} = (request.data || {}) as {
+      productId?: unknown;
+      metadata?: Record<string, unknown>;
+    };
+
+    if (!productId || typeof productId !== "string") {
+      throw new HttpsError("invalid-argument", "Produit requis.");
+    }
+
+    const db = getFirestore();
+    const userDoc = await db.collection("users").doc(request.auth.uid).get();
+    const userData = userDoc.exists ? userDoc.data() || {} : {};
+
+    let adData: Record<string, unknown> | null = null;
+    const cleanAdId =
+      metadata && typeof metadata.adId === "string" ? metadata.adId.trim() : "";
+    if (cleanAdId) {
+      const adDoc = await db.collection("ads").doc(cleanAdId).get();
+      if (adDoc.exists) {
+        adData = adDoc.data() || null;
+      }
+    }
+
+    const priceContext = buildPriceContext(userData, adData);
+    try {
+      const quote = quoteOrder(productId, metadata, priceContext);
+      return {
+        productId: quote.productId,
+        amount: quote.amount,
+        lines: quote.lines,
+        metadata: quote.metadata,
+      };
+    } catch (err) {
+      if (err instanceof PricingError) {
+        throw new HttpsError("invalid-argument", err.message);
+      }
+      throw err;
+    }
+  }
+);
+
+/**
+ * 4. Passerelle SingPay Gabon (Phase 3 : Initiation sécurisée, idempotente et traçable)
+ */
 export const initiateSingPayPayment = onCall(
   {
     cors: true,
@@ -1145,33 +1318,53 @@ export const initiateSingPayPayment = onCall(
     ],
   },
   async (request) => {
-    // Exiger une session connectée (0.4)
-    if (!request.auth) {
+    // Exiger une session connectée (Phase 3)
+    if (!request.auth || !request.auth.uid) {
       throw new HttpsError(
         "unauthenticated",
         "Authentification requise pour initier un paiement."
       );
     }
+    const callerUid = request.auth.uid;
 
     const {
-      amount,
       productId,
       metadata,
       phoneNumber,
-      itemDescription,
       operator,
-    } = request.data || {};
+      idempotencyKey,
+    } = (request.data || {}) as {
+      productId?: unknown;
+      metadata?: Record<string, unknown>;
+      phoneNumber?: unknown;
+      operator?: unknown;
+      idempotencyKey?: unknown;
+    };
+
+    // 3.1 Refuser si productId est absent (supprime tout repli sur amount ou description client)
+    if (!productId || typeof productId !== "string") {
+      throw new HttpsError("invalid-argument", "Produit requis.");
+    }
 
     if (!phoneNumber) {
       throw new HttpsError("invalid-argument", "Numéro de téléphone requis.");
     }
 
+    // 3.7 Interrupteur isLive : si faux, refuser immédiatement
+    const cfg = await getSingPayConfig();
+    if (cfg.isLive === false) {
+      throw new HttpsError(
+        "unavailable",
+        "Les paiements sont temporairement suspendus."
+      );
+    }
+
     const requestedOperator =
       operator === "AIRTEL_MONEY" ? "AIRTEL_MONEY" : "MOOV_MONEY";
 
-    const {e164, rawDigits} = normalizeGabonPhone(String(phoneNumber));
+    const {rawDigits} = normalizeGabonPhone(String(phoneNumber));
 
-    // Validation stricte des opérateurs (Phase 6 : Moov / Airtel)
+    // Validation stricte des opérateurs selon les préfixes officiels
     const isMoov = MOOV_PREFIXES.some((p) => rawDigits.startsWith(p));
     const isAirtel = AIRTEL_PREFIXES.some((p) => rawDigits.startsWith(p));
 
@@ -1193,68 +1386,187 @@ export const initiateSingPayPayment = onCall(
     const userDoc = await db.collection("users").doc(request.auth.uid).get();
     const userData = userDoc.exists ? userDoc.data() || {} : {};
 
-    const isExempt = Boolean(
-      userData.isExempt || userData.exemptFromPaymentAndKyc
-    );
-    const quota =
-      SUBSCRIPTION_QUOTAS[userData.subscriptionTier || "STANDARD"] || 3;
-    const consumed = Number(userData.consumedFreeAdsCount || 0);
-    const isCoveredByQuota = consumed < quota;
+    // 3.2 Contrôle de l'annonce si metadata.adId est présent
+    let adData: Record<string, unknown> | null = null;
+    const cleanAdId =
+      metadata && typeof metadata.adId === "string" ? metadata.adId.trim() : "";
+    if (cleanAdId) {
+      const adDoc = await db.collection("ads").doc(cleanAdId).get();
+      if (!adDoc.exists) {
+        throw new HttpsError("not-found", "Annonce ciblée introuvable.");
+      }
+      adData = adDoc.data() || {};
+      const isSuperOrAdmin =
+        request.auth.token.role === "SUPER_ADMIN" ||
+        request.auth.token.role === "SUPER ADMIN" ||
+        request.auth.token.role === "ADMIN" ||
+        userData.role === "SUPER_ADMIN" ||
+        userData.role === "SUPER ADMIN" ||
+        userData.role === "ADMIN";
 
-    // Calcul du prix côté serveur : ne jamais faire confiance au montant client
-    let serverAmount = 0;
-    if (productId) {
-      serverAmount = calculateServerPrice(
-        productId,
-        metadata as Record<string, unknown> | undefined,
-        userData.subscriptionTier as string | undefined,
-        isExempt,
-        isCoveredByQuota
-      );
-    } else if (amount && Number(amount) > 0) {
-      serverAmount = Number(amount);
-    } else {
-      throw new HttpsError("invalid-argument", "Produit ou montant invalide.");
+      if (adData.userId !== request.auth.uid && !isSuperOrAdmin) {
+        throw new HttpsError(
+          "permission-denied",
+          "Cette annonce ne vous appartient pas."
+        );
+      }
+
+      if (adData.status === "deleted" || adData.status === "rejected") {
+        throw new HttpsError(
+          "failed-precondition",
+          "Cette annonce ne peut plus être modifiée ou prolongée."
+        );
+      }
     }
 
-    if (serverAmount <= 0) {
+    // 3.2 & 3.3 Construire le contexte et devis via quoteOrder
+    const priceContext = buildPriceContext(userData, adData);
+    let quote: Quote;
+    try {
+      quote = quoteOrder(productId, metadata, priceContext);
+    } catch (err) {
+      if (err instanceof PricingError) {
+        throw new HttpsError("invalid-argument", err.message);
+      }
+      throw err;
+    }
+
+    if (quote.amount <= 0 && !priceContext.isExempt && !quote.metadata.usesFreeQuota) {
       throw new HttpsError(
         "invalid-argument",
-        "Le montant de transaction doit être supérieur à 0 FCFA."
+        "Le montant calculé par le serveur doit être supérieur à 0 FCFA."
       );
     }
 
-    // Référence générée côté serveur, unique par UID et horodatée
-    const uidPrefix = request.auth.uid.slice(0, 8);
-    const randSuffix = Math.floor(1000 + Math.random() * 9000);
-    const serverReference =
-      `BZB_${uidPrefix}_${Date.now()}_${randSuffix}`;
+    // 3.4 Idempotence : référence = BZB_<uid8>_<hash(idempotencyKey)>
+    const uid8 = callerUid.slice(0, 8);
+    const rawKey =
+      typeof idempotencyKey === "string" && idempotencyKey.trim()
+        ? idempotencyKey.trim()
+        : crypto.randomUUID();
+    const keyHash = crypto
+      .createHash("sha256")
+      .update(rawKey)
+      .digest("hex")
+      .slice(0, 12);
+    const serverReference = `BZB_${uid8}_${keyHash}`;
 
     const clientMsisdn = `241${rawDigits}`;
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 3 * 60 * 1000).toISOString();
 
-    // Récupération des secrets SingPay
-    const cfg = await getSingPayConfig();
+    const paymentRef = db.collection("payments").doc(serverReference);
+
+    // Vérification d'idempotence et création INITIATING dans une transaction
+    const idempotencyCheck = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(paymentRef);
+      if (snap.exists) {
+        const d = snap.data() || {};
+        if (d.userId === callerUid) {
+          return {
+            exists: true,
+            reference: d.reference,
+            amount: d.amount,
+            expiresAt: d.expiresAt,
+            lines: d.lines || [],
+            operator: d.operator,
+            status: d.status,
+          };
+        } else {
+          throw new HttpsError("already-exists", "Référence de paiement déjà utilisée.");
+        }
+      }
+
+      // 3.5 Créer payments/{ref} en INITIATING avant l'appel SingPay
+      tx.set(paymentRef, {
+        reference: serverReference,
+        userId: callerUid,
+        productId: quote.productId,
+        metadata: quote.metadata,
+        amount: quote.amount,
+        lines: quote.lines,
+        operator: requestedOperator,
+        clientPhoneMasked: maskNumber(clientMsisdn),
+        status: "INITIATING",
+        attributed: false,
+        configVersion: cfg.version || 1,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        expiresAt,
+      });
+
+      return {exists: false};
+    });
+
+    if (idempotencyCheck.exists) {
+      return {
+        reference: idempotencyCheck.reference,
+        amount: idempotencyCheck.amount,
+        expiresAt: idempotencyCheck.expiresAt,
+        lines: idempotencyCheck.lines,
+        operator: idempotencyCheck.operator,
+        status: idempotencyCheck.status,
+      };
+    }
+
+    // Vérifier s'il existe déjà un paiement INITIATING ou PENDING récent (< 3 min)
+    const recentPayments = await db
+      .collection("payments")
+      .where("userId", "==", callerUid)
+      .where("status", "in", ["INITIATING", "PENDING"])
+      .get();
+
+    const duplicate = recentPayments.docs.find((doc) => {
+      if (doc.id === serverReference) return false;
+      const d = doc.data();
+      const createdTime = new Date(d.createdAt).getTime();
+      if (Date.now() - createdTime > 3 * 60 * 1000) return false;
+      const sameProduct = d.productId === quote.productId;
+      const sameAd =
+        (!quote.metadata.adId && !d.metadata?.adId) ||
+        quote.metadata.adId === d.metadata?.adId;
+      return sameProduct && sameAd;
+    });
+
+    if (duplicate) {
+      await paymentRef.delete().catch(() => {});
+      throw new HttpsError(
+        "already-exists",
+        "Un paiement est déjà en cours pour cette demande. Veuillez patienter ou vérifier votre téléphone."
+      );
+    }
+
+    // Récupération des clés SingPay
     const clientId = cfg.clientId;
     const clientSecret = cfg.clientSecret;
     const walletId = cfg.walletId;
 
     if (!clientId || !clientSecret || !walletId) {
+      await paymentRef.update({
+        status: "FAILED",
+        errorReason: "Identifiants SingPay non configurés sur le serveur.",
+        updatedAt: new Date().toISOString(),
+      });
       throw new HttpsError(
         "failed-precondition",
-        "Identifiants SingPay manquants dans Secret Manager."
+        "Identifiants SingPay non configurés sur le serveur."
       );
     }
 
-    // Numéro de reversement depuis les secrets (aucun repli codé en dur)
     const rawDisbursement =
-      requestedOperator === "AIRTEL_MONEY" ?
-        cfg.airtelDisbursement :
-        cfg.moovDisbursement;
+      requestedOperator === "AIRTEL_MONEY"
+        ? cfg.airtelDisbursement
+        : cfg.moovDisbursement;
 
     if (!rawDisbursement) {
+      await paymentRef.update({
+        status: "FAILED",
+        errorReason: `Numéro de reversement non configuré pour ${requestedOperator}.`,
+        updatedAt: new Date().toISOString(),
+      });
       throw new HttpsError(
         "failed-precondition",
-        `Reversement non configuré dans les secrets pour ${requestedOperator}.`
+        `Reversement non configuré pour ${requestedOperator}.`
       );
     }
 
@@ -1269,7 +1581,7 @@ export const initiateSingPayPayment = onCall(
     }
 
     const paymentPayload = {
-      amount: serverAmount,
+      amount: quote.amount,
       reference: serverReference,
       client_msisdn: clientMsisdn,
       portefeuille: walletId,
@@ -1281,24 +1593,29 @@ export const initiateSingPayPayment = onCall(
       requestedOperator === "AIRTEL_MONEY" ? "74" : "62";
     const paymentUrl = `https://gateway.singpay.ga/v1/${operatorEndpointCode}/paiement`;
 
+    // 3.6 Appel SingPay via singpayFetch (20s timeout, aucun retry)
     try {
-      const resp = await fetch(paymentUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-client-id": clientId,
-          "x-client-secret": clientSecret,
-          "x-wallet": walletId,
+      const resp = await singpayFetch(
+        paymentUrl,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-client-id": clientId,
+            "x-client-secret": clientSecret,
+            "x-wallet": walletId,
+          },
+          body: JSON.stringify(paymentPayload),
         },
-        body: JSON.stringify(paymentPayload),
-      });
+        20000
+      );
 
       const responseText = await resp.text();
       let responseJson: SingPayResponsePayload | null = null;
       try {
         responseJson = JSON.parse(responseText);
       } catch {
-        // Plain text
+        // format texte
       }
 
       if (!resp.ok || !responseJson?.status?.success) {
@@ -1306,50 +1623,47 @@ export const initiateSingPayPayment = onCall(
           responseJson?.status?.message ||
           responseJson?.message ||
           responseText ||
-          `Erreur SingPay code ${resp.status}`;
+          `Erreur SingPay code HTTP ${resp.status}`;
+
+        await paymentRef.update({
+          status: "FAILED",
+          errorReason: errorMsg,
+          updatedAt: new Date().toISOString(),
+        });
+
         throw new HttpsError("internal", `SingPay: ${errorMsg}`);
       }
 
       const singpayTx = responseJson.transaction || {};
       const singpayTxId = singpayTx.id || singpayTx._id || "";
 
-      // Document payment avec UID propriétaire (.create() anti-écrasement)
-      await db.collection("payments").doc(serverReference).create({
-        reference: serverReference,
-        userId: request.auth.uid,
-        productId: productId || null,
-        metadata: metadata || {},
-        singpayTransactionId: singpayTxId,
-        amount: serverAmount,
-        operator: requestedOperator,
-        clientPhone: e164,
-        clientMsisdn,
-        disbursementPhone: disbursement,
-        itemDescription: itemDescription || "Paiement BIZBOOSTER Gabon",
+      await paymentRef.update({
         status: "PENDING",
-        attributed: false,
+        singpayTransactionId: singpayTxId,
         singpayStatus: singpayTx.status || "Start",
         singpayResult: singpayTx.result || null,
-        createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
 
-      const operatorLabel =
-        requestedOperator === "AIRTEL_MONEY" ? "Airtel Money" : "Moov Money";
+      // 3.8 Réponse : { reference, amount, expiresAt, lines, operator }
       return {
-        success: true,
         reference: serverReference,
-        transactionId: singpayTxId,
-        amount: serverAmount,
-        status: "PENDING",
-        message: `Demande USSD Push envoyée sur le mobile ${operatorLabel}.`,
+        amount: quote.amount,
+        expiresAt,
+        lines: quote.lines,
+        operator: requestedOperator,
       };
     } catch (err: unknown) {
       if (err instanceof HttpsError) {
         throw err;
       }
       const e = err as Error;
-      throw new HttpsError("internal", `SingPay communication: ${e.message}`);
+      await paymentRef.update({
+        status: "FAILED",
+        errorReason: e.message || "Erreur de communication SingPay",
+        updatedAt: new Date().toISOString(),
+      }).catch(() => {});
+      throw new HttpsError("internal", `SingPay: ${e.message}`);
     }
   }
 );
