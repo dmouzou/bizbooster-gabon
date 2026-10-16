@@ -2355,8 +2355,106 @@ function computeEffectiveOwnerTier(userData: Record<string, unknown>): {
   return {ownerTier, isOwnerVip, isOwnerVerified};
 }
 
+export interface ResolvedAdPayment {
+  verified: boolean;
+  durationDays?: number;
+  expiresAt?: string;
+  paidAmount?: number;
+  paymentMethod?: string | null;
+  transactionRef?: string | null;
+  boostRequested?: boolean;
+  maxPhotos?: number;
+  failureReason?: string;
+}
+
 /**
- * Phase 2 - 1. onAdCreated : Initialisation serveur des annonces.
+ * Résolution et validation stricte du paiement d'une annonce (Phase 6.1).
+ * Dérive durée, échéance et photos des métadonnées du paiement côté serveur.
+ */
+export async function resolveAdPayment(
+  adId: string,
+  userId: string,
+  paymentReference?: string | null
+): Promise<ResolvedAdPayment> {
+  if (!paymentReference || typeof paymentReference !== "string") {
+    return {
+      verified: false,
+      failureReason: "Référence de paiement absente.",
+    };
+  }
+
+  const db = getFirestore();
+  const paySnap = await db.collection("payments").doc(paymentReference).get();
+  if (!paySnap.exists) {
+    return {
+      verified: false,
+      failureReason: "Document de paiement introuvable.",
+    };
+  }
+
+  const payData = paySnap.data() || {};
+  if (payData.status !== "SUCCESS") {
+    return {
+      verified: false,
+      failureReason: `Statut paiement non validé (${payData.status}).`,
+    };
+  }
+
+  if (payData.userId !== userId) {
+    return {
+      verified: false,
+      failureReason: "Le paiement appartient à un autre compte.",
+    };
+  }
+
+  if (payData.productId !== "AD_PUBLISH") {
+    return {
+      verified: false,
+      failureReason: "Produit de paiement invalide pour la publication.",
+    };
+  }
+
+  const payMeta = (payData.metadata as Record<string, unknown>) || {};
+  if (payMeta.adId && payMeta.adId !== adId) {
+    return {
+      verified: false,
+      failureReason: "Le paiement cible une autre annonce.",
+    };
+  }
+
+  if (payData.consumedByAdId && payData.consumedByAdId !== adId) {
+    return {
+      verified: false,
+      failureReason: "Ce paiement a déjà été consommé par une autre annonce.",
+    };
+  }
+
+  // Marquer le paiement comme consommé par cette annonce
+  await paySnap.ref.update({
+    consumedByAdId: adId,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const durationDays = Number(payMeta.durationDays) || 30;
+  const now = Date.now();
+  const expiresAt = new Date(now + durationDays * 86400000).toISOString();
+  const maxPhotos = Number(payMeta.photoCount) || 3;
+  const boostRequested = Boolean(payMeta.withBoost);
+
+  return {
+    verified: true,
+    durationDays,
+    expiresAt,
+    paidAmount: payData.amount || 0,
+    paymentMethod: payData.operator || null,
+    transactionRef: payData.singpayTransactionId || paymentReference,
+    boostRequested,
+    maxPhotos,
+  };
+}
+
+/**
+ * Phase 6.1 onAdCreated : Initialisation serveur des annonces.
  * Pose ownerTier, isOwnerVip, isOwnerVerified, isVipCorner, vérifie le paiement
  * ou applique le quota gratuit côté serveur.
  */
@@ -2365,6 +2463,7 @@ export const onAdCreated = onDocumentCreated(
   async (event) => {
     const snap = event.data;
     if (!snap) return;
+    const adId = event.params.adId;
     const adData = snap.data() || {};
     const userId = adData.userId;
     if (!userId) return;
@@ -2382,12 +2481,12 @@ export const onAdCreated = onDocumentCreated(
     const isExempt = Boolean(
       userData.isExempt || userData.exemptFromPaymentAndKyc
     );
-    const quota =
-      SUBSCRIPTION_QUOTAS[effective.ownerTier || "STANDARD"] || 3;
+    // Quota standard = 0 (Décision D3)
+    const quota = SUBSCRIPTION_QUOTAS[effective.ownerTier || "STANDARD"] ?? 0;
     const consumed = Number(userData.consumedFreeAdsCount || 0);
-    const isCoveredByQuota = consumed < quota;
+    const isCoveredByQuota = !isExempt && quota > 0 && consumed < quota;
 
-    // Vérification du statut de l'annonceur dans l'annuaire (Phase 2 - 10)
+    // Vérification annuaire professionnel
     let isRegistered = false;
     try {
       const sysConfigSnap = await db.doc("settings/system_config").get();
@@ -2423,55 +2522,67 @@ export const onAdCreated = onDocumentCreated(
       updatedAt: new Date().toISOString(),
     };
 
-    // Vérification de couverture de paiement
-    const paymentReference = adData.paymentReference;
-    if (paymentReference) {
-      const paySnap = await db
-        .collection("payments")
-        .doc(String(paymentReference))
-        .get();
-      if (paySnap.exists) {
-        const payData = paySnap.data() || {};
-        if (
-          payData.status === "SUCCESS" &&
-          payData.userId === userId
-        ) {
-          updates.paidAmount = payData.amount || 0;
-          updates.paymentMethod = payData.operator || null;
-          updates.transactionRef =
-            payData.singpayTransactionId ||
-            payData.transactionId ||
-            paymentReference;
-          updates.paymentVerified = true;
-          if (payData.metadata?.withBoost) {
-            updates.boostRequested = true;
-          }
-        } else {
-          updates.status = "REJECTED";
-          updates.moderationReason = "PAIEMENT_NON_VERIFIE";
-          updates.paymentVerified = false;
-        }
-      } else {
-        updates.status = "REJECTED";
-        updates.moderationReason = "PAIEMENT_NON_VERIFIE";
-        updates.paymentVerified = false;
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+
+    if (isExempt) {
+      // Utilisateur exempté : publication sans frais
+      updates.paymentVerified = true;
+      updates.paidAmount = 0;
+      const durationDays = Number(adData.durationDays) || 30;
+      updates.durationDays = durationDays;
+      updates.expiresAt = new Date(now + durationDays * 86400000).toISOString();
+    } else if (isCoveredByQuota) {
+      // Inclus dans le quota d'abonnement actif
+      updates.paymentVerified = true;
+      updates.paidAmount = 0;
+      const durationDays = Number(adData.durationDays) || 30;
+      updates.durationDays = durationDays;
+      updates.expiresAt = new Date(now + durationDays * 86400000).toISOString();
+      if (userDoc.exists) {
+        await userDoc.ref.update({
+          consumedFreeAdsCount: FieldValue.increment(1),
+          updatedAt: nowIso,
+        });
       }
     } else {
-      if (isExempt) {
-        updates.paymentVerified = true;
-      } else if (isCoveredByQuota) {
-        updates.paymentVerified = true;
-        // Incrémente le quota côté serveur
-        if (userDoc.exists) {
-          await userDoc.ref.update({
-            consumedFreeAdsCount: FieldValue.increment(1),
-            updatedAt: new Date().toISOString(),
-          });
-        }
-      } else {
-        updates.status = "REJECTED";
-        updates.moderationReason = "PAIEMENT_NON_VERIFIE";
+      // 6.1 Exige un paiement validé SUCCESS
+      const resolved = await resolveAdPayment(
+        adId,
+        userId,
+        adData.paymentReference as string | undefined
+      );
+
+      if (!resolved.verified) {
+        // Paiement absent ou faux : l'annonce n'est JAMAIS publiée
+        updates.status = "PENDING_PAYMENT";
         updates.paymentVerified = false;
+        updates.moderationReason = resolved.failureReason || "PAIEMENT_REQUIS";
+        updates.isFeatured = false;
+        updates.featuredAt = null;
+        updates.featuredUntil = null;
+      } else {
+        // Dérivation stricte depuis les métadonnées assainies du serveur
+        updates.paymentVerified = true;
+        updates.durationDays = resolved.durationDays;
+        updates.expiresAt = resolved.expiresAt;
+        updates.paidAmount = resolved.paidAmount;
+        updates.paymentMethod = resolved.paymentMethod;
+        updates.transactionRef = resolved.transactionRef;
+
+        if (resolved.boostRequested) {
+          updates.isFeatured = true;
+          updates.featuredAt = nowIso;
+          updates.featuredUntil = new Date(now + 7 * 86400000).toISOString();
+        }
+
+        if (
+          resolved.maxPhotos &&
+          Array.isArray(adData.images) &&
+          adData.images.length > resolved.maxPhotos
+        ) {
+          updates.images = adData.images.slice(0, resolved.maxPhotos);
+        }
       }
     }
 
@@ -2827,16 +2938,16 @@ export const registerView = onCall(
 );
 
 /**
- * Phase 2 - 8. extendAdVip : Prolongation réservée aux VIP / exemptés.
+ * Phase 6.3 extendAdVip : Prolongation gratuite réservée aux abonnés Business actifs et membres VIP.
  */
 export const extendAdVip = onCall(
   {cors: true},
   async (request) => {
-    if (!request.auth) {
+    if (!request.auth || !request.auth.uid) {
       throw new HttpsError("unauthenticated", "Authentification requise.");
     }
-    const {adId, days} = request.data || {};
-    if (!adId) {
+    const {adId, days} = (request.data || {}) as { adId?: unknown; days?: unknown };
+    if (!adId || typeof adId !== "string") {
       throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
     }
 
@@ -2848,14 +2959,23 @@ export const extendAdVip = onCall(
       userData.exemptFromPaymentAndKyc ||
       userData.subscriptionTier === "VIP"
     );
-    if (!isVipExempt) {
+
+    const isBusinessActive =
+      userData.subscriptionTier === "BUSINESS" &&
+      Boolean(
+        userData.subscriptionExpiresAt &&
+        new Date(userData.subscriptionExpiresAt).getTime() > Date.now()
+      );
+
+    // 6.3 Accepter le cas Business gratuit (devis à 0 pour un abonné Business actif)
+    if (!isVipExempt && !isBusinessActive) {
       throw new HttpsError(
         "permission-denied",
-        "Réservé aux membres VIP et partenaires exemptés."
+        "La prolongation sans frais est réservée aux abonnés Business actifs et membres VIP."
       );
     }
 
-    const adRef = db.collection("ads").doc(String(adId));
+    const adRef = db.collection("ads").doc(adId);
     const adSnap = await adRef.get();
     if (!adSnap.exists) {
       throw new HttpsError("not-found", "Annonce introuvable.");
@@ -2863,6 +2983,13 @@ export const extendAdVip = onCall(
     const ad = adSnap.data() || {};
     if (ad.userId !== request.auth.uid) {
       throw new HttpsError("permission-denied", "Accès non autorisé.");
+    }
+
+    if (ad.status === "deleted" || ad.status === "rejected") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Cette annonce ne peut plus être prolongée."
+      );
     }
 
     const now = Date.now();
@@ -2895,27 +3022,44 @@ export const extendAdVip = onCall(
 );
 
 /**
- * Phase 2 - 8b. requestExtension : Enregistrement de prolongation payante.
+ * Phase 6.2 requestExtension : Prolongation sécurisée par paiement validé.
  */
 export const requestExtension = onCall(
   {cors: true},
   async (request) => {
-    if (!request.auth) {
+    if (!request.auth || !request.auth.uid) {
       throw new HttpsError("unauthenticated", "Authentification requise.");
     }
     const {
       adId,
       days,
-      operator,
-      transactionRef,
       paymentReference,
-    } = request.data || {};
-    if (!adId) {
+    } = (request.data || {}) as {
+      adId?: unknown;
+      days?: unknown;
+      paymentReference?: unknown;
+    };
+    if (!adId || typeof adId !== "string") {
       throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
     }
 
     const db = getFirestore();
-    const adRef = db.collection("ads").doc(String(adId));
+    const userDoc = await db.collection("users").doc(request.auth.uid).get();
+    const userData = userDoc.exists ? userDoc.data() || {} : {};
+
+    const isVipExempt = Boolean(
+      userData.isExempt ||
+      userData.exemptFromPaymentAndKyc ||
+      userData.subscriptionTier === "VIP"
+    );
+    const isBusinessActive =
+      userData.subscriptionTier === "BUSINESS" &&
+      Boolean(
+        userData.subscriptionExpiresAt &&
+        new Date(userData.subscriptionExpiresAt).getTime() > Date.now()
+      );
+
+    const adRef = db.collection("ads").doc(adId);
     const adSnap = await adRef.get();
     if (!adSnap.exists) {
       throw new HttpsError("not-found", "Annonce introuvable.");
@@ -2924,35 +3068,104 @@ export const requestExtension = onCall(
     if (ad.userId !== request.auth.uid) {
       throw new HttpsError("permission-denied", "Accès non autorisé.");
     }
-
-    if (paymentReference) {
-      const paySnap = await db
-        .collection("payments")
-        .doc(String(paymentReference))
-        .get();
-      if (
-        !paySnap.exists ||
-        paySnap.data()?.status !== "SUCCESS" ||
-        paySnap.data()?.userId !== request.auth.uid
-      ) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Paiement non vérifié pour cette prolongation."
-        );
-      }
+    if (ad.status === "deleted" || ad.status === "rejected") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Cette annonce ne peut plus être prolongée."
+      );
     }
 
+    // Gratuit pour Business actif et membres exemptés
+    if (isVipExempt || isBusinessActive) {
+      const now = Date.now();
+      const base = Math.max(
+        ad.expiresAt ? new Date(ad.expiresAt).getTime() : now,
+        now
+      );
+      const requestedDays = Math.min(Number(days) || 30, 365);
+      const maxExpiry = now + 365 * 86400000;
+      const computedExpiry = Math.min(base + requestedDays * 86400000, maxExpiry);
+      const newExpiresAt = new Date(computedExpiry).toISOString();
+
+      await adRef.update({
+        status: "ACTIVE",
+        expiresAt: newExpiresAt,
+        lastExtendedAt: new Date(now).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      });
+      return {success: true, expiresAt: newExpiresAt};
+    }
+
+    // 6.2 Pour les autres utilisateurs : exige un paiement SUCCESS AD_EXTEND
+    if (!paymentReference || typeof paymentReference !== "string") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Un paiement validé est requis pour prolonger cette annonce."
+      );
+    }
+
+    const paySnap = await db.collection("payments").doc(paymentReference).get();
+    if (!paySnap.exists) {
+      throw new HttpsError("not-found", "Paiement de prolongation introuvable.");
+    }
+    const payData = paySnap.data() || {};
+    if (
+      payData.status !== "SUCCESS" ||
+      payData.userId !== request.auth.uid ||
+      payData.productId !== "AD_EXTEND"
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Paiement non vérifié ou non conforme pour la prolongation."
+      );
+    }
+
+    const payMeta = (payData.metadata as Record<string, unknown>) || {};
+    if (payMeta.adId && payMeta.adId !== adId) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Ce paiement cible une autre annonce."
+      );
+    }
+
+    if (payData.consumedByAdId && payData.consumedByAdId !== adId) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Ce paiement a déjà été consommé."
+      );
+    }
+
+    const extendDays = Number(payMeta.days || days || 30);
+    const now = Date.now();
+    const base = Math.max(
+      ad.expiresAt ? new Date(ad.expiresAt).getTime() : now,
+      now
+    );
+    const maxExpiry = now + 365 * 86400000;
+    const computedExpiry = Math.min(base + extendDays * 86400000, maxExpiry);
+    const newExpiresAt = new Date(computedExpiry).toISOString();
+    const effectiveAddedDays = Math.max(
+      1,
+      Math.round((computedExpiry - base) / 86400000)
+    );
+
     await adRef.update({
-      pendingExtension: {
-        days: Math.min(Number(days) || 30, 365),
-        operator: operator || null,
-        transactionRef: transactionRef || paymentReference || null,
-        requestedAt: new Date().toISOString(),
-      },
-      updatedAt: new Date().toISOString(),
+      status: "ACTIVE",
+      expiresAt: newExpiresAt,
+      durationDays: Math.min(
+        365,
+        (Number(ad.durationDays) || 0) + effectiveAddedDays
+      ),
+      lastExtendedAt: new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString(),
     });
 
-    return {success: true};
+    await paySnap.ref.update({
+      consumedByAdId: adId,
+      updatedAt: new Date(now).toISOString(),
+    });
+
+    return {success: true, expiresAt: newExpiresAt};
   }
 );
 
