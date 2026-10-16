@@ -1257,7 +1257,10 @@ export function buildPriceContext(
   const consumed = Number(userData.consumedFreeAdsCount || 0);
   const hasFreeAdQuota = isExempt || (tierQuota > 0 && consumed < tierQuota);
 
-  const freeBoosts = Math.max(0, Number(userData.freeBoosts || 0));
+  const freeBoosts = Math.max(
+    0,
+    Number(userData.freeBoostsRemaining ?? userData.freeBoosts ?? 0)
+  );
 
   let adRemainingDays: number | undefined;
   if (adData && adData.expiresAt) {
