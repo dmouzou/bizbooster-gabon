@@ -900,239 +900,278 @@ export const migrateGatewayConfig = onCall(
 export {calculateServerPrice};
 
 
+export interface PaymentOutcome {
+  status: "SUCCESS" | "FAILED" | "EXPIRED" | "NEEDS_REVIEW";
+  singpayStatus?: string;
+  singpayResult?: string | null;
+  errorReason?: string;
+  amountReceived?: number;
+}
+
+export const PAYMENT_STATUS_RANKS: Record<string, number> = {
+  INITIATING: 0,
+  PENDING: 1,
+  EXPIRED: 2,
+  FAILED: 3,
+  NEEDS_REVIEW: 3,
+  SUCCESS: 4,
+};
+
 /**
- * Attribution sécurisée des avantages après paiement validé SUCCESS.
- * Exécutée exclusivement côté serveur avec le SDK Admin.
- *
- * @param {string} paymentRefOrId Référence ou ID du document paiement.
- * @return {Promise<boolean>} Indique si l'attribution a réussi.
+ * Traitement unique et atomique de transition d'état et attribution des avantages (Phase 4.1).
+ * Toute attribution passe EXCLUSIVEMENT par cette fonction.
+ */
+export async function settlePayment(
+  paymentRefOrId: string,
+  rawOutcome: PaymentOutcome
+): Promise<{ success: boolean; status: string; attributed: boolean }> {
+  const db = getFirestore();
+  const paymentDocRef = db.collection("payments").doc(paymentRefOrId);
+
+  return await db.runTransaction(async (tx) => {
+    // 1. LECTURES D'ABORD (Règle Firestore transactionnelle : toutes les lectures avant écritures)
+    const paymentSnap = await tx.get(paymentDocRef);
+    if (!paymentSnap.exists) {
+      console.warn(`settlePayment: Paiement ${paymentRefOrId} introuvable.`);
+      return { success: false, status: "NOT_FOUND", attributed: false };
+    }
+
+    const payment = paymentSnap.data() || {};
+    const currentStatus = String(payment.status || "INITIATING").toUpperCase();
+    let outcome = { ...rawOutcome };
+
+    // 4.3 Contrôle strict du montant reçu
+    if (outcome.status === "SUCCESS" && outcome.amountReceived !== undefined) {
+      if (Number(outcome.amountReceived) !== Number(payment.amount)) {
+        console.warn(
+          `settlePayment: Montant altéré pour ${paymentRefOrId}: attendu ${payment.amount}, reçu ${outcome.amountReceived}`
+        );
+        outcome.status = "NEEDS_REVIEW";
+        outcome.errorReason = `Incohérence montant: attendu ${payment.amount} FCFA, reçu ${outcome.amountReceived} FCFA`;
+      }
+    }
+
+    // Machine d'états
+    const currentRank = PAYMENT_STATUS_RANKS[currentStatus] ?? 0;
+    const targetRank = PAYMENT_STATUS_RANKS[outcome.status] ?? -1;
+
+    // Règle: aucune baisse de rang sauf EXPIRED vers SUCCESS
+    if (currentStatus === "SUCCESS") {
+      // Déjà SUCCESS: terminal et immuable
+      return { success: true, status: "SUCCESS", attributed: Boolean(payment.attributed) };
+    }
+    if (currentStatus === "FAILED" && outcome.status !== "FAILED") {
+      // Statut final FAILED: aucune transition possible
+      return { success: false, status: "FAILED", attributed: false };
+    }
+    if (currentStatus === "EXPIRED" && outcome.status !== "SUCCESS") {
+      // EXPIRED ne peut transiter que vers SUCCESS (paiement mobile différé)
+      return { success: false, status: "EXPIRED", attributed: false };
+    }
+    if (targetRank < currentRank && !(currentStatus === "EXPIRED" && outcome.status === "SUCCESS")) {
+      console.warn(
+        `settlePayment: Transition interdite de ${currentStatus} vers ${outcome.status} pour ${paymentRefOrId}.`
+      );
+      return { success: false, status: currentStatus, attributed: Boolean(payment.attributed) };
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    // Si pas SUCCESS, simple transition de statut (FAILED, EXPIRED, NEEDS_REVIEW, PENDING)
+    if (outcome.status !== "SUCCESS") {
+      const updates: Record<string, unknown> = {
+        status: outcome.status,
+        updatedAt: nowIso,
+      };
+      if (outcome.singpayStatus) updates.singpayStatus = outcome.singpayStatus;
+      if (outcome.singpayResult !== undefined) updates.singpayResult = outcome.singpayResult;
+      if (outcome.errorReason) updates.errorReason = outcome.errorReason;
+      if (outcome.amountReceived !== undefined) updates.amountReceived = outcome.amountReceived;
+
+      tx.set(paymentDocRef, updates, { merge: true });
+      return { success: true, status: outcome.status, attributed: false };
+    }
+
+    // Ici outcome.status === "SUCCESS"
+    if (payment.attributed === true) {
+      return { success: true, status: "SUCCESS", attributed: true };
+    }
+
+    const userId = payment.userId as string;
+    if (!userId) {
+      console.warn(`settlePayment: Aucun userId sur ${paymentRefOrId}.`);
+      tx.set(paymentDocRef, {
+        status: "NEEDS_REVIEW",
+        errorReason: "Paiement sans userId associé.",
+        updatedAt: nowIso,
+      }, { merge: true });
+      return { success: false, status: "NEEDS_REVIEW", attributed: false };
+    }
+
+    // Lire l'utilisateur (LECTURE)
+    const userRef = db.collection("users").doc(userId);
+    const userSnap = await tx.get(userRef);
+    const userData = userSnap.exists ? (userSnap.data() || {}) : {};
+
+    const productId = (payment.productId as string) || "";
+    const metadata = (payment.metadata as Record<string, unknown>) || {};
+    const adId = typeof metadata.adId === "string" ? metadata.adId.trim() : "";
+
+    // Lire l'annonce si applicable (LECTURE)
+    let adRef: FirebaseFirestore.DocumentReference | null = null;
+    let adData: Record<string, unknown> | null = null;
+    if (adId) {
+      adRef = db.collection("ads").doc(adId);
+      const adSnap = await tx.get(adRef);
+      if (adSnap.exists) {
+        adData = adSnap.data() || {};
+      }
+    }
+
+    // 2. CALCUL DES MODIFICATIONS SELON LES RÈGLES PAR PRODUIT (Tableau page 7)
+    const userUpdates: Record<string, unknown> = { updatedAt: nowIso };
+    const adUpdates: Record<string, unknown> = { updatedAt: nowIso };
+    const paymentUpdates: Record<string, unknown> = {
+      status: "SUCCESS",
+      attributed: true,
+      attributedAt: nowIso,
+      updatedAt: nowIso,
+    };
+    if (outcome.singpayStatus) paymentUpdates.singpayStatus = outcome.singpayStatus;
+    if (outcome.singpayResult !== undefined) paymentUpdates.singpayResult = outcome.singpayResult;
+    if (outcome.amountReceived !== undefined) paymentUpdates.amountReceived = outcome.amountReceived;
+
+    let hasUserUpdates = false;
+    let hasAdUpdates = false;
+
+    // Produit : SUB_PRO / SUB_ELITE / SUB_BUSINESS
+    if (
+      productId === "SUB_PRO" || productId === "PRO" ||
+      productId === "SUB_ELITE" || productId === "ELITE" ||
+      productId === "SUB_BUSINESS" || productId === "BUSINESS"
+    ) {
+      const tier = productId.replace("SUB_", "");
+      const boostsToAdd = tier === "BUSINESS" ? 6 : tier === "ELITE" ? 3 : 1;
+      const currentBoosts = Number(userData.freeBoostsRemaining ?? userData.freeBoosts ?? 0);
+      const newBoosts = Math.min(20, currentBoosts + boostsToAdd);
+
+      userUpdates.subscriptionTier = tier;
+      userUpdates.subscriptionStartedAt = nowIso;
+      userUpdates.subscriptionExpiresAt = new Date(now.getTime() + 30 * 24 * 3600 * 1000).toISOString();
+      userUpdates.freeBoostsRemaining = newBoosts;
+      userUpdates.freeBoosts = newBoosts;
+      userUpdates.consumedFreeAdsCount = 0;
+      hasUserUpdates = true;
+    } else if (productId === "BOOST_SINGLE" || productId === "SINGLE") {
+      // BOOST_SINGLE : Annonce obligatoire mise en avant +7 jours
+      if (adRef && adData && (adData.userId === userId || !adData.userId)) {
+        const currentUntil = adData.featuredUntil ? new Date(adData.featuredUntil as string).getTime() : 0;
+        const baseUntil = Math.max(currentUntil, now.getTime());
+        const newFeaturedUntil = new Date(baseUntil + 7 * 24 * 3600 * 1000).toISOString();
+
+        adUpdates.isFeatured = true;
+        adUpdates.featuredAt = (adData.isFeatured && adData.featuredAt) ? adData.featuredAt : nowIso;
+        adUpdates.featuredUntil = newFeaturedUntil;
+        hasAdUpdates = true;
+      }
+    } else if (productId === "BOOST_5" || productId === "BOOST_10") {
+      const count = productId === "BOOST_5" ? 5 : 10;
+      const currentBoosts = Number(userData.freeBoostsRemaining ?? userData.freeBoosts ?? 0);
+
+      if (adRef && adData && (adData.userId === userId || !adData.userId)) {
+        // Avec annonce : mise en avant +7 jours et solde +(count - 1)
+        const currentUntil = adData.featuredUntil ? new Date(adData.featuredUntil as string).getTime() : 0;
+        const baseUntil = Math.max(currentUntil, now.getTime());
+        const newFeaturedUntil = new Date(baseUntil + 7 * 24 * 3600 * 1000).toISOString();
+
+        adUpdates.isFeatured = true;
+        adUpdates.featuredAt = (adData.isFeatured && adData.featuredAt) ? adData.featuredAt : nowIso;
+        adUpdates.featuredUntil = newFeaturedUntil;
+        hasAdUpdates = true;
+
+        const newBoosts = Math.min(20, currentBoosts + (count - 1));
+        userUpdates.freeBoostsRemaining = newBoosts;
+        userUpdates.freeBoosts = newBoosts;
+        userUpdates.activeBoosterPack = productId;
+        hasUserUpdates = true;
+      } else {
+        // Sans annonce : solde +count
+        const newBoosts = Math.min(20, currentBoosts + count);
+        userUpdates.freeBoostsRemaining = newBoosts;
+        userUpdates.freeBoosts = newBoosts;
+        userUpdates.activeBoosterPack = productId;
+        hasUserUpdates = true;
+      }
+    } else if (productId === "AD_EXTEND") {
+      // AD_EXTEND : jours des métadonnées assainies, max 365 jours
+      const days = Number(metadata.days || 0);
+      if (adRef && adData && days > 0 && adData.status !== "deleted" && adData.status !== "rejected") {
+        const currentExp = adData.expiresAt ? new Date(adData.expiresAt as string).getTime() : now.getTime();
+        const baseTime = Math.max(currentExp, now.getTime());
+        const maxAllowed = now.getTime() + 365 * 24 * 3600 * 1000;
+        const targetTime = Math.min(maxAllowed, baseTime + days * 24 * 3600 * 1000);
+
+        adUpdates.expiresAt = new Date(targetTime).toISOString();
+        adUpdates.status = "ACTIVE";
+        hasAdUpdates = true;
+      }
+    } else if (productId === "AD_PUBLISH") {
+      // AD_PUBLISH : Achat abonnement éventuel, consommation quota ou boost gratuit, marquage consumedByAdId
+      paymentUpdates.consumedByAdId = adId || true;
+
+      if (metadata.requiresSubscription && metadata.selectedTierToBuy) {
+        const tier = String(metadata.selectedTierToBuy);
+        const boostsToAdd = tier === "BUSINESS" ? 6 : tier === "ELITE" ? 3 : 1;
+        const currentBoosts = Number(userData.freeBoostsRemaining ?? userData.freeBoosts ?? 0);
+        let finalBoosts = Math.min(20, currentBoosts + boostsToAdd);
+        if (metadata.withBoost) {
+          finalBoosts = Math.max(0, finalBoosts - 1);
+        }
+
+        userUpdates.subscriptionTier = tier;
+        userUpdates.subscriptionStartedAt = nowIso;
+        userUpdates.subscriptionExpiresAt = new Date(now.getTime() + 30 * 24 * 3600 * 1000).toISOString();
+        userUpdates.freeBoostsRemaining = finalBoosts;
+        userUpdates.freeBoosts = finalBoosts;
+        userUpdates.consumedFreeAdsCount = 0;
+        hasUserUpdates = true;
+      } else {
+        if (metadata.usesFreeQuota) {
+          userUpdates.consumedFreeAdsCount = Number(userData.consumedFreeAdsCount || 0) + 1;
+          hasUserUpdates = true;
+        }
+        if (metadata.boostSource === "FREE_BALANCE") {
+          const currentBoosts = Number(userData.freeBoostsRemaining ?? userData.freeBoosts ?? 0);
+          const finalBoosts = Math.max(0, currentBoosts - 1);
+          userUpdates.freeBoostsRemaining = finalBoosts;
+          userUpdates.freeBoosts = finalBoosts;
+          hasUserUpdates = true;
+        }
+      }
+    }
+
+    // 3. ÉCRITURES ATOMIQUES
+    if (hasUserUpdates) {
+      tx.set(userRef, userUpdates, { merge: true });
+    }
+    if (hasAdUpdates && adRef) {
+      tx.set(adRef, adUpdates, { merge: true });
+    }
+    tx.set(paymentDocRef, paymentUpdates, { merge: true });
+
+    return { success: true, status: "SUCCESS", attributed: true };
+  });
+}
+
+/**
+ * Enveloppe de compatibilité : route exclusivement vers settlePayment (Phase 4.4).
  */
 export async function applyPaymentAttribution(
   paymentRefOrId: string
 ): Promise<boolean> {
-  const db = getFirestore();
-  const paymentDocRef = db.collection("payments").doc(paymentRefOrId);
-  const paymentSnap = await paymentDocRef.get();
-  if (!paymentSnap.exists) {
-    console.warn(
-      `applyPaymentAttribution: Paiement ${paymentRefOrId} introuvable.`
-    );
-    return false;
-  }
-
-  const payment = paymentSnap.data() || {};
-  if (payment.status !== "SUCCESS") {
-    console.warn(
-      `applyPaymentAttribution: Statut non SUCCESS pour ${paymentRefOrId}.`
-    );
-    return false;
-  }
-
-  if (payment.attributed === true) {
-    // Déjà attribué (idempotence)
-    return true;
-  }
-
-  const userId = payment.userId as string;
-  if (!userId) {
-    console.warn(
-      `applyPaymentAttribution: Aucun userId sur ${paymentRefOrId}.`
-    );
-    return false;
-  }
-
-  const userRef = db.collection("users").doc(userId);
-  const userSnap = await userRef.get();
-  if (!userSnap.exists) {
-    console.warn(
-      `applyPaymentAttribution: Utilisateur ${userId} introuvable.`
-    );
-    return false;
-  }
-  const userData = userSnap.data() || {};
-
-  const productId = (payment.productId as string) || "";
-  const metadata = (payment.metadata as Record<string, unknown>) || {};
-  const now = new Date();
-
-  // 1. Abonnements
-  if (productId === "SUB_PRO" || productId === "PRO") {
-    const currentBoosts = Number(userData.freeBoostsRemaining || 0);
-    await userRef.update({
-      subscriptionTier: "PRO",
-      subscriptionStartedAt: now.toISOString(),
-      subscriptionExpiresAt: new Date(
-        now.getTime() + 30 * 86400000
-      ).toISOString(),
-      freeBoostsRemaining: Math.min(20, currentBoosts + 1),
-      consumedFreeAdsCount: 0,
-      updatedAt: now.toISOString(),
-    });
-  } else if (productId === "SUB_ELITE" || productId === "ELITE") {
-    const currentBoosts = Number(userData.freeBoostsRemaining || 0);
-    await userRef.update({
-      subscriptionTier: "ELITE",
-      subscriptionStartedAt: now.toISOString(),
-      subscriptionExpiresAt: new Date(
-        now.getTime() + 30 * 86400000
-      ).toISOString(),
-      freeBoostsRemaining: Math.min(20, currentBoosts + 3),
-      consumedFreeAdsCount: 0,
-      updatedAt: now.toISOString(),
-    });
-  } else if (productId === "SUB_BUSINESS" || productId === "BUSINESS") {
-    const currentBoosts = Number(userData.freeBoostsRemaining || 0);
-    await userRef.update({
-      subscriptionTier: "BUSINESS",
-      subscriptionStartedAt: now.toISOString(),
-      subscriptionExpiresAt: new Date(
-        now.getTime() + 30 * 86400000
-      ).toISOString(),
-      freeBoostsRemaining: Math.min(20, currentBoosts + 6),
-      consumedFreeAdsCount: 0,
-      updatedAt: now.toISOString(),
-    });
-  } else if (productId === "BOOST_SINGLE" || productId === "SINGLE") {
-    // 2. Boost individuel
-    const adId = metadata.adId as string;
-    if (adId) {
-      const adRef = db.collection("ads").doc(adId);
-      const adSnap = await adRef.get();
-      if (adSnap.exists) {
-        const adData = adSnap.data() || {};
-        const existingUntil = adData.featuredUntil ?
-          new Date(adData.featuredUntil).getTime() : 0;
-        const baseUntil = Math.max(existingUntil, now.getTime());
-        await adRef.update({
-          isFeatured: true,
-          featuredAt: (adData.isFeatured && adData.featuredAt) ?
-            adData.featuredAt : now.toISOString(),
-          featuredUntil: new Date(baseUntil + 7 * 86400000).toISOString(),
-          updatedAt: now.toISOString(),
-        });
-      }
-    } else {
-      const currentBoosts = Number(userData.freeBoostsRemaining || 0);
-      await userRef.update({
-        freeBoostsRemaining: Math.min(20, currentBoosts + 1),
-        updatedAt: now.toISOString(),
-      });
-    }
-  } else if (productId === "BOOST_5") {
-    // 3. Pack 5 Boosters
-    const adId = metadata.adId as string;
-    const currentBoosts = Number(userData.freeBoostsRemaining || 0);
-    if (adId) {
-      const adRef = db.collection("ads").doc(adId);
-      const adSnap = await adRef.get();
-      if (adSnap.exists) {
-        const adData = adSnap.data() || {};
-        const existingUntil = adData.featuredUntil ?
-          new Date(adData.featuredUntil).getTime() : 0;
-        const baseUntil = Math.max(existingUntil, now.getTime());
-        await adRef.update({
-          isFeatured: true,
-          featuredAt: (adData.isFeatured && adData.featuredAt) ?
-            adData.featuredAt : now.toISOString(),
-          featuredUntil: new Date(baseUntil + 7 * 86400000).toISOString(),
-          updatedAt: now.toISOString(),
-        });
-      }
-      await userRef.update({
-        freeBoostsRemaining: Math.min(20, currentBoosts + 4),
-        activeBoosterPack: "BOOST_5",
-        updatedAt: now.toISOString(),
-      });
-    } else {
-      await userRef.update({
-        freeBoostsRemaining: Math.min(20, currentBoosts + 5),
-        activeBoosterPack: "BOOST_5",
-        updatedAt: now.toISOString(),
-      });
-    }
-  } else if (productId === "BOOST_10") {
-    // 4. Pack 10 Boosters
-    const adId = metadata.adId as string;
-    const currentBoosts = Number(userData.freeBoostsRemaining || 0);
-    if (adId) {
-      const adRef = db.collection("ads").doc(adId);
-      const adSnap = await adRef.get();
-      if (adSnap.exists) {
-        const adData = adSnap.data() || {};
-        const existingUntil = adData.featuredUntil ?
-          new Date(adData.featuredUntil).getTime() : 0;
-        const baseUntil = Math.max(existingUntil, now.getTime());
-        await adRef.update({
-          isFeatured: true,
-          featuredAt: (adData.isFeatured && adData.featuredAt) ?
-            adData.featuredAt : now.toISOString(),
-          featuredUntil: new Date(baseUntil + 7 * 86400000).toISOString(),
-          updatedAt: now.toISOString(),
-        });
-      }
-      await userRef.update({
-        freeBoostsRemaining: Math.min(20, currentBoosts + 9),
-        activeBoosterPack: "BOOST_10",
-        updatedAt: now.toISOString(),
-      });
-    } else {
-      await userRef.update({
-        freeBoostsRemaining: Math.min(20, currentBoosts + 10),
-        activeBoosterPack: "BOOST_10",
-        updatedAt: now.toISOString(),
-      });
-    }
-  } else if (productId === "AD_EXTEND") {
-    // 5. Prolongation d'annonce
-    const adId = metadata.adId as string;
-    const days = Number(metadata.days || 0);
-    if (adId && days > 0) {
-      const adRef = db.collection("ads").doc(adId);
-      const adSnap = await adRef.get();
-      if (adSnap.exists) {
-        const adData = adSnap.data() || {};
-        const currentExp = adData.expiresAt ?
-          new Date(adData.expiresAt).getTime() :
-          now.getTime();
-        const baseTime = Math.max(currentExp, now.getTime());
-        const newExpiresAt = new Date(baseTime + days * 86400000).toISOString();
-        await adRef.update({
-          expiresAt: newExpiresAt,
-          status: "ACTIVE",
-          updatedAt: now.toISOString(),
-        });
-      }
-    }
-  } else if (productId === "AD_PUBLISH") {
-    // 6. Publication avec achat d'abonnement
-    if (metadata.requiresSubscription && metadata.selectedTierToBuy) {
-      const tier = String(metadata.selectedTierToBuy);
-      const boostsToAdd = tier === "BUSINESS" ? 6 : tier === "ELITE" ? 3 : 1;
-      const currentBoosts = Number(userData.freeBoostsRemaining || 0);
-      let finalBoosts = Math.min(20, currentBoosts + boostsToAdd);
-      if (metadata.withBoost) {
-        finalBoosts = Math.max(0, finalBoosts - 1);
-      }
-      await userRef.update({
-        subscriptionTier: tier,
-        subscriptionStartedAt: now.toISOString(),
-        subscriptionExpiresAt: new Date(
-          now.getTime() + 30 * 86400000
-        ).toISOString(),
-        freeBoostsRemaining: finalBoosts,
-        consumedFreeAdsCount: 0,
-        updatedAt: now.toISOString(),
-      });
-    }
-  }
-
-  // Marquer le paiement comme attribué
-  await paymentDocRef.update({
-    attributed: true,
-    attributedAt: now.toISOString(),
-  });
-
-  return true;
+  const res = await settlePayment(paymentRefOrId, { status: "SUCCESS" });
+  return res.attributed;
 }
 
 /**
@@ -1963,35 +2002,34 @@ export const singpayWebhook = onRequest(
 
 /**
  * Déclencheur Firestore sur écriture de paiement :
- * Si statut SUCCESS et non encore attribué, applique l'attribution.
+ * Phase 4.4 : Toute attribution passe exclusivement par settlePayment.
+ * Cette fonction ne réalise aucune attribution directe pour garantir l'atomicité transactionnelle.
  */
 export const onPaymentStatusChange = onDocumentWritten(
   "payments/{paymentId}",
   async (event) => {
     const after = event.data?.after;
     if (!after || !after.exists) return;
-    const data = after.data() || {};
-    if (data.status === "SUCCESS" && !data.attributed) {
-      await applyPaymentAttribution(event.params.paymentId);
-    }
+    // Les attributions passent exclusivement par settlePayment (Phase 4.4).
+    // Les éventuelles notifications push futures peuvent être déclenchées ici sans écriture Firestore.
   }
 );
 
 /**
- * Fonction appelable permettant au client de réclamer/attendre
- * l'attribution des bénéfices après confirmation du paiement.
+ * Fonction appelable permettant au client de consulter l'état
+ * d'attribution des bénéfices après confirmation du paiement.
  */
 export const claimPaymentBenefits = onCall(
   {cors: true},
   async (request) => {
-    if (!request.auth) {
+    if (!request.auth || !request.auth.uid) {
       throw new HttpsError(
         "unauthenticated",
         "Authentification requise pour réclamer les bénéfices."
       );
     }
-    const {reference} = request.data || {};
-    if (!reference) {
+    const {reference} = (request.data || {}) as { reference?: unknown };
+    if (!reference || typeof reference !== "string") {
       throw new HttpsError(
         "invalid-argument",
         "Référence de paiement requise."
@@ -2000,7 +2038,7 @@ export const claimPaymentBenefits = onCall(
     const db = getFirestore();
     const paySnap = await db
       .collection("payments")
-      .doc(String(reference))
+      .doc(reference)
       .get();
     if (!paySnap.exists) {
       throw new HttpsError("not-found", "Paiement introuvable.");
@@ -2009,14 +2047,11 @@ export const claimPaymentBenefits = onCall(
     if (payData.userId !== request.auth.uid) {
       throw new HttpsError("permission-denied", "Accès non autorisé.");
     }
-    if (payData.status !== "SUCCESS") {
-      throw new HttpsError(
-        "failed-precondition",
-        "Le paiement n'a pas encore été validé avec succès."
-      );
-    }
-    const attributed = await applyPaymentAttribution(String(reference));
-    return {success: attributed};
+    return {
+      status: payData.status,
+      attributed: Boolean(payData.attributed),
+      success: payData.status === "SUCCESS" && Boolean(payData.attributed),
+    };
   }
 );
 
