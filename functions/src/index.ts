@@ -901,7 +901,7 @@ export {calculateServerPrice};
 
 
 export interface PaymentOutcome {
-  status: "SUCCESS" | "FAILED" | "EXPIRED" | "NEEDS_REVIEW";
+  status: "INITIATING" | "PENDING" | "SUCCESS" | "FAILED" | "EXPIRED" | "NEEDS_REVIEW";
   singpayStatus?: string;
   singpayResult?: string | null;
   errorReason?: string;
@@ -1707,8 +1707,81 @@ export const initiateSingPayPayment = onCall(
   }
 );
 
+export interface MappedPaymentResult {
+  status: "SUCCESS" | "FAILED" | "PENDING";
+  result: string;
+  singpayStatus: string;
+  failureReason?: string;
+}
+
 /**
- * 5. Vérification du statut d'une transaction SingPay
+ * Table de correspondance unique partagée par tous les flux SingPay (Phase 5.2).
+ */
+export function mapSingPayResult(
+  tx: SingPayTransactionData | Record<string, unknown>
+): MappedPaymentResult {
+  const txStatus = String(tx.status || "");
+  const txResult = String(tx.result || "");
+
+  if (
+    txResult === "Success" ||
+    (txStatus === "Terminate" && txResult === "Success")
+  ) {
+    return {
+      status: "SUCCESS",
+      result: txResult || "Success",
+      singpayStatus: txStatus,
+    };
+  }
+
+  if (txResult === "PasswordError") {
+    return {
+      status: "FAILED",
+      result: txResult,
+      singpayStatus: txStatus,
+      failureReason: "Code PIN erroné saisi sur le mobile.",
+    };
+  }
+
+  if (txResult === "BalanceError") {
+    return {
+      status: "FAILED",
+      result: txResult,
+      singpayStatus: txStatus,
+      failureReason: "Solde mobile insuffisant sur le compte client.",
+    };
+  }
+
+  if (txResult === "TimeOutError") {
+    return {
+      status: "FAILED",
+      result: txResult,
+      singpayStatus: txStatus,
+      failureReason: "Délai d'attente dépassé (timeout USSD).",
+    };
+  }
+
+  if (
+    txResult === "Error" ||
+    (txStatus === "Terminate" && txResult && txResult !== "Success")
+  ) {
+    return {
+      status: "FAILED",
+      result: txResult,
+      singpayStatus: txStatus,
+      failureReason: "Paiement refusé ou annulé par l'utilisateur.",
+    };
+  }
+
+  return {
+    status: "PENDING",
+    result: txResult,
+    singpayStatus: txStatus,
+  };
+}
+
+/**
+ * 5. Vérification du statut d'une transaction SingPay (Phase 5.1).
  */
 export const checkSingPayPaymentStatus = onCall(
   {
@@ -1720,40 +1793,75 @@ export const checkSingPayPaymentStatus = onCall(
     ],
   },
   async (request) => {
-    const {transactionId, reference} = request.data || {};
+    // 5.1 Exiger l'authentification
+    if (!request.auth || !request.auth.uid) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Authentification requise pour vérifier le statut d'un paiement."
+      );
+    }
 
-    if (!reference && !transactionId) {
+    const {reference} = (request.data || {}) as { reference?: unknown };
+
+    // 5.1 N'accepter que reference (plus d'identifiant libre)
+    if (!reference || typeof reference !== "string") {
       throw new HttpsError(
         "invalid-argument",
-        "Référence ou ID de transaction requis."
+        "Référence de paiement requise."
       );
     }
 
     const db = getFirestore();
-    let paymentDocRef = null;
-    let paymentData: Record<string, unknown> | null = null;
-
-    if (reference) {
-      paymentDocRef = db.collection("payments").doc(String(reference));
-      const snap = await paymentDocRef.get();
-      if (snap.exists) {
-        paymentData = snap.data() || null;
-      }
+    const paymentDocRef = db.collection("payments").doc(reference);
+    const snap = await paymentDocRef.get();
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "Paiement introuvable.");
     }
 
-    if (paymentData?.status === "SUCCESS") {
-      // Déclencher l'attribution si pas encore faite
-      if (!paymentData.attributed && paymentDocRef) {
-        await applyPaymentAttribution(paymentDocRef.id);
-      }
+    const paymentData = snap.data() || {};
+
+    // 5.1 Refuser si le paiement n'appartient pas à l'appelant, sauf admin
+    const isAdmin = await checkIsAdmin(request.auth.uid, request.auth);
+    if (paymentData.userId !== request.auth.uid && !isAdmin) {
+      throw new HttpsError(
+        "permission-denied",
+        "Accès refusé pour cette référence de paiement."
+      );
+    }
+
+    // 5.1 Si le statut est final, le renvoyer sans appeler SingPay
+    if (paymentData.status === "SUCCESS" || paymentData.status === "FAILED") {
       return {
-        status: "SUCCESS",
-        result: "Success",
-        reference: paymentData.reference as string,
-        transactionId: paymentData.singpayTransactionId as string,
-        message: "Paiement validé avec succès.",
+        status: paymentData.status,
+        result: paymentData.singpayResult || (paymentData.status === "SUCCESS" ? "Success" : "Error"),
+        reference: paymentData.reference,
+        transactionId: paymentData.singpayTransactionId || "",
+        message:
+          paymentData.status === "SUCCESS"
+            ? "Paiement validé avec succès."
+            : paymentData.errorReason || "Paiement non abouti.",
       };
     }
+
+    // 5.1 Limiter à un appel SingPay toutes les 4 secondes par paiement
+    const lastCheckedAt = paymentData.lastCheckedAt
+      ? new Date(paymentData.lastCheckedAt as string).getTime()
+      : 0;
+    const now = Date.now();
+    if (now - lastCheckedAt < 4000) {
+      return {
+        status: (paymentData.status as string) || "PENDING",
+        result: (paymentData.singpayResult as string) || "",
+        reference: paymentData.reference,
+        transactionId: paymentData.singpayTransactionId || "",
+        throttled: true,
+      };
+    }
+
+    await paymentDocRef.set(
+      { lastCheckedAt: new Date(now).toISOString() },
+      { merge: true }
+    );
 
     const cfg = await getSingPayConfig();
     const clientId = cfg.clientId;
@@ -1762,13 +1870,12 @@ export const checkSingPayPaymentStatus = onCall(
 
     if (!clientId || !clientSecret) {
       return {
-        status: (paymentData?.status as string) || "PENDING",
-        message: "Clés SingPay non configurées dans Secret Manager.",
+        status: (paymentData.status as string) || "PENDING",
+        message: "Clés SingPay non configurées.",
       };
     }
 
-    const targetTxId =
-      transactionId || (paymentData?.singpayTransactionId as string);
+    const targetTxId = paymentData.singpayTransactionId as string;
     let endpoint = "";
     const headers: Record<string, string> = {
       "x-client-id": clientId,
@@ -1779,7 +1886,7 @@ export const checkSingPayPaymentStatus = onCall(
       endpoint = `https://gateway.singpay.ga/v1/transaction/api/status/${encodeURIComponent(
         targetTxId
       )}`;
-    } else if (reference) {
+    } else {
       endpoint = `https://gateway.singpay.ga/v1/transaction/api/search/by-reference/${encodeURIComponent(
         reference
       )}`;
@@ -1787,88 +1894,56 @@ export const checkSingPayPaymentStatus = onCall(
     }
 
     try {
-      const resp = await fetch(endpoint, {
-        method: "GET",
-        headers,
-      });
-
+      const resp = await singpayFetch(endpoint, { method: "GET", headers }, 10000);
       const responseText = await resp.text();
       let responseJson: SingPayResponsePayload | null = null;
       try {
         responseJson = JSON.parse(responseText);
       } catch {
-        // Plain text
+        // format brut
       }
 
       if (!resp.ok) {
         return {
-          status: (paymentData?.status as string) || "PENDING",
+          status: (paymentData.status as string) || "PENDING",
           message: "En attente de validation auprès de l'opérateur.",
         };
       }
 
       const tx = responseJson?.transaction || {};
-      const txStatus = tx.status || "";
-      const txResult = tx.result || "";
+      const mapped = mapSingPayResult(tx);
 
-      let finalStatus = "PENDING";
-      let failureReason = "";
+      // 5.1 Passer par settlePayment
+      if (mapped.status !== "PENDING" || mapped.singpayStatus !== paymentData.singpayStatus) {
+        const settleRes = await settlePayment(reference, {
+          status: mapped.status,
+          singpayStatus: mapped.singpayStatus,
+          singpayResult: mapped.result,
+          errorReason: mapped.failureReason,
+          amountReceived: tx.amount !== undefined ? Number(tx.amount) : undefined,
+        });
 
-      if (
-        txResult === "Success" ||
-        (txStatus === "Terminate" && txResult === "Success")
-      ) {
-        finalStatus = "SUCCESS";
-      } else if (txResult === "PasswordError") {
-        finalStatus = "FAILED";
-        failureReason = "Code PIN erroné saisi sur le mobile.";
-      } else if (txResult === "BalanceError") {
-        finalStatus = "FAILED";
-        failureReason = "Solde mobile insuffisant sur le compte client.";
-      } else if (txResult === "TimeOutError") {
-        finalStatus = "FAILED";
-        failureReason = "Délai d'attente dépassé (timeout USSD).";
-      } else if (
-        txResult === "Error" ||
-        (txStatus === "Terminate" && txResult && txResult !== "Success")
-      ) {
-        finalStatus = "FAILED";
-        failureReason = "Paiement refusé ou annulé par l'utilisateur.";
-      }
-
-      if (
-        paymentDocRef &&
-        (finalStatus !== paymentData?.status ||
-          txStatus !== paymentData?.singpayStatus)
-      ) {
-        await paymentDocRef.set(
-          {
-            status: finalStatus,
-            singpayStatus: txStatus,
-            singpayResult: txResult,
-            failureReason: failureReason || null,
-            updatedAt: new Date().toISOString(),
-          },
-          {merge: true}
-        );
-
-        if (finalStatus === "SUCCESS") {
-          await applyPaymentAttribution(paymentDocRef.id);
-        }
+        return {
+          status: settleRes.status,
+          result: mapped.result,
+          singpayStatus: mapped.singpayStatus,
+          failureReason: mapped.failureReason || null,
+          transactionId: tx.id || targetTxId,
+          reference: tx.reference || reference,
+        };
       }
 
       return {
-        status: finalStatus,
-        result: txResult,
-        singpayStatus: txStatus,
-        failureReason,
+        status: (paymentData.status as string) || "PENDING",
+        result: mapped.result,
+        singpayStatus: mapped.singpayStatus,
         transactionId: tx.id || targetTxId,
         reference: tx.reference || reference,
       };
     } catch (err: unknown) {
       const e = err as Error;
       return {
-        status: (paymentData?.status as string) || "PENDING",
+        status: (paymentData.status as string) || "PENDING",
         message: e.message,
       };
     }
@@ -1876,7 +1951,7 @@ export const checkSingPayPaymentStatus = onCall(
 );
 
 /**
- * 6. Webhook de rappel officiel SingPay
+ * 6. Webhook de rappel officiel SingPay (Phase 5.3 & 5.4).
  */
 export const singpayWebhook = onRequest(
   {
@@ -1884,6 +1959,7 @@ export const singpayWebhook = onRequest(
     secrets: [
       singpayClientId,
       singpayClientSecret,
+      singpayWalletId,
       singpayWebhookSecret,
     ],
   },
@@ -1897,16 +1973,24 @@ export const singpayWebhook = onRequest(
       const cfg = await getSingPayConfig();
       const expectedSecret = cfg.webhookSecret;
 
+      // 5.4 Transport du secret : accepte x-webhook-secret ou ?secret=
       const receivedSecret =
         (req.headers["x-webhook-secret"] as string) ||
-        (req.headers["x-client-secret"] as string) ||
-        (req.query.secret as string);
+        (req.query.secret as string) ||
+        "";
 
-      // Rejeter tout appel falsifié ou non authentifié avec 401 (0.4)
-      if (!expectedSecret || receivedSecret !== expectedSecret) {
-        console.warn(
-          "singpayWebhook: appel non autorisé (secret manquant ou invalide)"
-        );
+      // 5.3 Comparaison avec crypto.timingSafeEqual et suppression du repli Client Secret
+      if (!expectedSecret || !receivedSecret) {
+        res.status(401).json({error: "Unauthorized"});
+        return;
+      }
+
+      const bufExpected = Buffer.from(expectedSecret);
+      const bufReceived = Buffer.from(receivedSecret);
+      if (
+        bufExpected.length !== bufReceived.length ||
+        !crypto.timingSafeEqual(bufExpected, bufReceived)
+      ) {
         res.status(401).json({error: "Unauthorized"});
         return;
       }
@@ -1918,84 +2002,210 @@ export const singpayWebhook = onRequest(
         reference?: string;
         result?: string;
         status?: string;
+        amount?: number;
       };
       const tx: SingPayTransactionData = data.transaction || data;
       const reference = tx.reference;
-      const result = tx.result;
-      const status = tx.status;
 
-      if (!reference) {
-        res.status(400).json({error: "Missing reference"});
+      // 5.3 Référence inconnue = réponse 200 « ignoré »
+      if (!reference || typeof reference !== "string") {
+        res.status(200).json({status: "ignored", reason: "missing-reference"});
         return;
       }
 
       const db = getFirestore();
-      const docRef = db.collection("payments").doc(String(reference));
+      const docRef = db.collection("payments").doc(reference);
       const paySnap = await docRef.get();
       if (!paySnap.exists) {
-        res.status(404).json({error: "Payment not found"});
+        res.status(200).json({status: "ignored", reason: "payment-not-found"});
         return;
       }
 
-      const clientId = cfg.clientId;
-      const clientSecret = cfg.clientSecret;
+      const mapped = mapSingPayResult(tx);
+      let outcome: PaymentOutcome = {
+        status: mapped.status,
+        singpayStatus: mapped.singpayStatus,
+        singpayResult: mapped.result,
+        errorReason: mapped.failureReason,
+        amountReceived: tx.amount !== undefined ? Number(tx.amount) : undefined,
+      };
 
-      let verifiedStatus = status;
-      let verifiedResult = result;
+      // 5.3 Avant tout SUCCESS, confirmer par un GET de statut auprès de SingPay
+      if (mapped.status === "SUCCESS") {
+        const txId = tx.id || tx._id || paySnap.data()?.singpayTransactionId;
+        let confirmed = false;
+        if (cfg.clientId && cfg.clientSecret) {
+          try {
+            let verifyUrl = "";
+            const verifyHeaders: Record<string, string> = {
+              "x-client-id": cfg.clientId,
+              "x-client-secret": cfg.clientSecret,
+            };
+            if (txId) {
+              verifyUrl = `https://gateway.singpay.ga/v1/transaction/api/status/${encodeURIComponent(String(txId))}`;
+            } else {
+              verifyUrl = `https://gateway.singpay.ga/v1/transaction/api/search/by-reference/${encodeURIComponent(reference)}`;
+              verifyHeaders["x-wallet"] = cfg.walletId;
+            }
 
-      // Réinterroger l'API SingPay côté serveur pour certifier le statut
-      const txId = tx.id || tx._id;
-      if (clientId && clientSecret && txId) {
-        try {
-          const resp = await fetch(
-            `https://gateway.singpay.ga/v1/transaction/api/status/${encodeURIComponent(txId)}`,
-            {
-              method: "GET",
-              headers: {
-                "x-client-id": clientId,
-                "x-client-secret": clientSecret,
-              },
+            const verifyResp = await singpayFetch(verifyUrl, { method: "GET", headers: verifyHeaders }, 10000);
+            if (verifyResp.ok) {
+              const verifyJson = (await verifyResp.json()) as SingPayResponsePayload;
+              const verifyTx = verifyJson.transaction || {};
+              const verifiedMapped = mapSingPayResult(verifyTx);
+              if (verifiedMapped.status === "SUCCESS") {
+                confirmed = true;
+                if (verifyTx.amount !== undefined) {
+                  outcome.amountReceived = Number(verifyTx.amount);
+                }
+              }
             }
-          );
-          if (resp.ok) {
-            const json = (await resp.json()) as SingPayResponsePayload;
-            if (json?.transaction) {
-              verifiedStatus = json.transaction.status;
-              verifiedResult = json.transaction.result;
-            }
+          } catch (fetchErr) {
+            console.warn("singpayWebhook: validation statut côté serveur échouée:", fetchErr);
           }
-        } catch (fetchErr) {
+        }
+
+        if (!confirmed) {
           console.warn(
-            "singpayWebhook: validation statut côté serveur échouée:",
-            fetchErr
+            `singpayWebhook: Confirmation GET refusée ou impossible pour ${reference}. En attente réconciliation.`
           );
+          outcome = {
+            status: "NEEDS_REVIEW",
+            errorReason: "Validation GET SingPay non certifiée après réception du webhook.",
+          };
         }
       }
 
-      const isSuccess =
-        verifiedResult === "Success" ||
-        (verifiedStatus === "Terminate" && verifiedResult === "Success");
-
-      await docRef.set(
-        {
-          singpayTransactionId: txId || null,
-          singpayStatus: verifiedStatus || null,
-          singpayResult: verifiedResult || null,
-          status: isSuccess ? "SUCCESS" : verifiedResult ? "FAILED" : "PENDING",
-          updatedAt: new Date().toISOString(),
-          rawWebhookPayload: data,
-        },
-        {merge: true}
-      );
-
-      if (isSuccess) {
-        await applyPaymentAttribution(String(reference));
-      }
-
+      // 5.3 Passer par settlePayment (idempotent, 1 seule attribution même avec 5 replays)
+      await settlePayment(reference, outcome);
       res.status(200).json({received: true});
     } catch (err: unknown) {
       const e = err as Error;
       res.status(500).json({error: e.message});
+    }
+  }
+);
+
+/**
+ * Réconciliation planifiée automatique (Phase 5.5).
+ * Exécutée toutes les 2 minutes pour clore les paiements sans dépendre du webhook ni du client.
+ */
+export const reconcilePayments = onSchedule(
+  {
+    schedule: "every 2 minutes",
+    secrets: [singpayClientId, singpayClientSecret, singpayWalletId],
+  },
+  async () => {
+    const db = getFirestore();
+    const cfg = await getSingPayConfig();
+    const now = Date.now();
+    const sixtySecAgo = new Date(now - 60000).toISOString();
+    const twoMinAgo = new Date(now - 120000).toISOString();
+
+    // 1. INITIATING de plus de 2 minutes -> FAILED
+    const stuckInitiating = await db
+      .collection("payments")
+      .where("status", "==", "INITIATING")
+      .where("createdAt", "<=", twoMinAgo)
+      .limit(50)
+      .get();
+
+    for (const doc of stuckInitiating.docs) {
+      await settlePayment(doc.id, {
+        status: "FAILED",
+        errorReason: "Paiement abandonné avant envoi opérateur (timeout INITIATING).",
+      });
+    }
+
+    // 2. PENDING de plus de 60 s (au plus 50 paiements)
+    const pendingSnap = await db
+      .collection("payments")
+      .where("status", "==", "PENDING")
+      .where("createdAt", "<=", sixtySecAgo)
+      .limit(50)
+      .get();
+
+    for (const doc of pendingSnap.docs) {
+      const data = doc.data() || {};
+      const expiresTime = data.expiresAt ? new Date(data.expiresAt as string).getTime() : 0;
+
+      // PENDING dépassant expiresAt sans succès -> EXPIRED
+      if (expiresTime > 0 && now > expiresTime) {
+        let checkedSuccess = false;
+        if (cfg.clientId && cfg.clientSecret) {
+          try {
+            const txId = data.singpayTransactionId;
+            let queryUrl = "";
+            const headers: Record<string, string> = {
+              "x-client-id": cfg.clientId,
+              "x-client-secret": cfg.clientSecret,
+            };
+            if (txId) {
+              queryUrl = `https://gateway.singpay.ga/v1/transaction/api/status/${encodeURIComponent(String(txId))}`;
+            } else {
+              queryUrl = `https://gateway.singpay.ga/v1/transaction/api/search/by-reference/${encodeURIComponent(doc.id)}`;
+              headers["x-wallet"] = cfg.walletId;
+            }
+            const res = await singpayFetch(queryUrl, { method: "GET", headers }, 8000);
+            if (res.ok) {
+              const json = (await res.json()) as SingPayResponsePayload;
+              const mapped = mapSingPayResult(json.transaction || {});
+              if (mapped.status === "SUCCESS") {
+                await settlePayment(doc.id, {
+                  status: "SUCCESS",
+                  singpayStatus: mapped.singpayStatus,
+                  singpayResult: mapped.result,
+                  amountReceived: json.transaction?.amount !== undefined ? Number(json.transaction.amount) : undefined,
+                });
+                checkedSuccess = true;
+              }
+            }
+          } catch {
+            // Ignorer l'erreur réseau
+          }
+        }
+        if (!checkedSuccess) {
+          await settlePayment(doc.id, {
+            status: "EXPIRED",
+            errorReason: "Délai de validation mobile dépassé (3 minutes).",
+          });
+        }
+        continue;
+      }
+
+      // Interroger SingPay pour les PENDING actifs de plus de 60 s
+      if (cfg.clientId && cfg.clientSecret) {
+        try {
+          const txId = data.singpayTransactionId;
+          let queryUrl = "";
+          const headers: Record<string, string> = {
+            "x-client-id": cfg.clientId,
+            "x-client-secret": cfg.clientSecret,
+          };
+          if (txId) {
+            queryUrl = `https://gateway.singpay.ga/v1/transaction/api/status/${encodeURIComponent(String(txId))}`;
+          } else {
+            queryUrl = `https://gateway.singpay.ga/v1/transaction/api/search/by-reference/${encodeURIComponent(doc.id)}`;
+            headers["x-wallet"] = cfg.walletId;
+          }
+          const res = await singpayFetch(queryUrl, { method: "GET", headers }, 8000);
+          if (res.ok) {
+            const json = (await res.json()) as SingPayResponsePayload;
+            const mapped = mapSingPayResult(json.transaction || {});
+            if (mapped.status !== "PENDING") {
+              await settlePayment(doc.id, {
+                status: mapped.status,
+                singpayStatus: mapped.singpayStatus,
+                singpayResult: mapped.result,
+                errorReason: mapped.failureReason,
+                amountReceived: json.transaction?.amount !== undefined ? Number(json.transaction.amount) : undefined,
+              });
+            }
+          }
+        } catch (e) {
+          console.warn(`reconcilePayments: Erreur vérification SingPay pour ${doc.id}:`, e);
+        }
+      }
     }
   }
 );
