@@ -76,3 +76,17 @@
 ### Test de connexion Gateway (Phase 2.3 & Annexe A)
 - Dans la documentation d'API SingPay standard, il n'existe pas d'endpoint officiel dédié `GET /ping` sans effet secondaire.
 - En conséquence, selon la règle stricte de l'annexe A ("À implémenter seulement si la documentation SingPay décrit un appel GET en lecture seule qui valide les identifiants. Sinon, ne pas l'écrire et le noter dans NOTES.md. Ne pas deviner un endpoint"), `testGatewayConnection` ne sera pas inventé avec un endpoint fictif. Si le wallet et les identifiants sont validés, une vérification de format et de présence est effectuée.
+
+---
+
+## 5. Synthèse du Déploiement et Exploitation (Phase 10)
+- **Ordre de déploiement** : Documenté en détail dans `DEPLOYMENT.md` :
+  1. Règles et index Firestore
+  2. Cloud Functions v2
+  3. Configuration / migration Super Admin (`private_config/singpay`)
+  4. Test de paiement réel pilote (1 500 FCFA)
+  5. Déploiement Hosting
+- **Période de repli (D4 / 10.2)** : Les secrets Secret Manager sont maintenus en repli 7 jours avant leur retrait final.
+- **Rollback (10.3)** : Retour arrière vers `singpay-hardening-base` sans altération des configurations isolées.
+- **Surveillance (10.4)** : Alertes configurables sur paiements `NEEDS_REVIEW` et taux de `FAILED`.
+

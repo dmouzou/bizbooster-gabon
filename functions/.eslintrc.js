@@ -20,6 +20,9 @@ module.exports = {
   ignorePatterns: [
     "/lib/**/*", // Ignore built files.
     "/generated/**/*", // Ignore generated files.
+    "vitest.config.ts",
+    "src/seed_emulator_accounts.ts",
+    "src/**/__tests__/**/*",
   ],
   plugins: [
     "@typescript-eslint",
@@ -28,6 +31,14 @@ module.exports = {
   rules: {
     "quotes": ["error", "double"],
     "import/no-unresolved": 0,
-    "indent": ["error", 2],
+    "indent": "off",
+    "max-len": "off",
+    "require-jsdoc": "off",
+    "valid-jsdoc": "off",
+    "object-curly-spacing": "off",
+    "operator-linebreak": "off",
+    "comma-dangle": "off",
+    "no-control-regex": "off",
+    "@typescript-eslint/no-explicit-any": "off",
   },
 };

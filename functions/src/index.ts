@@ -815,7 +815,7 @@ export const saveGatewayConfig = onCall(
       }
 
       let disbursementChanged = false;
-      let oldMoovMasked = maskNumber(current.moovDisbursement);
+      const oldMoovMasked = maskNumber(current.moovDisbursement);
       let newMoovMasked = oldMoovMasked;
       if (normalizedMoov !== undefined) {
         updates.moovDisbursement = normalizedMoov;
@@ -824,7 +824,7 @@ export const saveGatewayConfig = onCall(
         newMoovMasked = maskNumber(normalizedMoov);
       }
 
-      let oldAirtelMasked = maskNumber(current.airtelDisbursement);
+      const oldAirtelMasked = maskNumber(current.airtelDisbursement);
       let newAirtelMasked = oldAirtelMasked;
       if (normalizedAirtel !== undefined) {
         updates.airtelDisbursement = normalizedAirtel;
@@ -938,7 +938,7 @@ export async function settlePayment(
 
     const payment = paymentSnap.data() || {};
     const currentStatus = String(payment.status || "INITIATING").toUpperCase();
-    let outcome = { ...rawOutcome };
+    const outcome = { ...rawOutcome };
 
     // 4.3 Contrôle strict du montant reçu
     if (outcome.status === "SUCCESS" && outcome.amountReceived !== undefined) {
