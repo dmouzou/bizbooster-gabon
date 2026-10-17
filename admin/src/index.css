@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../src";
 
 /* Custom scrollbar for admin tables & logs */
 .custom-scrollbar {
