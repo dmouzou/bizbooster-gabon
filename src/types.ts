@@ -234,6 +234,18 @@ export interface Ad {
     transactionRef: string;
     requestedAt: string;
   };
+
+  // Champs d'aplatissement / compatibilité Nécrologie & Cours à domicile (I-02)
+  necroDeceasedName?: string;
+  necroMinistry?: NecrologieMinistry | string;
+  necroCeremonyDate?: string;
+  necroCeremonyLocation?: string;
+  necroFamilyContact?: string;
+  necroFuneralProgram?: string;
+
+  tutoringKind?: TutoringAdKind;
+  tutoringSubject?: TutoringSubject | string;
+  tutoringLevel?: TutoringLevel | string;
 }
 
 export type SubscriptionTier = 'STANDARD' | 'PRO' | 'ELITE' | 'BUSINESS';
@@ -319,14 +331,32 @@ export interface AdReport {
   resolutionNotes?: string;
 }
 
+export type ModerationAction =
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'EXTENDED'
+  | 'EXTENSION_REJECTED'
+  | 'DELETED'
+  | 'KYC_APPROVED'
+  | 'KYC_REJECTED'
+  | 'KYC_VIEWED'
+  | 'SUSPENDED'
+  | 'RESUBMITTED'
+  | 'REPORT_RESOLVED'
+  | 'REPORT_DISMISSED';
+
 export interface ModerationLog {
   id: string;
-  adId: string;
-  adTitle: string;
-  action: 'APPROVED' | 'REJECTED' | 'EXTENDED' | 'DELETED';
+  adId?: string;
+  adTitle?: string;
+  userId?: string;
+  userName?: string;
+  action: ModerationAction;
   reason?: string;
   timestamp: string;
-  moderatorName: string;
+  moderatorName?: string;
+  moderatorId?: string;
+  details?: string;
 }
 
 export interface GabonProvince {

@@ -593,6 +593,20 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
             onAction: () => onOpenSubscriptions && onOpenSubscriptions(),
           });
         }
+      } else if (diffMs <= 0 && now - subExpMs <= RECENCY_WINDOW_MS) {
+        const notifId = `sub_expired_${currentUser.subscriptionTier}_${currentUser.subscriptionExpiresAt}`;
+        if (!isAlreadyKnown(notifId)) {
+          candidateNotifications.push({
+            id: notifId,
+            type: 'SUBSCRIPTION_EXPIRED',
+            title: 'Votre forfait a expiré',
+            message: `Votre abonnement ${currentUser.subscriptionTier} est arrivé à échéance. Renouvelez-le pour continuer à bénéficier de vos avantages et du surclassement automatique.`,
+            timestamp: subExpMs,
+            badgeLabel: 'Forfait Expiré',
+            actionLabel: 'Renouveler',
+            onAction: () => onOpenSubscriptions && onOpenSubscriptions(),
+          });
+        }
       }
     }
 
