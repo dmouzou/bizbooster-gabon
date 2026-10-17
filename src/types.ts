@@ -200,7 +200,7 @@ export interface Ad {
   createdAt?: string; // ISO string
   publishedAt: string; // ISO string
   updatedAt?: string; // ISO string
-  expiresAt: string; // ISO string
+  expiresAt?: string; // ISO string
   status: 'ACTIVE' | 'EXPIRED' | 'PENDING_PAYMENT' | 'PENDING_REVIEW' | 'REJECTED' | 'SUSPENDED';
   moderationReason?: string;
   rejectionReason?: string; // Alias de moderationReason

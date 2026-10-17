@@ -706,6 +706,10 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     };
   }, [preGeneratedAdId, durationDays, photos.length, hasVideo, isBoostFeatured, requiresSubscription, selectedTierToBuy]);
 
+  const bill = useMemo(() => {
+    return calculateBill(durationDays, photos.length, hasVideo, currentUser?.subscriptionTier);
+  }, [durationDays, photos.length, hasVideo, currentUser?.subscriptionTier]);
+
   const totalBillCalculated = isExempt ? 0 : (serverQuote?.amount ?? 0);
 
   // File selection for photos (limit: max 5 photos total, max 10 Mo/image)
