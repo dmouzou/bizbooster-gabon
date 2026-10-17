@@ -183,6 +183,22 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
     } catch (e: any) {
       console.error(e);
       showAlert("Échec du rejet : " + (e?.message || 'Erreur réseau.'), 'error');
+      throw e;
+    }
+  };
+
+  const handleRejectExtension = async (adId: string, reason: string) => {
+    try {
+      const rejectExtCallable = httpsCallable<{ adId: string; reason: string }, { success: boolean }>(
+        functions,
+        'rejectExtension'
+      );
+      await rejectExtCallable({ adId, reason });
+      showAlert("Demande de prolongation refusée.", 'success');
+    } catch (e: any) {
+      console.error(e);
+      showAlert("Échec du refus de la prolongation : " + (e?.message || 'Erreur réseau.'), 'error');
+      throw e;
     }
   };
 
@@ -521,6 +537,7 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
         reports={reports}
         onApproveAd={handleApproveAd}
         onRejectAd={handleRejectAd}
+        onRejectExtension={handleRejectExtension}
         onDeleteAd={handleDeleteAd}
         onSelectAdDetail={setSelectedAd}
         onSwitchToFrontend={handleSwitchToFrontend}

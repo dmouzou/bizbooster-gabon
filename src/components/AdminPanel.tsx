@@ -59,9 +59,10 @@ interface AdminPanelProps {
   ads: Ad[];
   users?: UserProfile[];
   reports?: AdReport[];
-  onApproveAd: (adId: string) => void;
-  onRejectAd: (adId: string, reason: string) => void;
-  onDeleteAd: (adId: string) => void;
+  onApproveAd: (adId: string) => Promise<void> | void;
+  onRejectAd: (adId: string, reason: string) => Promise<void> | void;
+  onRejectExtension?: (adId: string, reason: string) => Promise<void> | void;
+  onDeleteAd: (adId: string) => Promise<void> | void;
   onSelectAdDetail: (ad: Ad) => void;
   onSwitchToFrontend: () => void;
   onToggleExemption?: (userId: string, isExempt: boolean) => Promise<void> | void;
@@ -82,6 +83,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   reports = [],
   onApproveAd,
   onRejectAd,
+  onRejectExtension,
   onDeleteAd,
   onSelectAdDetail,
   onSwitchToFrontend,
@@ -479,10 +481,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [visibleAdsCount, setVisibleAdsCount] = useState(50);
   const [visibleUsersCount, setVisibleUsersCount] = useState(50);
 
+  // B-11, B-12 : Verrou anti-double clic par identifiant
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const setBusy = (id: string, busy: boolean) => {
+    setBusyIds((prev) => {
+      const next = new Set(prev);
+      if (busy) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
   // Modal states
   const [rejectingAd, setRejectingAd] = useState<Ad | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [customRejectText, setCustomRejectText] = useState('');
+
+  // B-11 : Modal dédié au refus de la prolongation payée (maintient l'annonce ACTIVE)
+  const [rejectingExtensionAd, setRejectingExtensionAd] = useState<Ad | null>(null);
+  const [extensionRejectReason, setExtensionRejectReason] = useState('Paiement de prolongation non validé ou non conforme.');
+
+  // B-15 : Modal de résolution de signalement avec transmission explicite de notes
+  const [resolvingReport, setResolvingReport] = useState<AdReport | null>(null);
+  const [resolutionNoteInput, setResolutionNoteInput] = useState("Signalement vérifié et traité par l'équipe de modération.");
 
   // KYC review modal (B-12 : valeur initiale alignée sur KYC_PRESET_REASONS[0])
   const [previewKycUser, setPreviewKycUser] = useState<UserProfile | null>(null);
@@ -758,20 +779,233 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setIsLogoutConfirmOpen(true);
   };
 
-  const handleConfirmRejectAd = () => {
-    if (!rejectingAd) return;
-    const finalReason = customRejectText.trim() || rejectReason || 'Non-conformité aux règles de publication.';
-    onRejectAd(rejectingAd.id, finalReason);
-    setRejectingAd(null);
-    setRejectReason('');
-    setCustomRejectText('');
+  const handleApproveAdWithBusy = async (adId: string) => {
+    if (busyIds.has(adId)) return;
+    setBusy(adId, true);
+    try {
+      await onApproveAd(adId);
+    } catch (err: any) {
+      console.error('Erreur approbation:', err);
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'alert',
+        title: "Échec de l'approbation",
+        message: err.message || "Impossible d'approuver cette annonce.",
+      });
+    } finally {
+      setBusy(adId, false);
+    }
   };
 
-  const handleConfirmRejectKyc = () => {
+  const handleConfirmRejectAd = async () => {
+    if (!rejectingAd) return;
+    const adId = rejectingAd.id;
+    if (busyIds.has(adId)) return;
+    const finalReason = customRejectText.trim() || rejectReason || 'Non-conformité aux règles de publication.';
+    setBusy(adId, true);
+    try {
+      await onRejectAd(adId, finalReason);
+      setRejectingAd(null);
+      setRejectReason('');
+      setCustomRejectText('');
+    } catch (err: any) {
+      console.error('Erreur rejet annonce:', err);
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'alert',
+        title: 'Échec du rejet',
+        message: err.message || "Impossible de rejeter cette annonce.",
+      });
+    } finally {
+      setBusy(adId, false);
+    }
+  };
+
+  const handleConfirmRejectExtension = async () => {
+    if (!rejectingExtensionAd || !onRejectExtension) return;
+    const adId = rejectingExtensionAd.id;
+    if (busyIds.has(adId)) return;
+    const finalReason = extensionRejectReason.trim();
+    if (!finalReason) return;
+    setBusy(adId, true);
+    try {
+      await onRejectExtension(adId, finalReason);
+      setRejectingExtensionAd(null);
+    } catch (err: any) {
+      console.error('Erreur rejet extension:', err);
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'alert',
+        title: "Échec du refus de prolongation",
+        message: err.message || "Impossible de refuser cette prolongation.",
+      });
+    } finally {
+      setBusy(adId, false);
+    }
+  };
+
+  const handleApproveKycUser = (u: UserProfile) => {
+    if (busyIds.has(u.id)) return;
+    setAlertModalConfig({
+      isOpen: true,
+      type: 'confirm',
+      title: "Valider la pièce d'identité (KYC) ?",
+      message: `Confirmez-vous l'attribution du statut vérifié pour l'annonceur « ${u.name || u.contactPhone} » ? Le badge Annonceur Vérifié sera immédiatement actif.`,
+      onConfirm: async () => {
+        setBusy(u.id, true);
+        try {
+          if (onApproveKyc) await onApproveKyc(u.id);
+        } catch (err: any) {
+          console.error('Erreur approbation KYC:', err);
+          setAlertModalConfig({
+            isOpen: true,
+            type: 'alert',
+            title: 'Échec de validation KYC',
+            message: err.message || "Impossible de valider la pièce.",
+          });
+        } finally {
+          setBusy(u.id, false);
+        }
+      },
+    });
+  };
+
+  const handleConfirmRejectKyc = async () => {
     if (!rejectingKycUser || !onRejectKyc) return;
-    onRejectKyc(rejectingKycUser.id, kycRejectionReason);
-    setRejectingKycUser(null);
-    setKycRejectionReason('Document illisible ou tronqué.');
+    const uid = rejectingKycUser.id;
+    if (busyIds.has(uid)) return;
+    const finalReason = kycRejectionReason.trim();
+    if (!finalReason || finalReason.length < 5) {
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'alert',
+        title: 'Motif insuffisant',
+        message: 'Veuillez sélectionner ou renseigner un motif de rejet explicite (minimum 5 caractères).',
+      });
+      return;
+    }
+    setBusy(uid, true);
+    try {
+      await onRejectKyc(uid, finalReason);
+      setRejectingKycUser(null);
+      setKycRejectionReason(KYC_PRESET_REASONS[0]);
+    } catch (err: any) {
+      console.error('Erreur rejet KYC:', err);
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'alert',
+        title: 'Échec du rejet KYC',
+        message: err.message || "Impossible de rejeter ce document KYC.",
+      });
+    } finally {
+      setBusy(uid, false);
+    }
+  };
+
+  const handleToggleExemptionWithConfirm = (userId: string, userName: string, currentExempt: boolean) => {
+    if (busyIds.has(userId) || !onToggleExemption) return;
+    setAlertModalConfig({
+      isOpen: true,
+      type: 'confirm',
+      title: currentExempt ? 'Révoquer le statut Partenaire VIP ?' : 'Accorder le statut Partenaire VIP ?',
+      message: currentExempt
+        ? `Voulez-vous révoquer l'exonération des frais de publication pour « ${userName} » ?`
+        : `Voulez-vous attribuer l'exonération intégrale des frais de publication pour « ${userName} » ?`,
+      onConfirm: async () => {
+        setBusy(userId, true);
+        try {
+          await onToggleExemption(userId, !currentExempt);
+        } catch (err: any) {
+          setAlertModalConfig({
+            isOpen: true,
+            type: 'alert',
+            title: 'Erreur exonération',
+            message: err.message || "Impossible de modifier l'exonération.",
+          });
+        } finally {
+          setBusy(userId, false);
+        }
+      },
+    });
+  };
+
+  const handleUpdateSubscriptionWithConfirm = (userId: string, userName: string, currentTier: string, newTier: SubscriptionTier) => {
+    if (busyIds.has(userId) || currentTier === newTier || !onUpdateUserSubscription) return;
+    setAlertModalConfig({
+      isOpen: true,
+      type: 'confirm',
+      title: "Modifier l'abonnement partenaire ?",
+      message: `Confirmez-vous le passage du compte « ${userName} » de ${currentTier} vers le forfait ${newTier} ?`,
+      onConfirm: async () => {
+        setBusy(userId, true);
+        try {
+          await onUpdateUserSubscription(userId, newTier);
+        } catch (err: any) {
+          setAlertModalConfig({
+            isOpen: true,
+            type: 'alert',
+            title: 'Erreur abonnement',
+            message: err.message || "Impossible de modifier l'abonnement.",
+          });
+        } finally {
+          setBusy(userId, false);
+        }
+      },
+    });
+  };
+
+  const handleUpdateBoostersWithBusy = async (userId: string, count: number) => {
+    if (busyIds.has(userId) || !onUpdateUserBoosters) return;
+    setBusy(userId, true);
+    try {
+      await onUpdateUserBoosters(userId, count);
+    } catch (err: any) {
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'alert',
+        title: 'Erreur boosters',
+        message: err.message || 'Impossible de modifier le solde de boosters.',
+      });
+    } finally {
+      setBusy(userId, false);
+    }
+  };
+
+  const handleConfirmResolveReport = async () => {
+    if (!resolvingReport || !onResolveReport) return;
+    const reportId = resolvingReport.id;
+    if (busyIds.has(reportId)) return;
+    setBusy(reportId, true);
+    try {
+      await onResolveReport(reportId, resolutionNoteInput.trim());
+      setResolvingReport(null);
+    } catch (err: any) {
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'alert',
+        title: 'Erreur résolution',
+        message: err.message || 'Impossible de marquer ce signalement comme résolu.',
+      });
+    } finally {
+      setBusy(reportId, false);
+    }
+  };
+
+  const handleDismissReportWithBusy = async (reportId: string) => {
+    if (busyIds.has(reportId) || !onDismissReport) return;
+    setBusy(reportId, true);
+    try {
+      await onDismissReport(reportId, "Signalement classé sans suite après vérification.");
+    } catch (err: any) {
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'alert',
+        title: 'Erreur classement',
+        message: err.message || 'Impossible de classer ce signalement.',
+      });
+    } finally {
+      setBusy(reportId, false);
+    }
   };
 
   return (
@@ -1330,6 +1564,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               En Ligne sur Frontend
                             </span>
                           )}
+                          {ad.status === 'ACTIVE' && ad.pendingExtension && (
+                            <span className="bg-purple-100 text-purple-900 border border-purple-300 text-[10px] font-black uppercase px-2 py-0.5 rounded-sm flex items-center gap-1 shadow-2xs">
+                              <Clock className="w-3 h-3 text-purple-700" />
+                              Extension payée en attente ({ad.pendingExtension.days || 30}j)
+                            </span>
+                          )}
                           {isRejected && (
                             <span className="bg-red-100 text-red-900 border border-red-300 text-[10px] font-black uppercase px-2 py-0.5 rounded-sm flex items-center gap-1">
                               <XCircle className="w-3 h-3 text-red-700" />
@@ -1357,7 +1597,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             {ad.mainCategory}
                           </span>
 
-                          {ad.reportsCount && ad.reportsCount > 0 && (
+                          {(ad.reportsCount ?? 0) > 0 && (
                             <span className="bg-red-500 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-full flex items-center gap-1">
                               <AlertTriangle className="w-3 h-3" />
                               {ad.reportsCount} signalement(s)
@@ -1417,50 +1657,85 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <div className="flex flex-wrap lg:flex-col items-center justify-end gap-2 w-full lg:w-auto shrink-0 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-100">
                       <button
                         onClick={() => onSelectAdDetail(ad)}
-                        className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors flex items-center gap-1"
+                        className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
                       >
                         <Eye className="w-3.5 h-3.5" />
                         <span>Examiner</span>
                       </button>
 
-                      {isPending && (
+                      {/* B-11 : Traitement scindé entre prolongation payée et approbation classique */}
+                      {ad.status === 'ACTIVE' && ad.pendingExtension ? (
                         <>
                           <button
-                            onClick={() => onApproveAd(ad.id)}
-                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold transition-all shadow-sm flex items-center gap-1.5"
+                            disabled={busyIds.has(ad.id)}
+                            onClick={() => handleApproveAdWithBusy(ad.id)}
+                            className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                            title="Valider la prolongation et prolonger l'échéance"
                           >
                             <Check className="w-4 h-4" />
-                            <span>Approuver & Publier</span>
+                            <span>{busyIds.has(ad.id) ? 'Validation...' : "Valider l'extension"}</span>
+                          </button>
+                          <button
+                            disabled={busyIds.has(ad.id)}
+                            onClick={() => setRejectingExtensionAd(ad)}
+                            className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                            title="Refuser la prolongation (l'annonce reste en ligne)"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Refuser l'extension</span>
+                          </button>
+                          <button
+                            disabled={busyIds.has(ad.id)}
+                            onClick={() => {
+                              setRejectingAd(ad);
+                              setRejectReason(PRESET_REASONS[1]);
+                            }}
+                            className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                            title="Suspendre l'annonce entière"
+                          >
+                            Suspendre l'annonce
+                          </button>
+                        </>
+                      ) : isPending ? (
+                        <>
+                          <button
+                            disabled={busyIds.has(ad.id)}
+                            onClick={() => handleApproveAdWithBusy(ad.id)}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>{busyIds.has(ad.id) ? 'Approbation...' : 'Approuver & Publier'}</span>
                           </button>
 
                           <button
+                            disabled={busyIds.has(ad.id)}
                             onClick={() => {
                               setRejectingAd(ad);
                               setRejectReason(PRESET_REASONS[0]);
                             }}
-                            className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-1"
+                            className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
                           >
                             <X className="w-3.5 h-3.5" />
                             <span>Rejeter</span>
                           </button>
                         </>
-                      )}
-
-                      {isActive && (
+                      ) : isActive ? (
                         <button
+                          disabled={busyIds.has(ad.id)}
                           onClick={() => {
                             setRejectingAd(ad);
                             setRejectReason(PRESET_REASONS[1]);
                           }}
-                          className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold transition-colors"
+                          className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
                         >
                           Suspendre
                         </button>
-                      )}
+                      ) : null}
 
                       <button
+                        disabled={busyIds.has(ad.id)}
                         onClick={() => onDeleteAd(ad.id)}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
                         title="Supprimer définitivement"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -1730,8 +2005,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               {isSuper && onUpdateUserSubscription && (
                                 <select
                                   value={u.subscriptionTier || 'STANDARD'}
-                                  onChange={(e) => onUpdateUserSubscription(u.id, e.target.value as SubscriptionTier)}
-                                  className="text-[11px] font-bold bg-white border border-slate-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden cursor-pointer block"
+                                  disabled={busyIds.has(u.id)}
+                                  onChange={(e) => handleUpdateSubscriptionWithConfirm(u.id, u.name || u.contactPhone || 'Annonceur', u.subscriptionTier || 'STANDARD', e.target.value as SubscriptionTier)}
+                                  className="text-[11px] font-bold bg-white border border-slate-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden cursor-pointer block disabled:opacity-50"
                                   title="Modifier ou révoquer le forfait d'abonnement (Super Admin)"
                                 >
                                   <option value="STANDARD">Standard (Sans forfait)</option>
@@ -1761,8 +2037,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                 <div className="flex items-center gap-1 pt-0.5">
                                   <button
                                     type="button"
-                                    onClick={() => onUpdateUserBoosters(u.id, Math.max(0, (u.freeBoostsRemaining || 0) - 1))}
-                                    disabled={(u.freeBoostsRemaining || 0) <= 0}
+                                    onClick={() => handleUpdateBoostersWithBusy(u.id, Math.max(0, (u.freeBoostsRemaining || 0) - 1))}
+                                    disabled={busyIds.has(u.id) || (u.freeBoostsRemaining || 0) <= 0}
                                     className="w-6 h-6 rounded-md bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed font-black text-xs flex items-center justify-center cursor-pointer"
                                     title="Diminuer de 1 booster (Super Admin)"
                                   >
@@ -1770,8 +2046,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => onUpdateUserBoosters(u.id, Math.min(20, (u.freeBoostsRemaining || 0) + 1))}
-                                    disabled={(u.freeBoostsRemaining || 0) >= 20}
+                                    onClick={() => handleUpdateBoostersWithBusy(u.id, Math.min(20, (u.freeBoostsRemaining || 0) + 1))}
+                                    disabled={busyIds.has(u.id) || (u.freeBoostsRemaining || 0) >= 20}
                                     className="w-6 h-6 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-800 disabled:opacity-30 disabled:cursor-not-allowed font-black text-xs flex items-center justify-center cursor-pointer border border-emerald-200"
                                     title="Ajouter 1 booster (Super Admin)"
                                   >
@@ -1779,8 +2055,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => onUpdateUserBoosters(u.id, Math.min(20, (u.freeBoostsRemaining || 0) + 5))}
-                                    disabled={(u.freeBoostsRemaining || 0) >= 20}
+                                    onClick={() => handleUpdateBoostersWithBusy(u.id, Math.min(20, (u.freeBoostsRemaining || 0) + 5))}
+                                    disabled={busyIds.has(u.id) || (u.freeBoostsRemaining || 0) >= 20}
                                     className="px-1.5 h-6 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 disabled:opacity-30 disabled:cursor-not-allowed font-black text-[10px] flex items-center justify-center cursor-pointer border border-amber-200"
                                     title="Ajouter 5 boosters (max 20) (Super Admin)"
                                   >
@@ -1913,8 +2189,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                 {/* Toggle Exemption Button (Super Admin Only) */}
                                 {isSuper && onToggleExemption && (
                                   <button
-                                    onClick={() => onToggleExemption(u.id, !isExempt)}
-                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                                    disabled={busyIds.has(u.id)}
+                                    onClick={() => handleToggleExemptionWithConfirm(u.id, u.name || u.contactPhone || 'Annonceur', isExempt)}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border cursor-pointer disabled:opacity-50 ${
                                       isExempt
                                         ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
                                         : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
@@ -1930,8 +2207,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                   <>
                                     {onApproveKyc && (
                                       <button
-                                        onClick={() => onApproveKyc(u.id)}
-                                        className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
+                                        disabled={busyIds.has(u.id)}
+                                        onClick={() => handleApproveKycUser(u)}
+                                        className="p-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg transition-colors cursor-pointer"
                                         title="Valider la pièce d'identité"
                                       >
                                         <Check className="w-3.5 h-3.5" />
@@ -1939,8 +2217,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     )}
                                     {onRejectKyc && (
                                       <button
+                                        disabled={busyIds.has(u.id)}
                                         onClick={() => setRejectingKycUser(u)}
-                                        className="p-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                                        className="p-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg transition-colors cursor-pointer"
                                         title="Rejeter la pièce"
                                       >
                                         <X className="w-3.5 h-3.5" />
@@ -2205,8 +2484,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <>
                           {onDeleteReportedAd && relatedAd && (
                             <button
+                              disabled={busyIds.has(report.id)}
                               onClick={() => onDeleteReportedAd(report.adId, report.id)}
-                              className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-extrabold transition-all shadow-xs flex items-center gap-1.5"
+                              className="px-3.5 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                               <span>Supprimer l'annonce</span>
@@ -2215,8 +2495,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
                           {onResolveReport && (
                             <button
-                              onClick={() => onResolveReport(report.id)}
-                              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1"
+                              disabled={busyIds.has(report.id)}
+                              onClick={() => setResolvingReport(report)}
+                              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer"
                             >
                               <Check className="w-3.5 h-3.5" />
                               <span>Résoudre</span>
@@ -2225,8 +2506,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
                           {onDismissReport && (
                             <button
-                              onClick={() => onDismissReport(report.id)}
-                              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors"
+                              disabled={busyIds.has(report.id)}
+                              onClick={() => handleDismissReportWithBusy(report.id)}
+                              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-600 rounded-xl text-xs font-bold transition-colors cursor-pointer"
                             >
                               Classer sans suite
                             </button>
@@ -3447,17 +3729,131 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 {onApproveKyc && (
                   <button
                     type="button"
+                    disabled={busyIds.has(previewKycUser.id)}
                     onClick={() => {
-                      onApproveKyc(previewKycUser.id);
+                      handleApproveKycUser(previewKycUser);
                       setPreviewKycUser(null);
                     }}
-                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-sm transition-all flex items-center gap-1.5"
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     <Check className="w-4 h-4" />
-                    <span>Valider l'Identité</span>
+                    <span>{busyIds.has(previewKycUser.id) ? 'Traitement...' : "Valider l'Identité"}</span>
                   </button>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 1B: REFUSER L'EXTENSION (B-11) */}
+      {rejectingExtensionAd && (
+        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="bg-rose-900 text-white p-5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-300" />
+                <h3 className="font-extrabold text-base">Refuser la demande d'extension</h3>
+              </div>
+              <button
+                onClick={() => setRejectingExtensionAd(null)}
+                className="text-white/80 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <span className="text-xs text-slate-500">Annonce concernée :</span>
+                <p className="font-extrabold text-slate-900 text-sm">{rejectingExtensionAd.title}</p>
+                <p className="text-xs text-slate-600 mt-1">
+                  💡 <strong>Important :</strong> Le refus de la prolongation ne supprime ni ne suspend l'annonce. Celle-ci restera en ligne jusqu'à son échéance normale.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Motif du refus de l'extension :
+                </label>
+                <input
+                  type="text"
+                  value={extensionRejectReason}
+                  onChange={(e) => setExtensionRejectReason(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
+                  placeholder="Ex: Paiement non confirmé, référence introuvable..."
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setRejectingExtensionAd(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  disabled={busyIds.has(rejectingExtensionAd.id)}
+                  onClick={handleConfirmRejectExtension}
+                  className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-extrabold rounded-xl shadow-md transition-all cursor-pointer"
+                >
+                  {busyIds.has(rejectingExtensionAd.id) ? 'Traitement...' : "Confirmer le refus de prolongation"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: RESOLUTION DE SIGNALEMENT (B-15) */}
+      {resolvingReport && (
+        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-emerald-600">
+                <CheckCircle2 className="w-5 h-5" />
+                <h3 className="font-extrabold text-base text-slate-900">Résoudre le signalement</h3>
+              </div>
+              <button onClick={() => setResolvingReport(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600">
+              Signalement pour l'annonce <strong>« {resolvingReport.adTitle || resolvingReport.adId} »</strong>. Veuillez consigner la note de résolution administrative.
+            </p>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                Note de résolution :
+              </label>
+              <textarea
+                value={resolutionNoteInput}
+                onChange={(e) => setResolutionNoteInput(e.target.value)}
+                rows={3}
+                className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                placeholder="Ex: Contact vendeur vérifié, faux positif, annonce conforme..."
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setResolvingReport(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={busyIds.has(resolvingReport.id)}
+                onClick={handleConfirmResolveReport}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black rounded-xl shadow-sm cursor-pointer"
+              >
+                {busyIds.has(resolvingReport.id) ? 'Enregistrement...' : 'Confirmer la résolution'}
+              </button>
             </div>
           </div>
         </div>

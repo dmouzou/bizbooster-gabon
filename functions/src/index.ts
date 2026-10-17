@@ -3207,6 +3207,7 @@ export {
   resolveReport,
   dismissReport,
   setExemption,
+  rejectExtension,
 } from "./moderation";
 export { registerView } from "./registerView";
 export { reportAd } from "./reports";

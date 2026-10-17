@@ -119,6 +119,70 @@ export const rejectAd = onCall(CALLABLE_OPTIONS, async (request) => {
 });
 
 /**
+ * 1b. rejectExtension (B-11) : Rejet d'une extension payée sans affecter le statut ACTIVE de l'annonce
+ */
+export const rejectExtension = onCall(CALLABLE_OPTIONS, async (request) => {
+  const admin = await assertAdmin(request.auth);
+  const { adId, reason } = request.data || {};
+  if (!adId || typeof adId !== 'string') {
+    throw new HttpsError('invalid-argument', "Identifiant d'annonce requis.");
+  }
+  const cleanReason = String(reason || "Extension refusée par la modération").trim();
+
+  const db = getFirestore();
+  const adRef = db.collection('ads').doc(adId);
+  const nowIso = new Date().toISOString();
+
+  await db.runTransaction(async (tx) => {
+    const adDoc = await tx.get(adRef);
+    if (!adDoc.exists) {
+      throw new HttpsError('not-found', 'Annonce introuvable.');
+    }
+    const ad = adDoc.data() || {};
+    if (!ad.pendingExtension) {
+      return; // Déjà traitée
+    }
+
+    tx.update(adRef, {
+      pendingExtension: FieldValue.delete(),
+      updatedAt: nowIso,
+    });
+
+    // Journal d'audit
+    const logRef = db.collection('moderation_logs').doc();
+    tx.set(logRef, {
+      action: 'REJECT_EXTENSION',
+      targetId: adId,
+      adminId: admin.uid,
+      adminEmail: admin.email || null,
+      reason: cleanReason,
+      adTitle: ad.title || 'Sans titre',
+      timestamp: FieldValue.serverTimestamp(),
+    });
+
+    // Notification utilisateur
+    if (ad.userId) {
+      const notifId = `ext_rej_${adId}_${nowIso}`;
+      const notifRef = db.collection('user_notifications').doc(`${ad.userId}_${notifId}`);
+      tx.set(notifRef, {
+        id: notifId,
+        notifId,
+        userId: ad.userId,
+        type: 'AD_EXPIRING_SOON',
+        title: 'Prolongation non accordée',
+        message: `Votre demande d'extension pour l'annonce « ${ad.title || ''} » n'a pas été validée. Motif : ${cleanReason}. Votre annonce reste active jusqu'à son échéance initiale.`,
+        adId,
+        dispatchedAt: nowIso,
+        timestamp: Date.now(),
+        status: 'DISPATCHED',
+      });
+    }
+  });
+
+  return { success: true, adId };
+});
+
+/**
  * 2. deleteAd : Suppression d'annonce côté serveur avec résolution des signalements et audit
  */
 export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
