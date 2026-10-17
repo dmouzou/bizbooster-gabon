@@ -135,9 +135,7 @@ service cloud.firestore {
                         && request.resource.data.userId == request.auth.uid
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(ownerLockedKeys())
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(rankingKeys())
-                        && !touchesProtectedAdFields())
-                    || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportsCount'])
-                        && request.resource.data.reportsCount == resource.data.reportsCount + 1);
+                        && !touchesProtectedAdFields());
 
       // Suppression : Admin ou propriétaire
       allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
@@ -180,7 +178,7 @@ service cloud.firestore {
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['idDocumentUrl'])
                             || request.resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') == 'PENDING')
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['phone'])
-                            || request.resource.data.phone == resource.data.phone));
+                            || request.resource.data.phone == resource.data.get('phone', '')));
 
       allow delete: if isSuperAdmin();
     }
@@ -189,8 +187,14 @@ service cloud.firestore {
     // FRAUD REPORTS
     // ---------------------------------------------------------------
     match /reports/{reportId} {
-      allow create: if request.resource.data.adId is string
-                    && request.resource.data.reason is string;
+      allow create: if isSignedIn()
+                    && reportId == request.resource.data.adId + '_' + request.auth.uid
+                    && request.resource.data.keys().hasOnly(['adId', 'reason', 'details', 'reporterId', 'reporterPhone', 'status', 'createdAt'])
+                    && request.resource.data.status == 'PENDING'
+                    && request.resource.data.reporterId == request.auth.uid
+                    && request.resource.data.createdAt == request.time
+                    && request.resource.data.reason is string && request.resource.data.reason.size() <= 200
+                    && request.resource.data.get('details', '').size() <= 2000;
 
       allow read, update, delete: if isAdmin();
     }
@@ -199,15 +203,15 @@ service cloud.firestore {
     // MODERATION LOGS (admin only)
     // ---------------------------------------------------------------
     match /moderation_logs/{logId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow write: if false; // écrit par les Cloud Functions
     }
 
     // ---------------------------------------------------------------
-    // SYSTEM COUNTERS (lecture publique, écriture admin/serveur)
+    // SYSTEM COUNTERS (super admin uniquement)
     // ---------------------------------------------------------------
     match /system_counters/{counterId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read, write: if isSuperAdmin();
     }
 
     // ---------------------------------------------------------------

@@ -6,7 +6,7 @@ import {
   RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import * as fs from 'fs';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 const PROJECT_ID = 'bizbooster-gabon-test';
 
@@ -335,6 +335,85 @@ describe('Firestore Security Rules (Phase 1)', () => {
     await assertFails(
       updateDoc(profileRef, {
         phone: '+24177999999',
+      })
+    );
+  });
+
+  // 9. Étape 1.3 : Signalements et compteurs (S-04, S-07)
+  it('rapport anonyme refusé, second rapport ou incrément public refusé, system_counters super admin only', async () => {
+    // 1. Rapport anonyme -> refusé
+    const unauthDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(
+      setDoc(doc(unauthDb, 'reports', 'ad_1_anon'), {
+        adId: 'ad_1',
+        reason: 'Arnaque',
+        details: 'Détails...',
+        reporterId: 'anon',
+        reporterPhone: '+24100000000',
+        status: 'PENDING',
+        createdAt: new Date(),
+      })
+    );
+
+    // 2. Rapport authentifié avec bon ID adId_uid et status PENDING -> réussi
+    const reporterDb = testEnv.authenticatedContext('reporter_123').firestore();
+    const validReportRef = doc(reporterDb, 'reports', 'ad_1_reporter_123');
+    await assertSucceeds(
+      setDoc(validReportRef, {
+        adId: 'ad_1',
+        reason: 'Arnaque financière',
+        details: 'Demande un transfert Mobile Money préalable',
+        reporterId: 'reporter_123',
+        reporterPhone: '+24160000000',
+        status: 'PENDING',
+        createdAt: serverTimestamp(),
+      })
+    );
+
+    // 3. Rapport avec mauvais ID (pas adId_uid) -> refusé
+    const invalidIdReportRef = doc(reporterDb, 'reports', 'random_id');
+    await assertFails(
+      setDoc(invalidIdReportRef, {
+        adId: 'ad_1',
+        reason: 'Arnaque',
+        details: 'Détails...',
+        reporterId: 'reporter_123',
+        reporterPhone: '+24160000000',
+        status: 'PENDING',
+        createdAt: new Date(),
+      })
+    );
+
+    // 4. Incrément public de reportsCount sur une annonce -> refusé
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'ads', 'ad_reported'), {
+        userId: 'other_user',
+        title: 'Annonce légitime',
+        status: 'ACTIVE',
+        reportsCount: 0,
+      });
+    });
+
+    const adRef = doc(reporterDb, 'ads', 'ad_reported');
+    await assertFails(
+      updateDoc(adRef, {
+        reportsCount: 1,
+      })
+    );
+
+    // 5. system_counters : écriture par un admin simple -> refusé
+    const adminDb = testEnv.authenticatedContext('admin_simple', { role: 'ADMIN' }).firestore();
+    await assertFails(
+      setDoc(doc(adminDb, 'system_counters', 'scalability_metrics'), {
+        totalSmsSent: 0,
+      })
+    );
+
+    // 6. system_counters : écriture par un SUPER_ADMIN -> réussi
+    const superAdminDb = testEnv.authenticatedContext('super_admin_user', { role: 'SUPER_ADMIN' }).firestore();
+    await assertSucceeds(
+      setDoc(doc(superAdminDb, 'system_counters', 'scalability_metrics'), {
+        totalSmsSent: 0,
       })
     );
   });

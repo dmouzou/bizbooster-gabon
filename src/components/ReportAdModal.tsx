@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, AlertTriangle, ShieldAlert, CheckCircle2, RefreshCw } from 'lucide-react';
-import { addDoc, collection, doc, updateDoc, increment } from 'firebase/firestore';
-import { db } from '../services/firebase';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from '../services/firebase';
 import { Ad } from '../types';
 
 interface ReportAdModalProps {
@@ -38,6 +38,11 @@ export const ReportAdModal: React.FC<ReportAdModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!auth.currentUser) {
+      setError('Vous devez être connecté avec votre compte pour signaler une annonce.');
+      return;
+    }
+
     if (!details.trim()) {
       setError('Veuillez préciser la raison de votre signalement.');
       return;
@@ -47,29 +52,18 @@ export const ReportAdModal: React.FC<ReportAdModalProps> = ({
     setError(null);
 
     try {
-      // 1. Add document to reports collection
-      await addDoc(collection(db, 'reports'), {
+      const reportId = `${ad.id}_${auth.currentUser.uid}`;
+      const reportRef = doc(db, 'reports', reportId);
+
+      await setDoc(reportRef, {
         adId: ad.id,
-        adTitle: ad.title,
-        adCategory: ad.mainCategory,
-        adPrice: ad.price,
-        adOwnerName: ad.contactName,
-        adOwnerPhone: ad.contactPhone,
         reason,
         details: details.trim(),
-        reporterPhone: reporterPhone.trim() || 'Non renseigné',
-        createdAt: new Date().toISOString(),
+        reporterId: auth.currentUser.uid,
+        reporterPhone: reporterPhone.trim() || auth.currentUser.phoneNumber || 'Non renseigné',
         status: 'PENDING',
+        createdAt: serverTimestamp(),
       });
-
-      // 2. Increment reportsCount on the ad
-      try {
-        await updateDoc(doc(db, 'ads', ad.id), {
-          reportsCount: increment(1),
-        });
-      } catch {
-        // Non-blocking if permission restricted
-      }
 
       setSubmitted(true);
       if (onReportSubmitted) onReportSubmitted();
@@ -81,7 +75,11 @@ export const ReportAdModal: React.FC<ReportAdModalProps> = ({
       }, 2500);
     } catch (err: any) {
       console.error('Failed to submit report:', err);
-      setError('Impossible d\'enregistrer le signalement. Veuillez vérifier votre connexion.');
+      if (err?.code === 'permission-denied') {
+        setError('Signalement refusé ou déjà enregistré pour cette annonce.');
+      } else {
+        setError('Impossible d\'enregistrer le signalement. Veuillez vérifier votre connexion.');
+      }
     } finally {
       setIsSubmitting(false);
     }
