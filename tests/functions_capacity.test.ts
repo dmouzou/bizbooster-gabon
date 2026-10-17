@@ -56,3 +56,39 @@ describe('Étape 7.1 : Capacité, Quotas et Paramètres Cloud Functions (C-04, S
     expect(content).toContain('100%');
   });
 });
+
+describe('Étape 7.2 : Validation d intégration, scripts de déploiement et recette finale', () => {
+  const deploymentGuidePath = path.resolve(__dirname, '../docs/deploiement_et_recette_finale.md');
+  const frontendDistHtml = path.resolve(__dirname, '../dist-frontend/index.html');
+  const adminDistHtml = path.resolve(__dirname, '../dist-admin/index.html');
+
+  it('fournit le guide de déploiement complet et la checklist de recette dans docs/deploiement_et_recette_finale.md', () => {
+    expect(fs.existsSync(deploymentGuidePath)).toBe(true);
+    const content = fs.readFileSync(deploymentGuidePath, 'utf-8');
+
+    // Vérifie les 7 phases
+    expect(content).toContain('Phase 0');
+    expect(content).toContain('Phase 1');
+    expect(content).toContain('Phase 2');
+    expect(content).toContain('Phase 3');
+    expect(content).toContain('Phase 4');
+    expect(content).toContain('Phase 5');
+    expect(content).toContain('Phase 6');
+    expect(content).toContain('Phase 7');
+
+    // Vérifie les commandes de déploiement
+    expect(content).toContain('firebase deploy --only firestore:rules,firestore:indexes');
+    expect(content).toContain('firebase deploy --only storage');
+    expect(content).toContain('firebase deploy --only functions');
+    expect(content).toContain('firebase deploy --only hosting');
+
+    // Vérifie la checklist de recette
+    expect(content).toContain('Checklist de Recette Finale Post-Déploiement');
+    expect(content).toContain('PERMISSION_DENIED');
+  });
+
+  it('confirme l existence des bundles de production pour le frontend et l admin', () => {
+    expect(fs.existsSync(frontendDistHtml)).toBe(true);
+    expect(fs.existsSync(adminDistHtml)).toBe(true);
+  });
+});
