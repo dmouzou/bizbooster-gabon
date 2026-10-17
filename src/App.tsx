@@ -2290,7 +2290,7 @@ function cleanUndefined(obj: any): any {
         }}
       />
 
-      {/* 10. Notifications In-App Système (Modale en haut d'écran, max 30s) */}
+      {/* 10. Notifications In-App Système (Modale en haut d'écran, max 15s) */}
       <InAppNotificationModal
         currentUser={currentUser}
         userAds={userAds}

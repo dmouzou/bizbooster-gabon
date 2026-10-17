@@ -215,7 +215,7 @@ export function getNotificationTheme(type: NotificationType): NotificationVisual
   }
 }
 
-const MAX_DURATION_MS = 30000; // Plafond maximal de 30 secondes (au lieu de 6s)
+export const MAX_DURATION_MS = 15000; // Plafond maximal de 15 secondes
 
 export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
   currentUser,
@@ -615,7 +615,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
     }
   }, [isSyncComplete, currentUser?.id, userAds]);
 
-  // 5. Compte à rebours sécurisé plafonné à 30 secondes avec pause au survol
+  // 5. Compte à rebours sécurisé plafonné à 15 secondes avec pause au survol
   useEffect(() => {
     if (!activeNotification) return;
 
@@ -685,7 +685,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
                   {theme.categoryLabel}
                 </span>
 
-                {/* Indicateur de délai de lecture (30s) avec pause */}
+                {/* Indicateur de délai de lecture (15s) avec pause */}
                 {isHovered ? (
                   <span className="text-[10px] bg-slate-800/90 text-amber-300 border border-amber-400/40 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shadow-2xs animate-pulse">
                     <Pause className="w-2.5 h-2.5" />
@@ -725,7 +725,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
             <button
               onClick={dismissActive}
               className="absolute top-3.5 right-3.5 text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-white/10 transition-colors cursor-pointer"
-              title="Fermer la notification (compte à rebours 30s)"
+              title="Fermer la notification (compte à rebours 15s)"
               aria-label="Fermer"
             >
               <X className="w-4 h-4" />
@@ -733,7 +733,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
           </div>
         </div>
 
-        {/* Barre de progression fluide (Plafond 30 secondes max) */}
+        {/* Barre de progression fluide (Plafond 15 secondes max) */}
         <div className="h-1.5 bg-slate-950/80 w-full overflow-hidden">
           <div
             className={`h-full transition-all ease-linear ${theme.progressBarClass}`}
