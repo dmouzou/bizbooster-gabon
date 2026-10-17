@@ -43,6 +43,7 @@ import { UserDashboard } from './components/UserDashboard';
 import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { LogoutConfirmModal } from './components/LogoutConfirmModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { isAdOwner } from './utils/formatters';
 import { sortAdsPersonalized, sortAdsRecent, sortAdsByPriceAsc, recordCategoryInterest } from './utils/personalization';
 import { isAdVipCornerEligible, VIP_CORNER_INFO } from './utils/vipCorner';
@@ -2592,8 +2593,8 @@ export default function App() {
       );
     }
 
-    // Garde d'accès dans le routeur (S-11) : Si non admin, écran refusé SANS charger le chunk AdminApp
-    if (!currentUser || !isUserAdmin(currentUser)) {
+    // Garde d'accès dans le routeur (S-11) : Un compte connecté non-admin est refusé sans charger le chunk AdminApp
+    if (currentUser && !isUserAdmin(currentUser)) {
       return (
         <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center select-none">
           <div className="w-16 h-16 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mb-5 shadow-xl">
@@ -2614,16 +2615,18 @@ export default function App() {
     }
 
     return (
-      <React.Suspense
-        fallback={
-          <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white p-6">
-            <div className="w-10 h-10 border-4 border-amber-400 border-t-transparent rounded-full animate-spin mb-4" />
-            <p className="text-sm font-semibold text-slate-300">Chargement du Cockpit Administrateur...</p>
-          </div>
-        }
-      >
-        <AdminApp currentUser={currentUser} onSwitchToFrontend={switchToFrontend} />
-      </React.Suspense>
+      <ErrorBoundary fallbackTitle="Anomalie d'affichage dans le Cockpit Administrateur" onReset={switchToFrontend}>
+        <React.Suspense
+          fallback={
+            <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white p-6">
+              <div className="w-10 h-10 border-4 border-amber-400 border-t-transparent rounded-full animate-spin mb-4" />
+              <p className="text-sm font-semibold text-slate-300">Chargement du Cockpit Administrateur...</p>
+            </div>
+          }
+        >
+          <AdminApp currentUser={currentUser} onSwitchToFrontend={switchToFrontend} />
+        </React.Suspense>
+      </ErrorBoundary>
     );
   }
 

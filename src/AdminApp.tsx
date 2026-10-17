@@ -18,6 +18,7 @@ import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { getFrontendUrl } from './utils/navigation';
 import { AppAlertModal, AlertModalConfig } from './components/AppAlertModal';
 import { BizboosterLogo } from './components/BizboosterLogo';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 type AdminStatus = 'loading' | 'signedOut' | 'denied' | 'admin';
 
@@ -541,7 +542,10 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
   }
 
   return (
-    <>
+    <ErrorBoundary
+      fallbackTitle="Anomalie d'affichage dans le Cockpit Administrateur"
+      onReset={handleSwitchToFrontend}
+    >
       <AdminPanel
         currentUser={currentAdmin}
         ads={allAds}
@@ -586,6 +590,6 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
         config={alertModalConfig}
         onClose={() => setAlertModalConfig(null)}
       />
-    </>
+    </ErrorBoundary>
   );
 }
