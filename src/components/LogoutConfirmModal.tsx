@@ -20,6 +20,17 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
   confirmText = 'Oui, me déconnecter',
   cancelText = 'Annuler',
 }) => {
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
@@ -27,6 +38,9 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
       <div
         className="bg-white w-full max-w-sm rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative my-auto animate-in zoom-in-95 p-6 space-y-4"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logout-confirm-title"
       >
         <div className="flex items-start justify-between">
           <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center shrink-0">
@@ -34,14 +48,15 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+            aria-label="Fermer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <div>
-          <h3 className="text-lg font-black text-slate-900">{title}</h3>
+          <h3 id="logout-confirm-title" className="text-lg font-black text-slate-900">{title}</h3>
           <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">{message}</p>
         </div>
 

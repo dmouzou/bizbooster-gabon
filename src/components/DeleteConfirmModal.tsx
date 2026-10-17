@@ -22,6 +22,17 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   confirmText = 'Supprimer définitivement',
   cancelText = 'Annuler',
 }) => {
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
@@ -29,6 +40,9 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
       <div
         className="bg-white w-full max-w-sm rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative my-auto animate-in zoom-in-95 p-6 space-y-4"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-confirm-title"
       >
         <div className="flex items-start justify-between">
           <div className="w-12 h-12 rounded-2xl bg-red-50 text-red-600 border border-red-200 flex items-center justify-center shrink-0">
@@ -37,6 +51,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
           <button
             onClick={onClose}
             className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+            aria-label="Fermer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -46,7 +61,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
           <span className="text-[10px] font-black uppercase tracking-wider text-red-600 bg-red-50 px-2 py-0.5 rounded-sm border border-red-200 inline-block mb-1.5">
             BIZBOOSTER Gabon
           </span>
-          <h3 className="text-lg font-black text-slate-900 leading-snug">{title}</h3>
+          <h3 id="delete-confirm-title" className="text-lg font-black text-slate-900 leading-snug">{title}</h3>
           {adTitle && (
             <p className="text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl p-2.5 my-2 truncate">
               « {adTitle} »

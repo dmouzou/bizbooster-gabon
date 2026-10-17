@@ -228,6 +228,31 @@ export async function runBackfill(isCommit = false) {
       statsViews++;
     }
 
+    // 5. Alignement des champs canoniques (I-02)
+    if (adData.rejectionReason && !adData.moderationReason) {
+      original.moderationReason = adData.moderationReason;
+      updates.moderationReason = adData.rejectionReason;
+      reasons.push(`moderationReason aligné depuis rejectionReason`);
+    }
+    if (adData.paymentReference && !adData.transactionRef) {
+      original.transactionRef = adData.transactionRef;
+      updates.transactionRef = adData.paymentReference;
+      reasons.push(`transactionRef aligné depuis paymentReference`);
+    }
+    if (adData.necroDeceasedName && !adData.necrologieData?.deceasedName) {
+      original.necrologieData = adData.necrologieData;
+      updates.necrologieData = {
+        ministry: adData.necroMinistry || 'Autre',
+        deceasedName: adData.necroDeceasedName,
+        ceremonyDate: adData.necroCeremonyDate,
+        ceremonyLocation: adData.necroCeremonyLocation,
+        familyContact: adData.necroFamilyContact,
+        funeralProgram: adData.necroFuneralProgram,
+        ...adData.necrologieData,
+      };
+      reasons.push(`necrologieData structuré synchronisé depuis necro*`);
+    }
+
     if (Object.keys(updates).length > 0) {
       recordsToUpdate.push({
         adId,

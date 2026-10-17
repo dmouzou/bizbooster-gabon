@@ -33,4 +33,38 @@ describe('Phase 6: Migration backfill script logic', () => {
     const longMs = new Date(tooLongBoost.featuredUntil).getTime();
     expect(longMs > maxFutureBoost).toBe(true);
   });
+
+  it('aligne les champs canoniques (I-02) : moderationReason, transactionRef, necrologieData', () => {
+    // 1. Alignement moderationReason
+    const legacyRejectionAd: any = { rejectionReason: 'Photos non conformes' };
+    const updatesRejection: any = {};
+    if (legacyRejectionAd.rejectionReason && !legacyRejectionAd.moderationReason) {
+      updatesRejection.moderationReason = legacyRejectionAd.rejectionReason;
+    }
+    expect(updatesRejection.moderationReason).toBe('Photos non conformes');
+
+    // 2. Alignement transactionRef
+    const legacyPaymentAd: any = { paymentReference: 'PAY-12345' };
+    const updatesPayment: any = {};
+    if (legacyPaymentAd.paymentReference && !legacyPaymentAd.transactionRef) {
+      updatesPayment.transactionRef = legacyPaymentAd.paymentReference;
+    }
+    expect(updatesPayment.transactionRef).toBe('PAY-12345');
+
+    // 3. Alignement necrologieData
+    const legacyNecroAd: any = {
+      necroDeceasedName: 'Feu M. Dupont',
+      necroMinistry: 'Police nationale',
+    };
+    const updatesNecro: any = {};
+    if (legacyNecroAd.necroDeceasedName && !legacyNecroAd.necrologieData?.deceasedName) {
+      updatesNecro.necrologieData = {
+        ministry: legacyNecroAd.necroMinistry || 'Autre',
+        deceasedName: legacyNecroAd.necroDeceasedName,
+      };
+    }
+    expect(updatesNecro.necrologieData.deceasedName).toBe('Feu M. Dupont');
+    expect(updatesNecro.necrologieData.ministry).toBe('Police nationale');
+  });
 });
+

@@ -135,6 +135,9 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
       <div
         className="app-modal-dialog bg-white max-w-3xl rounded-3xl overflow-hidden shadow-2xl border border-slate-300/80 flex flex-col animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ad-detail-title"
       >
         {/* Modal Header */}
         <div className="px-4 sm:px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 gap-2 shrink-0">
@@ -176,8 +179,9 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
 
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
               id="close-detail-modal"
+              aria-label="Fermer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -245,7 +249,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
               </div>
             </div>
 
-            <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight leading-snug">
+            <h2 id="ad-detail-title" className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight leading-snug">
               {ad.title}
             </h2>
 
