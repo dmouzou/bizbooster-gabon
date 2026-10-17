@@ -42,7 +42,7 @@ export async function assertSuperAdmin(auth: any): Promise<{ uid: string; email?
 }
 
 const CALLABLE_OPTIONS = {
-  region: 'europe-west1',
+  region: process.env.FUNCTION_REGION || 'us-central1',
   maxInstances: 5,
   memory: '256MiB' as const,
   timeoutSeconds: 30,

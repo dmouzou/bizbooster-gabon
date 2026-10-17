@@ -2,7 +2,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 const CALLABLE_OPTIONS = {
-  region: 'europe-west1',
+  region: process.env.FUNCTION_REGION || 'us-central1',
   maxInstances: 10,
   memory: '256MiB' as const,
   timeoutSeconds: 20,

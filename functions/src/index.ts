@@ -1,3 +1,4 @@
+import {setGlobalOptions} from "firebase-functions/v2";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {
   onDocumentCreated,
@@ -22,6 +23,15 @@ import {
   PriceContext,
   Quote,
 } from "./pricing";
+
+export const FUNCTION_REGION = process.env.FUNCTION_REGION || "us-central1";
+
+setGlobalOptions({
+  region: FUNCTION_REGION,
+  maxInstances: 10,
+  memory: "256MiB",
+  timeoutSeconds: 60,
+});
 
 initializeApp();
 
