@@ -1,50 +1,50 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 /**
  * Garde d'authentification et de rôle pour la modération côté serveur (Phase 3 - Étape 3.1)
  */
 export async function assertAdmin(auth: any): Promise<{ uid: string; email?: string; isSuperAdmin: boolean }> {
   if (!auth) {
-    throw new HttpsError('unauthenticated', 'Authentification requise.');
+    throw new HttpsError("unauthenticated", "Authentification requise.");
   }
   const role = auth.token?.role;
-  if (role === 'SUPER_ADMIN' || role === 'SUPER ADMIN') {
+  if (role === "SUPER_ADMIN" || role === "SUPER ADMIN") {
     return { uid: auth.uid, email: auth.token?.email, isSuperAdmin: true };
   }
-  if (role === 'ADMIN') {
+  if (role === "ADMIN") {
     return { uid: auth.uid, email: auth.token?.email, isSuperAdmin: false };
   }
 
   // Repli sécurisé sur le document Firestore si le claim n'est pas encore rechargé
   const db = getFirestore();
-  const userSnap = await db.collection('users').doc(auth.uid).get();
+  const userSnap = await db.collection("users").doc(auth.uid).get();
   if (userSnap.exists) {
     const data = userSnap.data() || {};
-    const docRole = String(data.role || '').toUpperCase().replace(/[\s_-]+/g, '');
-    if (docRole === 'SUPERADMIN') {
+    const docRole = String(data.role || "").toUpperCase().replace(/[\s_-]+/g, "");
+    if (docRole === "SUPERADMIN") {
       return { uid: auth.uid, email: auth.token?.email || data.email, isSuperAdmin: true };
     }
-    if (docRole === 'ADMIN') {
+    if (docRole === "ADMIN") {
       return { uid: auth.uid, email: auth.token?.email || data.email, isSuperAdmin: false };
     }
   }
 
-  throw new HttpsError('permission-denied', 'Action réservée aux administrateurs.');
+  throw new HttpsError("permission-denied", "Action réservée aux administrateurs.");
 }
 
 export async function assertSuperAdmin(auth: any): Promise<{ uid: string; email?: string }> {
   const admin = await assertAdmin(auth);
   if (!admin.isSuperAdmin) {
-    throw new HttpsError('permission-denied', 'Action strictement réservée au Super Administrateur.');
+    throw new HttpsError("permission-denied", "Action strictement réservée au Super Administrateur.");
   }
   return admin;
 }
 
 const CALLABLE_OPTIONS = {
-  region: process.env.FUNCTION_REGION || 'us-central1',
+  region: process.env.FUNCTION_REGION || "us-central1",
   maxInstances: 5,
-  memory: '256MiB' as const,
+  memory: "256MiB" as const,
   timeoutSeconds: 30,
   cors: true,
 };
@@ -55,29 +55,29 @@ const CALLABLE_OPTIONS = {
 export const rejectAd = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
   const { adId, reason } = request.data || {};
-  if (!adId || typeof adId !== 'string') {
-    throw new HttpsError('invalid-argument', "Identifiant d'annonce requis.");
+  if (!adId || typeof adId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
   }
-  const cleanReason = String(reason || 'Critères de conformité non respectés.').trim();
+  const cleanReason = String(reason || "Critères de conformité non respectés.").trim();
 
   const db = getFirestore();
-  const adRef = db.collection('ads').doc(adId);
+  const adRef = db.collection("ads").doc(adId);
   const nowIso = new Date().toISOString();
 
   await db.runTransaction(async (tx) => {
     const adDoc = await tx.get(adRef);
     if (!adDoc.exists) {
-      throw new HttpsError('not-found', 'Annonce introuvable.');
+      throw new HttpsError("not-found", "Annonce introuvable.");
     }
     const ad = adDoc.data() || {};
 
     // Idempotence : si déjà rejetée avec le même motif, rien à réécrire
-    if (ad.status === 'REJECTED' && ad.moderationReason === cleanReason) {
+    if (ad.status === "REJECTED" && ad.moderationReason === cleanReason) {
       return;
     }
 
     tx.update(adRef, {
-      status: 'REJECTED',
+      status: "REJECTED",
       moderationReason: cleanReason,
       moderatedAt: nowIso,
       moderatedBy: admin.uid,
@@ -85,32 +85,32 @@ export const rejectAd = onCall(CALLABLE_OPTIONS, async (request) => {
     });
 
     // Journal d'audit atomique
-    const logRef = db.collection('moderation_logs').doc();
+    const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
-      action: 'REJECT_AD',
+      action: "REJECT_AD",
       targetId: adId,
       adminId: admin.uid,
       adminEmail: admin.email || null,
       reason: cleanReason,
-      adTitle: ad.title || 'Sans titre',
+      adTitle: ad.title || "Sans titre",
       timestamp: FieldValue.serverTimestamp(),
     });
 
     // Notification utilisateur dans user_notifications
     if (ad.userId) {
       const notifId = `rej_${adId}_${nowIso}`;
-      const notifRef = db.collection('user_notifications').doc(`${ad.userId}_${notifId}`);
+      const notifRef = db.collection("user_notifications").doc(`${ad.userId}_${notifId}`);
       tx.set(notifRef, {
         id: notifId,
         notifId,
         userId: ad.userId,
-        type: 'AD_REJECTED',
-        title: 'Annonce non validée par la modération',
-        message: `Votre annonce « ${ad.title || ''} » n'a pas été validée. Motif : ${cleanReason}`,
+        type: "AD_REJECTED",
+        title: "Annonce non validée par la modération",
+        message: `Votre annonce « ${ad.title || ""} » n'a pas été validée. Motif : ${cleanReason}`,
         adId,
         dispatchedAt: nowIso,
         timestamp: Date.now(),
-        status: 'DISPATCHED',
+        status: "DISPATCHED",
       });
     }
   });
@@ -124,19 +124,19 @@ export const rejectAd = onCall(CALLABLE_OPTIONS, async (request) => {
 export const rejectExtension = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
   const { adId, reason } = request.data || {};
-  if (!adId || typeof adId !== 'string') {
-    throw new HttpsError('invalid-argument', "Identifiant d'annonce requis.");
+  if (!adId || typeof adId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
   }
   const cleanReason = String(reason || "Extension refusée par la modération").trim();
 
   const db = getFirestore();
-  const adRef = db.collection('ads').doc(adId);
+  const adRef = db.collection("ads").doc(adId);
   const nowIso = new Date().toISOString();
 
   await db.runTransaction(async (tx) => {
     const adDoc = await tx.get(adRef);
     if (!adDoc.exists) {
-      throw new HttpsError('not-found', 'Annonce introuvable.');
+      throw new HttpsError("not-found", "Annonce introuvable.");
     }
     const ad = adDoc.data() || {};
     if (!ad.pendingExtension) {
@@ -149,32 +149,32 @@ export const rejectExtension = onCall(CALLABLE_OPTIONS, async (request) => {
     });
 
     // Journal d'audit
-    const logRef = db.collection('moderation_logs').doc();
+    const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
-      action: 'REJECT_EXTENSION',
+      action: "REJECT_EXTENSION",
       targetId: adId,
       adminId: admin.uid,
       adminEmail: admin.email || null,
       reason: cleanReason,
-      adTitle: ad.title || 'Sans titre',
+      adTitle: ad.title || "Sans titre",
       timestamp: FieldValue.serverTimestamp(),
     });
 
     // Notification utilisateur
     if (ad.userId) {
       const notifId = `ext_rej_${adId}_${nowIso}`;
-      const notifRef = db.collection('user_notifications').doc(`${ad.userId}_${notifId}`);
+      const notifRef = db.collection("user_notifications").doc(`${ad.userId}_${notifId}`);
       tx.set(notifRef, {
         id: notifId,
         notifId,
         userId: ad.userId,
-        type: 'AD_EXPIRING_SOON',
-        title: 'Prolongation non accordée',
-        message: `Votre demande d'extension pour l'annonce « ${ad.title || ''} » n'a pas été validée. Motif : ${cleanReason}. Votre annonce reste active jusqu'à son échéance initiale.`,
+        type: "AD_EXPIRING_SOON",
+        title: "Prolongation non accordée",
+        message: `Votre demande d'extension pour l'annonce « ${ad.title || ""} » n'a pas été validée. Motif : ${cleanReason}. Votre annonce reste active jusqu'à son échéance initiale.`,
         adId,
         dispatchedAt: nowIso,
         timestamp: Date.now(),
-        status: 'DISPATCHED',
+        status: "DISPATCHED",
       });
     }
   });
@@ -188,13 +188,13 @@ export const rejectExtension = onCall(CALLABLE_OPTIONS, async (request) => {
 export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
   const { adId, reason } = request.data || {};
-  if (!adId || typeof adId !== 'string') {
-    throw new HttpsError('invalid-argument', "Identifiant d'annonce requis.");
+  if (!adId || typeof adId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
   }
-  const cleanReason = String(reason || 'Suppression administrative').trim();
+  const cleanReason = String(reason || "Suppression administrative").trim();
 
   const db = getFirestore();
-  const adRef = db.collection('ads').doc(adId);
+  const adRef = db.collection("ads").doc(adId);
 
   await db.runTransaction(async (tx) => {
     const adDoc = await tx.get(adRef);
@@ -205,26 +205,26 @@ export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
     tx.delete(adRef);
 
     // Journal d'audit atomique
-    const logRef = db.collection('moderation_logs').doc();
+    const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
-      action: 'DELETE_AD',
+      action: "DELETE_AD",
       targetId: adId,
       adminId: admin.uid,
       adminEmail: admin.email || null,
       reason: cleanReason,
-      adTitle: ad.title || 'Sans titre',
+      adTitle: ad.title || "Sans titre",
       timestamp: FieldValue.serverTimestamp(),
     });
   });
 
   // Résoudre les signalements associés en tâche de fond
   try {
-    const reportsSnap = await db.collection('reports').where('adId', '==', adId).get();
+    const reportsSnap = await db.collection("reports").where("adId", "==", adId).get();
     const batch = db.batch();
     reportsSnap.docs.forEach((rep) => {
       batch.update(rep.ref, {
-        status: 'RESOLVED',
-        resolutionNote: 'Annonce supprimée par la modération.',
+        status: "RESOLVED",
+        resolutionNote: "Annonce supprimée par la modération.",
         resolvedAt: FieldValue.serverTimestamp(),
         resolvedBy: admin.uid,
       });
@@ -233,7 +233,7 @@ export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
       await batch.commit();
     }
   } catch (err) {
-    console.warn('[deleteAd] Résolution des rapports associée:', err);
+    console.warn("[deleteAd] Résolution des rapports associée:", err);
   }
 
   return { success: true, adId };
@@ -245,36 +245,36 @@ export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
 export const approveKyc = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
   const { uid, idDocumentUrl } = request.data || {};
-  if (!uid || typeof uid !== 'string') {
-    throw new HttpsError('invalid-argument', "Identifiant utilisateur requis.");
+  if (!uid || typeof uid !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant utilisateur requis.");
   }
 
   const db = getFirestore();
-  const userRef = db.collection('users').doc(uid);
+  const userRef = db.collection("users").doc(uid);
   const nowIso = new Date().toISOString();
 
   await db.runTransaction(async (tx) => {
     const userDoc = await tx.get(userRef);
     if (!userDoc.exists) {
-      throw new HttpsError('not-found', 'Utilisateur introuvable.');
+      throw new HttpsError("not-found", "Utilisateur introuvable.");
     }
     const data = userDoc.data() || {};
 
     // Idempotence : si déjà validé, aucun effet redondant
-    if (data.idVerificationStatus === 'VERIFIED') {
+    if (data.idVerificationStatus === "VERIFIED") {
       return;
     }
 
     // Vérifier que le statut était PENDING et que idDocumentUrl correspond
-    if (data.idVerificationStatus !== 'PENDING') {
-      throw new HttpsError('failed-precondition', 'Le KYC de cet utilisateur n est pas en attente (PENDING).');
+    if (data.idVerificationStatus !== "PENDING") {
+      throw new HttpsError("failed-precondition", "Le KYC de cet utilisateur n est pas en attente (PENDING).");
     }
     if (idDocumentUrl && data.idDocumentUrl !== idDocumentUrl) {
-      throw new HttpsError('invalid-argument', 'Le document affiché ne correspond plus à la soumission en cours.');
+      throw new HttpsError("invalid-argument", "Le document affiché ne correspond plus à la soumission en cours.");
     }
 
     tx.update(userRef, {
-      idVerificationStatus: 'VERIFIED',
+      idVerificationStatus: "VERIFIED",
       isKycVerified: true,
       isVerified: true,
       idVerifiedAt: nowIso,
@@ -283,9 +283,9 @@ export const approveKyc = onCall(CALLABLE_OPTIONS, async (request) => {
     });
 
     // Journal d'audit
-    const logRef = db.collection('moderation_logs').doc();
+    const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
-      action: 'APPROVE_KYC',
+      action: "APPROVE_KYC",
       targetId: uid,
       adminId: admin.uid,
       adminEmail: admin.email || null,
@@ -294,17 +294,17 @@ export const approveKyc = onCall(CALLABLE_OPTIONS, async (request) => {
 
     // Notification utilisateur
     const notifId = `kyc_verified_${uid}`;
-    const notifRef = db.collection('user_notifications').doc(`${uid}_${notifId}`);
+    const notifRef = db.collection("user_notifications").doc(`${uid}_${notifId}`);
     tx.set(notifRef, {
       id: notifId,
       notifId,
       userId: uid,
-      type: 'IDENTITY_VERIFIED',
-      title: 'Identité validée avec succès !',
+      type: "IDENTITY_VERIFIED",
+      title: "Identité validée avec succès !",
       message: "Félicitations, votre pièce d'identité a été validée. Le badge de confiance « Annonceur Vérifié » est actif.",
       dispatchedAt: nowIso,
       timestamp: Date.now(),
-      status: 'DISPATCHED',
+      status: "DISPATCHED",
     });
   });
 
@@ -317,23 +317,23 @@ export const approveKyc = onCall(CALLABLE_OPTIONS, async (request) => {
 export const rejectKyc = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
   const { uid, reason } = request.data || {};
-  if (!uid || typeof uid !== 'string') {
-    throw new HttpsError('invalid-argument', "Identifiant utilisateur requis.");
+  if (!uid || typeof uid !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant utilisateur requis.");
   }
-  const cleanReason = String(reason || 'Document illisible ou non conforme.').trim();
+  const cleanReason = String(reason || "Document illisible ou non conforme.").trim();
 
   const db = getFirestore();
-  const userRef = db.collection('users').doc(uid);
+  const userRef = db.collection("users").doc(uid);
   const nowIso = new Date().toISOString();
 
   await db.runTransaction(async (tx) => {
     const userDoc = await tx.get(userRef);
     if (!userDoc.exists) {
-      throw new HttpsError('not-found', 'Utilisateur introuvable.');
+      throw new HttpsError("not-found", "Utilisateur introuvable.");
     }
 
     tx.update(userRef, {
-      idVerificationStatus: 'REJECTED',
+      idVerificationStatus: "REJECTED",
       isKycVerified: false,
       isVerified: false,
       idRejectionReason: cleanReason,
@@ -342,9 +342,9 @@ export const rejectKyc = onCall(CALLABLE_OPTIONS, async (request) => {
     });
 
     // Journal d'audit
-    const logRef = db.collection('moderation_logs').doc();
+    const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
-      action: 'REJECT_KYC',
+      action: "REJECT_KYC",
       targetId: uid,
       adminId: admin.uid,
       adminEmail: admin.email || null,
@@ -362,16 +362,16 @@ export const rejectKyc = onCall(CALLABLE_OPTIONS, async (request) => {
 export const setSubscription = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertSuperAdmin(request.auth);
   const { userId, subscriptionTier, durationDays } = request.data || {};
-  if (!userId || typeof userId !== 'string') {
-    throw new HttpsError('invalid-argument', "Identifiant utilisateur requis.");
+  if (!userId || typeof userId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant utilisateur requis.");
   }
-  const validTiers = ['STANDARD', 'PRO', 'ELITE', 'BUSINESS'];
+  const validTiers = ["STANDARD", "PRO", "ELITE", "BUSINESS"];
   if (!validTiers.includes(subscriptionTier)) {
-    throw new HttpsError('invalid-argument', 'Forfait invalide.');
+    throw new HttpsError("invalid-argument", "Forfait invalide.");
   }
 
   const db = getFirestore();
-  const userRef = db.collection('users').doc(userId);
+  const userRef = db.collection("users").doc(userId);
   const now = Date.now();
   const days = Math.max(1, Math.min(365, Number(durationDays) || 30));
   const newExpiresAt = new Date(now + days * 86400000).toISOString();
@@ -380,21 +380,21 @@ export const setSubscription = onCall(CALLABLE_OPTIONS, async (request) => {
   await db.runTransaction(async (tx) => {
     const userDoc = await tx.get(userRef);
     if (!userDoc.exists) {
-      throw new HttpsError('not-found', 'Utilisateur introuvable.');
+      throw new HttpsError("not-found", "Utilisateur introuvable.");
     }
     const data = userDoc.data() || {};
-    const oldTier = data.subscriptionTier || 'STANDARD';
+    const oldTier = data.subscriptionTier || "STANDARD";
 
     tx.update(userRef, {
       subscriptionTier,
-      subscriptionExpiresAt: subscriptionTier === 'STANDARD' ? FieldValue.delete() : newExpiresAt,
+      subscriptionExpiresAt: subscriptionTier === "STANDARD" ? FieldValue.delete() : newExpiresAt,
       subscriptionStartedAt: FieldValue.serverTimestamp(),
       updatedAt: nowIso,
     });
 
-    const logRef = db.collection('moderation_logs').doc();
+    const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
-      action: 'SET_SUBSCRIPTION',
+      action: "SET_SUBSCRIPTION",
       targetId: userId,
       adminId: admin.uid,
       adminEmail: admin.email || null,
@@ -414,22 +414,22 @@ export const setSubscription = onCall(CALLABLE_OPTIONS, async (request) => {
 export const adjustBoosters = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertSuperAdmin(request.auth);
   const { userId, delta } = request.data || {};
-  if (!userId || typeof userId !== 'string') {
-    throw new HttpsError('invalid-argument', "Identifiant utilisateur requis.");
+  if (!userId || typeof userId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant utilisateur requis.");
   }
   const numericDelta = Number(delta);
   if (isNaN(numericDelta) || numericDelta === 0) {
-    throw new HttpsError('invalid-argument', 'Variation de boosters invalide.');
+    throw new HttpsError("invalid-argument", "Variation de boosters invalide.");
   }
 
   const db = getFirestore();
-  const userRef = db.collection('users').doc(userId);
+  const userRef = db.collection("users").doc(userId);
   let newTotal = 0;
 
   await db.runTransaction(async (tx) => {
     const userDoc = await tx.get(userRef);
     if (!userDoc.exists) {
-      throw new HttpsError('not-found', 'Utilisateur introuvable.');
+      throw new HttpsError("not-found", "Utilisateur introuvable.");
     }
     const data = userDoc.data() || {};
     const current = Number(data.freeBoostsRemaining) || 0;
@@ -440,9 +440,9 @@ export const adjustBoosters = onCall(CALLABLE_OPTIONS, async (request) => {
       updatedAt: new Date().toISOString(),
     });
 
-    const logRef = db.collection('moderation_logs').doc();
+    const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
-      action: 'ADJUST_BOOSTERS',
+      action: "ADJUST_BOOSTERS",
       targetId: userId,
       adminId: admin.uid,
       adminEmail: admin.email || null,
@@ -462,33 +462,33 @@ export const adjustBoosters = onCall(CALLABLE_OPTIONS, async (request) => {
 export const resolveReport = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
   const { reportId, note } = request.data || {};
-  if (!reportId || typeof reportId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Identifiant de signalement requis.');
+  if (!reportId || typeof reportId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant de signalement requis.");
   }
 
   const db = getFirestore();
-  const reportRef = db.collection('reports').doc(reportId);
+  const reportRef = db.collection("reports").doc(reportId);
 
   await db.runTransaction(async (tx) => {
     const repDoc = await tx.get(reportRef);
     if (!repDoc.exists) {
-      throw new HttpsError('not-found', 'Signalement introuvable.');
+      throw new HttpsError("not-found", "Signalement introuvable.");
     }
 
     tx.update(reportRef, {
-      status: 'RESOLVED',
-      resolutionNote: String(note || '').trim(),
+      status: "RESOLVED",
+      resolutionNote: String(note || "").trim(),
       resolvedAt: FieldValue.serverTimestamp(),
       resolvedBy: admin.uid,
     });
 
-    const logRef = db.collection('moderation_logs').doc();
+    const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
-      action: 'RESOLVE_REPORT',
+      action: "RESOLVE_REPORT",
       targetId: reportId,
       adminId: admin.uid,
       adminEmail: admin.email || null,
-      note: note || '',
+      note: note || "",
       timestamp: FieldValue.serverTimestamp(),
     });
   });
@@ -502,33 +502,33 @@ export const resolveReport = onCall(CALLABLE_OPTIONS, async (request) => {
 export const dismissReport = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
   const { reportId, note } = request.data || {};
-  if (!reportId || typeof reportId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Identifiant de signalement requis.');
+  if (!reportId || typeof reportId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant de signalement requis.");
   }
 
   const db = getFirestore();
-  const reportRef = db.collection('reports').doc(reportId);
+  const reportRef = db.collection("reports").doc(reportId);
 
   await db.runTransaction(async (tx) => {
     const repDoc = await tx.get(reportRef);
     if (!repDoc.exists) {
-      throw new HttpsError('not-found', 'Signalement introuvable.');
+      throw new HttpsError("not-found", "Signalement introuvable.");
     }
 
     tx.update(reportRef, {
-      status: 'DISMISSED',
-      dismissalNote: String(note || '').trim(),
+      status: "DISMISSED",
+      dismissalNote: String(note || "").trim(),
       dismissedAt: FieldValue.serverTimestamp(),
       dismissedBy: admin.uid,
     });
 
-    const logRef = db.collection('moderation_logs').doc();
+    const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
-      action: 'DISMISS_REPORT',
+      action: "DISMISS_REPORT",
       targetId: reportId,
       adminId: admin.uid,
       adminEmail: admin.email || null,
-      note: note || '',
+      note: note || "",
       timestamp: FieldValue.serverTimestamp(),
     });
   });
@@ -542,18 +542,18 @@ export const dismissReport = onCall(CALLABLE_OPTIONS, async (request) => {
 export const setExemption = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertSuperAdmin(request.auth);
   const { userId, isExempt } = request.data || {};
-  if (!userId || typeof userId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Identifiant utilisateur requis.');
+  if (!userId || typeof userId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant utilisateur requis.");
   }
 
   const db = getFirestore();
-  const userRef = db.collection('users').doc(userId);
+  const userRef = db.collection("users").doc(userId);
   const boolExempt = Boolean(isExempt);
 
   await db.runTransaction(async (tx) => {
     const userDoc = await tx.get(userRef);
     if (!userDoc.exists) {
-      throw new HttpsError('not-found', 'Utilisateur introuvable.');
+      throw new HttpsError("not-found", "Utilisateur introuvable.");
     }
 
     tx.update(userRef, {
@@ -562,9 +562,9 @@ export const setExemption = onCall(CALLABLE_OPTIONS, async (request) => {
       updatedAt: new Date().toISOString(),
     });
 
-    const logRef = db.collection('moderation_logs').doc();
+    const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
-      action: boolExempt ? 'EXEMPTION_GRANTED' : 'EXEMPTION_REVOKED',
+      action: boolExempt ? "EXEMPTION_GRANTED" : "EXEMPTION_REVOKED",
       targetId: userId,
       adminId: admin.uid,
       adminEmail: admin.email || null,
@@ -581,14 +581,14 @@ export const setExemption = onCall(CALLABLE_OPTIONS, async (request) => {
 export const logKycView = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
   const { targetUserId } = request.data || {};
-  if (!targetUserId || typeof targetUserId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Identifiant utilisateur requis.');
+  if (!targetUserId || typeof targetUserId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant utilisateur requis.");
   }
 
   const db = getFirestore();
-  const logRef = db.collection('moderation_logs').doc();
+  const logRef = db.collection("moderation_logs").doc();
   await logRef.set({
-    action: 'KYC_VIEWED',
+    action: "KYC_VIEWED",
     targetId: targetUserId,
     adminId: admin.uid,
     adminEmail: admin.email || null,

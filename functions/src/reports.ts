@@ -1,10 +1,10 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 const CALLABLE_OPTIONS = {
-  region: process.env.FUNCTION_REGION || 'us-central1',
+  region: process.env.FUNCTION_REGION || "us-central1",
   maxInstances: 10,
-  memory: '256MiB' as const,
+  memory: "256MiB" as const,
   timeoutSeconds: 15,
   cors: true,
 };
@@ -18,40 +18,40 @@ const CALLABLE_OPTIONS = {
  */
 export const reportAd = onCall(CALLABLE_OPTIONS, async (request) => {
   if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'Vous devez être connecté pour signaler une annonce.');
+    throw new HttpsError("unauthenticated", "Vous devez être connecté pour signaler une annonce.");
   }
 
   const { adId, reason, details, reporterPhone } = request.data || {};
-  if (!adId || typeof adId !== 'string') {
-    throw new HttpsError('invalid-argument', "Identifiant d'annonce manquant ou invalide.");
+  if (!adId || typeof adId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant d'annonce manquant ou invalide.");
   }
 
-  const cleanReason = String(reason || '').trim();
+  const cleanReason = String(reason || "").trim();
   if (!cleanReason || cleanReason.length > 200) {
-    throw new HttpsError('invalid-argument', 'Motif de signalement invalide (max 200 caractères).');
+    throw new HttpsError("invalid-argument", "Motif de signalement invalide (max 200 caractères).");
   }
 
-  const cleanDetails = String(details || '').trim();
+  const cleanDetails = String(details || "").trim();
   if (cleanDetails.length > 2000) {
-    throw new HttpsError('invalid-argument', 'Détails du signalement trop longs (max 2000 caractères).');
+    throw new HttpsError("invalid-argument", "Détails du signalement trop longs (max 2000 caractères).");
   }
 
   const reporterUid = request.auth.uid;
   const reportDocId = `${adId}_${reporterUid}`;
   const db = getFirestore();
 
-  const reportRef = db.collection('reports').doc(reportDocId);
-  const adRef = db.collection('ads').doc(adId);
+  const reportRef = db.collection("reports").doc(reportDocId);
+  const adRef = db.collection("ads").doc(adId);
 
   await db.runTransaction(async (tx) => {
     const [adDoc, reportDoc] = await Promise.all([tx.get(adRef), tx.get(reportRef)]);
 
     if (!adDoc.exists) {
-      throw new HttpsError('not-found', 'Annonce introuvable.');
+      throw new HttpsError("not-found", "Annonce introuvable.");
     }
 
     if (reportDoc.exists) {
-      throw new HttpsError('already-exists', 'Vous avez déjà signalé cette annonce.');
+      throw new HttpsError("already-exists", "Vous avez déjà signalé cette annonce.");
     }
 
     const now = FieldValue.serverTimestamp();
@@ -60,10 +60,10 @@ export const reportAd = onCall(CALLABLE_OPTIONS, async (request) => {
     tx.set(reportRef, {
       adId,
       reporterId: reporterUid,
-      reporterPhone: String(reporterPhone || '').trim(),
+      reporterPhone: String(reporterPhone || "").trim(),
       reason: cleanReason,
       details: cleanDetails,
-      status: 'PENDING',
+      status: "PENDING",
       createdAt: now,
     });
 
