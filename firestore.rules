@@ -260,5 +260,13 @@ service cloud.firestore {
     match /ad_views/{viewId} {
       allow read, write: if isAdmin();
     }
+
+    // ---------------------------------------------------------------
+    // AD COUNTERS (Compteurs de vues répartis, C-03 / O-08)
+    // ---------------------------------------------------------------
+    match /ad_counters/{adId} {
+      allow read: if true;
+      allow write: if false; // écrit exclusivement par la Cloud Function registerView
+    }
   }
 }

@@ -497,6 +497,31 @@ describe('Firestore Security Rules (Phase 1)', () => {
       })
     );
   });
+
+  // 13. Étape 3.3 : Compteurs de vues répartis ad_counters (O-08, C-03)
+  it('autorise la lecture publique de ad_counters mais interdit toute écriture client', async () => {
+    // 1. Visiteur anonyme ou connecté peut lire un compteur
+    const anonDb = testEnv.unauthenticatedContext().firestore();
+    const userDb = testEnv.authenticatedContext('user_viewer').firestore();
+    const counterRefAnon = doc(anonDb, 'ad_counters', 'ad_123');
+    const counterRefUser = doc(userDb, 'ad_counters', 'ad_123');
+
+    // Lecture autorisée
+    await assertSucceeds(getDoc(counterRefAnon));
+    await assertSucceeds(getDoc(counterRefUser));
+
+    // Tentative d'écriture client -> refusé
+    await assertFails(
+      setDoc(counterRefUser, {
+        views: 9999,
+      })
+    );
+    await assertFails(
+      setDoc(counterRefAnon, {
+        views: 1,
+      })
+    );
+  });
 });
 
 

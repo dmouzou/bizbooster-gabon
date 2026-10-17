@@ -644,14 +644,43 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
     }
   };
 
+  // Étape 3.3 (O-08, C-03) : Compteur de vues séparé ad_counters/{id} lu uniquement par la fiche annonce
+  const [detailCounterViews, setDetailCounterViews] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!selectedAdForDetail?.id) {
+      setDetailCounterViews(null);
+      return;
+    }
+    const counterRef = doc(db, 'ad_counters', selectedAdForDetail.id);
+    const unsubscribe = onSnapshot(
+      counterRef,
+      (snap) => {
+        if (snap.exists()) {
+          const val = Number(snap.data()?.views || 0);
+          if (val > 0) setDetailCounterViews(val);
+        }
+      },
+      () => {
+        // Ignorer silencieusement si hors ligne ou compteur inexistant
+      }
+    );
+    return () => unsubscribe();
+  }, [selectedAdForDetail?.id]);
+
   // Computed selected ad with freshest views count
   const activeSelectedAd = useMemo(() => {
     if (!selectedAdForDetail) return null;
     const found = ads.find((a) => a.id === selectedAdForDetail.id);
+    const maxViews = Math.max(
+      found?.viewsCount || 0,
+      selectedAdForDetail.viewsCount || 0,
+      detailCounterViews || 0
+    );
     return found
-      ? { ...found, viewsCount: Math.max(found.viewsCount || 0, selectedAdForDetail.viewsCount || 0) }
-      : selectedAdForDetail;
-  }, [ads, selectedAdForDetail]);
+      ? { ...found, viewsCount: maxViews }
+      : { ...selectedAdForDetail, viewsCount: maxViews };
+  }, [ads, selectedAdForDetail, detailCounterViews]);
 
   // Show quick toast notification
   const showToast = (msg: string) => {
@@ -1094,16 +1123,8 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       }));
 
       try {
-        const registerViewCallable = httpsCallable<{ adId: string; deviceId?: string }, { counted: boolean }>(functions, 'registerView');
-        let deviceId = '';
-        try {
-          deviceId = localStorage.getItem('bizbooster_device_id') || '';
-          if (!deviceId) {
-            deviceId = 'dev_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-            localStorage.setItem('bizbooster_device_id', deviceId);
-          }
-        } catch {}
-        await registerViewCallable({ adId: ad.id, deviceId });
+        const registerViewCallable = httpsCallable<{ adId: string }, { success: boolean; counted: boolean }>(functions, 'registerView');
+        await registerViewCallable({ adId: ad.id });
       } catch (err) {
         console.warn('Could not register view via registerView:', err);
       }
@@ -1233,44 +1254,30 @@ function cleanUndefined(obj: any): any {
     ];
 
     try {
-      const adDocRef = doc(db, 'ads', adId);
-      const adSnap = await getDoc(adDocRef);
+      if (needsModeration) {
+        // Étape 3.4 (B-02) : Transition sécurisée ACTIVE/REJECTED -> PENDING_REVIEW via callable
+        const resubmitAdCallable = httpsCallable<
+          { adId: string; updates: Record<string, any> },
+          { success: boolean; adId: string }
+        >(functions, 'resubmitAd');
 
-      const payload: Record<string, any> = {
-        ...cleanedFields,
-        ...deletes,
-        ...(needsModeration ? { status: 'PENDING_REVIEW' } : {}),
-        ...(!targetAd.userId && currentUser?.id ? { userId: currentUser.id } : {}),
-        updatedAt: nowIso,
-      };
-
-      for (const rk of RANKING_KEYS) {
-        delete payload[rk];
-      }
-
-      if (adSnap.exists()) {
-        await updateDoc(adDocRef, payload);
+        await resubmitAdCallable({
+          adId,
+          updates: cleanedFields,
+        });
       } else {
-        // Annonce de démo/initiale modifiée par son détenteur : on persiste en base
-        await setDoc(adDocRef, cleanUndefined({
-          id: adId,
-          title: targetAd.title,
-          description: targetAd.description || '',
-          price: targetAd.price || 0,
-          priceUnit: targetAd.priceUnit || 'total',
-          mainCategory: targetAd.mainCategory,
-          location: targetAd.location,
-          contactName: targetAd.contactName || 'Annonceur',
-          contactPhone: targetAd.contactPhone,
-          images: targetAd.images || [],
-          durationDays: targetAd.durationDays || 30,
-          publishedAt: targetAd.publishedAt || nowIso,
-          expiresAt: targetAd.expiresAt || new Date(Date.now() + 30 * 86400000).toISOString(),
-          viewsCount: targetAd.viewsCount || 0,
-          paidAmount: targetAd.paidAmount || 0,
-          userId: auth.currentUser?.uid || currentUser?.id || 'user',
-          ...payload,
-        }));
+        const adDocRef = doc(db, 'ads', adId);
+        const payload: Record<string, any> = {
+          ...cleanedFields,
+          ...deletes,
+          updatedAt: nowIso,
+        };
+
+        for (const rk of RANKING_KEYS) {
+          delete payload[rk];
+        }
+
+        await updateDoc(adDocRef, payload);
       }
 
       // Mise à jour optimiste immédiate dans myAds et publicAds (retrait temporaire du catalogue public si renvoi en modération)
