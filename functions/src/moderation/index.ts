@@ -575,3 +575,26 @@ export const setExemption = onCall(CALLABLE_OPTIONS, async (request) => {
   return { success: true, userId, isExempt: boolExempt };
 });
 
+/**
+ * 10. logKycView (S-14) : Journalise la consultation d'un document KYC par un administrateur
+ */
+export const logKycView = onCall(CALLABLE_OPTIONS, async (request) => {
+  const admin = await assertAdmin(request.auth);
+  const { targetUserId } = request.data || {};
+  if (!targetUserId || typeof targetUserId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Identifiant utilisateur requis.');
+  }
+
+  const db = getFirestore();
+  const logRef = db.collection('moderation_logs').doc();
+  await logRef.set({
+    action: 'KYC_VIEWED',
+    targetId: targetUserId,
+    adminId: admin.uid,
+    adminEmail: admin.email || null,
+    timestamp: FieldValue.serverTimestamp(),
+  });
+
+  return { success: true };
+});
+

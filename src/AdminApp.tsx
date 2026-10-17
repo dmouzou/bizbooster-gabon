@@ -281,6 +281,18 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
     }
   };
 
+  const handleLogKycView = async (targetUserId: string) => {
+    try {
+      const logKycCallable = httpsCallable<{ targetUserId: string }, { success: boolean }>(
+        functions,
+        'logKycView'
+      );
+      await logKycCallable({ targetUserId });
+    } catch (e: any) {
+      console.warn("Échec de la journalisation KYC_VIEWED :", e);
+    }
+  };
+
   // 4b. Subscription & Boosters management (STRICTLY restricted to SUPER ADMIN)
   const handleUpdateUserSubscription = async (userId: string, tier: SubscriptionTier) => {
     if (!isUserSuperAdmin(currentAdmin)) {
@@ -550,6 +562,7 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
         onResolveReport={handleResolveReport}
         onDismissReport={handleDismissReport}
         onDeleteReportedAd={handleDeleteReportedAd}
+        onLogKycView={handleLogKycView}
       />
       <AdDetailModal
         ad={selectedAd}

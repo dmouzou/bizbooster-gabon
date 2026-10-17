@@ -40,6 +40,7 @@ import {
   Lock,
   EyeOff,
   Save,
+  Loader2,
 } from 'lucide-react';
 import { signOut, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -47,7 +48,7 @@ import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../services/firebase';
 import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
-import { isTestAd, MODERATION_PRESET_REASONS, KYC_PRESET_REASONS, TIER_WEIGHTS, isPriorityTier, adBelongsToUser } from '../utils/ads';
+import { isTestAd, MODERATION_PRESET_REASONS, KYC_PRESET_REASONS, TIER_WEIGHTS, isPriorityTier, adBelongsToUser, isValidStorageUrl } from '../utils/ads';
 import { getFirebaseQuotaComparison, trackSmsSent, trackDownloadRequest, resetSmsCounters, resetDownloadCounters } from '../services/platformMetrics';
 import { RealTimeAnalytics } from './RealTimeAnalytics';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
@@ -68,6 +69,7 @@ interface AdminPanelProps {
   onToggleExemption?: (userId: string, isExempt: boolean) => Promise<void> | void;
   onApproveKyc?: (userId: string) => Promise<void> | void;
   onRejectKyc?: (userId: string, reason: string) => Promise<void> | void;
+  onLogKycView?: (userId: string) => Promise<void> | void;
   onUpdateUserSubscription?: (userId: string, tier: SubscriptionTier) => Promise<void> | void;
   onUpdateUserBoosters?: (userId: string, count: number) => Promise<void> | void;
   onUpdateUserRole?: (userId: string, role: 'USER' | 'ADMIN' | 'SUPER_ADMIN') => Promise<void> | void;
@@ -90,6 +92,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onToggleExemption,
   onApproveKyc,
   onRejectKyc,
+  onLogKycView,
   onUpdateUserSubscription,
   onUpdateUserBoosters,
   onUpdateUserRole,
@@ -507,8 +510,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // KYC review modal (B-12 : valeur initiale alignée sur KYC_PRESET_REASONS[0])
   const [previewKycUser, setPreviewKycUser] = useState<UserProfile | null>(null);
+  const [kycImageLoaded, setKycImageLoaded] = useState(false);
+  const [kycImageError, setKycImageError] = useState(false);
   const [rejectingKycUser, setRejectingKycUser] = useState<UserProfile | null>(null);
   const [kycRejectionReason, setKycRejectionReason] = useState(KYC_PRESET_REASONS[0]);
+
+  // S-14 : Réinitialisation et journalisation de la consultation de pièce d'identité
+  useEffect(() => {
+    if (previewKycUser) {
+      setKycImageLoaded(false);
+      setKycImageError(false);
+      if (!isValidStorageUrl(previewKycUser.idDocumentUrl)) {
+        setKycImageError(true);
+      }
+      if (onLogKycView) {
+        Promise.resolve(onLogKycView(previewKycUser.id)).catch((err) => {
+          console.warn('Erreur logKycView:', err);
+        });
+      }
+    }
+  }, [previewKycUser?.id, onLogKycView]);
 
   // I-08 : Constantes déplacées au niveau module dans utils/ads.ts
   const PRESET_REASONS = MODERATION_PRESET_REASONS;
@@ -3655,96 +3676,144 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* MODAL 2: FULL-SIZE KYC DOCUMENT VIEWER */}
-      {previewKycUser && (
-        <div className="fixed inset-0 z-60 bg-slate-950/85 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
-            <div className="bg-indigo-950 text-white p-5 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="bg-indigo-500 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded">
-                    {previewKycUser.idDocumentType || 'CNI'}
-                  </span>
-                  <h3 className="font-extrabold text-base">Pièce d'Identité Annonceur</h3>
+      {/* MODAL 2: FULL-SIZE KYC DOCUMENT VIEWER (S-06, S-14) */}
+      {previewKycUser && (() => {
+        const isStorageSafe = isValidStorageUrl(previewKycUser.idDocumentUrl);
+        const kycStatus = (previewKycUser.idVerificationStatus || '').toUpperCase();
+        const isPending = kycStatus === 'PENDING';
+        const canApprove = isPending && isStorageSafe && kycImageLoaded && !kycImageError && !busyIds.has(previewKycUser.id);
+
+        return (
+          <div className="fixed inset-0 z-60 bg-slate-950/85 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+              <div className="bg-indigo-950 text-white p-5 flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-indigo-500 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded">
+                      {previewKycUser.idDocumentType || 'CNI'}
+                    </span>
+                    <h3 className="font-extrabold text-base">Pièce d'Identité Annonceur</h3>
+                  </div>
+                  <p className="text-xs text-indigo-300 mt-0.5">
+                    {previewKycUser.name} ({previewKycUser.contactPhone || previewKycUser.phoneNumber})
+                  </p>
                 </div>
-                <p className="text-xs text-indigo-300 mt-0.5">
-                  {previewKycUser.name} ({previewKycUser.contactPhone || previewKycUser.phoneNumber})
-                </p>
-              </div>
-              <button
-                onClick={() => setPreviewKycUser(null)}
-                className="text-indigo-300 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto flex-1 space-y-4">
-              <div className="bg-slate-100 rounded-2xl overflow-hidden border border-slate-200 flex items-center justify-center p-2 min-h-64">
-                <img
-                  src={previewKycUser.idDocumentUrl}
-                  alt="Pièce d'identité"
-                  className="max-h-[60vh] max-w-full object-contain rounded-xl shadow-sm"
-                />
+                <button
+                  onClick={() => setPreviewKycUser(null)}
+                  className="text-indigo-300 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-600 flex flex-wrap justify-between gap-2">
-                <span>
-                  Type : <strong>{previewKycUser.idDocumentType || 'CNI'}</strong>
-                </span>
-                <span>
-                  Statut : <strong>{previewKycUser.idVerificationStatus || 'En attente'}</strong>
-                </span>
-                {previewKycUser.idSubmittedAt && (
+              <div className="p-6 overflow-y-auto flex-1 space-y-4">
+                <div className="bg-slate-100 rounded-2xl overflow-hidden border border-slate-200 flex flex-col items-center justify-center p-2 min-h-64 relative">
+                  {!isStorageSafe ? (
+                    <div className="p-4 text-center text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl max-w-md">
+                      <p className="font-bold mb-1">Origine de document non sécurisée (S-14)</p>
+                      <p className="text-[11px] text-rose-600">L'URL du document ne provient pas d'un bucket officiel Firebase ou Google Cloud Storage. L'affichage et l'approbation sont bloqués par mesure de sécurité.</p>
+                    </div>
+                  ) : kycImageError ? (
+                    <div className="p-4 text-center text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl max-w-md">
+                      <p className="font-bold mb-1">Échec du chargement du document (S-06)</p>
+                      <p className="text-[11px] text-rose-600">Impossible de charger la pièce d'identité (erreur réseau, URL expirée ou fichier inaccessible). La validation est strictement conditionnée à la visualisation intégrale du document.</p>
+                    </div>
+                  ) : (
+                    <>
+                      {!kycImageLoaded && (
+                        <div className="py-12 flex flex-col items-center justify-center gap-2 text-slate-500 text-xs">
+                          <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+                          <span>Chargement sécurisé du document...</span>
+                        </div>
+                      )}
+                      <img
+                        src={previewKycUser.idDocumentUrl}
+                        alt="Pièce d'identité"
+                        referrerPolicy="no-referrer"
+                        loading="lazy"
+                        onLoad={() => setKycImageLoaded(true)}
+                        onError={() => setKycImageError(true)}
+                        className={`max-h-[60vh] max-w-full object-contain rounded-xl shadow-sm ${!kycImageLoaded ? 'hidden' : 'block'}`}
+                      />
+                    </>
+                  )}
+                </div>
+
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-600 flex flex-wrap justify-between gap-2">
                   <span>
-                    Transmise le : {new Date(previewKycUser.idSubmittedAt).toLocaleString('fr-FR')}
+                    Type : <strong>{previewKycUser.idDocumentType || 'CNI'}</strong>
                   </span>
+                  <span>
+                    Statut : <strong className={kycStatus === 'VERIFIED' ? 'text-emerald-700' : kycStatus === 'REJECTED' ? 'text-red-700' : 'text-amber-700'}>{previewKycUser.idVerificationStatus || 'En attente'}</strong>
+                  </span>
+                  {previewKycUser.idSubmittedAt && (
+                    <span>
+                      Transmise le : {new Date(previewKycUser.idSubmittedAt).toLocaleString('fr-FR')}
+                    </span>
+                  )}
+                </div>
+
+                {!isPending && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                    Cette pièce d'identité n'est pas en attente (statut actuel : {previewKycUser.idVerificationStatus || 'Inconnu'}). Seules les demandes au statut « PENDING » peuvent être validées.
+                  </p>
                 )}
               </div>
-            </div>
 
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => setPreviewKycUser(null)}
-                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800"
-              >
-                Fermer
-              </button>
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setPreviewKycUser(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800"
+                >
+                  Fermer
+                </button>
 
-              <div className="flex items-center gap-2">
-                {onRejectKyc && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRejectingKycUser(previewKycUser);
-                      setPreviewKycUser(null);
-                    }}
-                    className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold rounded-xl transition-all"
-                  >
-                    Rejeter la pièce
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {onRejectKyc && isPending && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRejectingKycUser(previewKycUser);
+                        setPreviewKycUser(null);
+                      }}
+                      className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold rounded-xl transition-all"
+                    >
+                      Rejeter la pièce
+                    </button>
+                  )}
 
-                {onApproveKyc && (
-                  <button
-                    type="button"
-                    disabled={busyIds.has(previewKycUser.id)}
-                    onClick={() => {
-                      handleApproveKycUser(previewKycUser);
-                      setPreviewKycUser(null);
-                    }}
-                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>{busyIds.has(previewKycUser.id) ? 'Traitement...' : "Valider l'Identité"}</span>
-                  </button>
-                )}
+                  {onApproveKyc && (
+                    <button
+                      type="button"
+                      disabled={!canApprove}
+                      onClick={() => {
+                        handleApproveKycUser(previewKycUser);
+                        setPreviewKycUser(null);
+                      }}
+                      title={
+                        !isPending
+                          ? "Le statut de l'utilisateur n'est pas PENDING"
+                          : !isStorageSafe
+                          ? "L'URL de la pièce n'est pas sécurisée"
+                          : kycImageError
+                          ? "Le chargement de l'image a échoué"
+                          : !kycImageLoaded
+                          ? "Attendez le chargement complet du document"
+                          : "Valider l'Identité"
+                      }
+                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-black rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>{busyIds.has(previewKycUser.id) ? 'Traitement...' : "Valider l'Identité"}</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* MODAL 1B: REFUSER L'EXTENSION (B-11) */}
       {rejectingExtensionAd && (

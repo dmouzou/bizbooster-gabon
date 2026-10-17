@@ -3208,6 +3208,7 @@ export {
   dismissReport,
   setExemption,
   rejectExtension,
+  logKycView,
 } from "./moderation";
 export { registerView } from "./registerView";
 export { reportAd } from "./reports";

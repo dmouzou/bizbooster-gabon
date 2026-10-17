@@ -58,3 +58,24 @@ export const KYC_PRESET_REASONS = [
   'Nom ou prénom ne correspondant pas aux informations du compte.',
   'Document rogné ou incomplet.',
 ];
+
+/**
+ * Validation d'origine de ressource Storage (S-14)
+ * N'autorise que les domaines officiels Google Cloud / Firebase Storage.
+ */
+export function isValidStorageUrl(url?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    const validHosts = [
+      'firebasestorage.googleapis.com',
+      'storage.googleapis.com',
+      'storage.cloud.google.com',
+    ];
+    return validHosts.includes(parsed.hostname) || parsed.hostname.endsWith('.appspot.com');
+  } catch {
+    return false;
+  }
+}
+
