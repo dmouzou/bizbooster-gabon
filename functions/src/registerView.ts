@@ -11,7 +11,7 @@ import { createHash } from 'crypto';
  */
 export const registerView = onCall(
   {
-    region: 'europe-west1',
+    region: process.env.FUNCTION_REGION || 'us-central1',
     maxInstances: 20,
     memory: '256MiB' as const,
     timeoutSeconds: 15,

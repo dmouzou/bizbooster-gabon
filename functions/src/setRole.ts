@@ -2,7 +2,15 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 
-export const setRole = onCall({ cors: true }, async (request) => {
+export const setRole = onCall(
+  {
+    region: process.env.FUNCTION_REGION || "us-central1",
+    maxInstances: 5,
+    memory: "256MiB" as const,
+    timeoutSeconds: 30,
+    cors: true,
+  },
+  async (request) => {
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError("unauthenticated", "Authentification requise.");
   }
