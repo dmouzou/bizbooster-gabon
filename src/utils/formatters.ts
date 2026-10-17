@@ -5,14 +5,30 @@ export function formatFCFA(amount: number): string {
   return new Intl.NumberFormat('fr-FR').format(amount) + ' FCFA';
 }
 
-export function formatRemainingTime(expiresAtIso: string): {
+export function formatRemainingTime(expiresAtIso?: string | null): {
   isExpired: boolean;
   label: string;
   days: number;
   hours: number;
 } {
+  if (!expiresAtIso) {
+    return {
+      isExpired: true,
+      label: 'Expirée',
+      days: 0,
+      hours: 0,
+    };
+  }
   const now = Date.now();
   const expires = new Date(expiresAtIso).getTime();
+  if (isNaN(expires)) {
+    return {
+      isExpired: true,
+      label: 'Expirée',
+      days: 0,
+      hours: 0,
+    };
+  }
   const diffMs = expires - now;
 
   if (diffMs <= 0) {
