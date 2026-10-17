@@ -23,10 +23,11 @@ import { BizboosterLogo } from './components/BizboosterLogo';
 type AdminStatus = 'loading' | 'signedOut' | 'denied' | 'admin';
 
 interface AdminAppProps {
+  currentUser?: UserProfile | null;
   onSwitchToFrontend?: () => void;
 }
 
-export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
+export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppProps = {}) {
   const [status, setStatus] = useState<AdminStatus>('loading');
   const [currentAdmin, setCurrentAdmin] = useState<UserProfile | null>(null);
   const [ads, setAds] = useState<Ad[]>([]);
@@ -57,91 +58,71 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
     });
   };
 
-  // 1. Watch the Firebase session and verify the ADMIN / SUPER_ADMIN role in users/{uid}
+  // 1. Contrôle d'accès : vérification stricte par profil transmis ou session Auth (S-11 : identité par uid/claims uniquement)
   useEffect(() => {
-    // Timeout fallback: if Firebase Auth takes more than 3.5s to resolve, show login screen
-    const loadingTimer = setTimeout(() => {
-      setStatus((prev) => (prev === 'loading' ? 'signedOut' : prev));
-    }, 3500);
+    if (currentUser !== undefined) {
+      if (currentUser && isUserAdmin(currentUser)) {
+        setCurrentAdmin(currentUser);
+        setStatus('admin');
+        try {
+          localStorage.setItem('bizbooster_active_panel', 'admin');
+        } catch {}
+      } else if (currentUser) {
+        setCurrentAdmin(null);
+        setStatus('denied');
+      } else {
+        setCurrentAdmin(null);
+        setStatus('signedOut');
+      }
+      return;
+    }
 
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
-        clearTimeout(loadingTimer);
         setStatus('signedOut');
         setCurrentAdmin(null);
         return;
       }
       try {
+        const tokenResult = await fbUser.getIdTokenResult();
+        const roleClaim = tokenResult.claims.role;
+        if (roleClaim === 'ADMIN' || roleClaim === 'SUPER_ADMIN') {
+          const profile: UserProfile = {
+            id: fbUser.uid,
+            role: roleClaim,
+            name: fbUser.displayName || 'Admin',
+            contactPhone: fbUser.phoneNumber || '',
+            isVerified: true,
+            termsAccepted: true,
+            termsAcceptedAt: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+          };
+          setCurrentAdmin(profile);
+          setStatus('admin');
+          return;
+        }
+
         const snap = await getDoc(doc(db, 'users', fbUser.uid));
         if (snap.exists()) {
           const profile = { id: snap.id, ...snap.data() } as UserProfile;
           if (isUserAdmin(profile)) {
-            clearTimeout(loadingTimer);
             setCurrentAdmin(profile);
             setStatus('admin');
-            try {
-              localStorage.setItem('bizbooster_active_panel', 'admin');
-            } catch (e) {}
             return;
           }
         }
 
-        // Fallback 1: Lookup user in Firestore by email
-        if (fbUser.email) {
-          const qEmail = query(collection(db, 'users'), where('email', '==', fbUser.email.toLowerCase()));
-          const emailSnap = await getDocs(qEmail);
-          if (!emailSnap.empty) {
-            const profile = { id: emailSnap.docs[0].id, ...emailSnap.docs[0].data() } as UserProfile;
-            if (isUserAdmin(profile)) {
-              clearTimeout(loadingTimer);
-              setCurrentAdmin(profile);
-              setStatus('admin');
-              try {
-                localStorage.setItem('bizbooster_active_panel', 'admin');
-              } catch (e) {
-                console.warn(e);
-              }
-              return;
-            }
-          }
-        }
-
-        // Fallback 2: Lookup user in Firestore by phone
-        if (fbUser.phoneNumber) {
-          const qPhone = query(collection(db, 'users'), where('contactPhone', '==', fbUser.phoneNumber));
-          const phoneSnap = await getDocs(qPhone);
-          if (!phoneSnap.empty) {
-            const profile = { id: phoneSnap.docs[0].id, ...phoneSnap.docs[0].data() } as UserProfile;
-            if (isUserAdmin(profile)) {
-              clearTimeout(loadingTimer);
-              setCurrentAdmin(profile);
-              setStatus('admin');
-              try {
-                localStorage.setItem('bizbooster_active_panel', 'admin');
-              } catch (e) {
-                console.warn(e);
-              }
-              return;
-            }
-          }
-        }
-
-        clearTimeout(loadingTimer);
         setCurrentAdmin(null);
         setStatus('denied');
       } catch (err) {
         console.error('Admin verification error:', err);
-        clearTimeout(loadingTimer);
         setCurrentAdmin(null);
         setStatus('denied');
       }
     });
 
-    return () => {
-      clearTimeout(loadingTimer);
-      unsub();
-    };
-  }, []);
+    return () => unsub();
+  }, [currentUser]);
 
   // 2. Only once we know the user is an admin, listen to ALL ads, users and reports in real time
   useEffect(() => {

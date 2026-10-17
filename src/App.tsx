@@ -70,7 +70,8 @@ import { auth, db, functions } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
 import { isTestAd } from './components/AdminPanel';
 import { markNotificationAsSeenLocally, rejectionNotifId } from './services/notificationService';
-import AdminApp from './AdminApp';
+// S-11 : Lazy-loading d'AdminApp pour ne pas livrer le bundle d'administration à tous les visiteurs
+const AdminApp = React.lazy(() => import('./AdminApp'));
 
 function normalizeSearchText(str: string): string {
   return (str || '')
@@ -136,11 +137,20 @@ function doesAdMatchSearchQuery(ad: Ad, rawQuery: string): boolean {
   return tokens.every((token) => fullText.includes(token));
 }
 
-function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
+interface PublicAppProps {
+  currentUser: UserProfile | null;
+  setCurrentUser: React.Dispatch<React.SetStateAction<UserProfile | null>>;
+  authReady: boolean;
+  profileError: string | null;
+  setProfileError: React.Dispatch<React.SetStateAction<string | null>>;
+  onSwitchToAdmin?: () => void;
+}
+
+// S-15 : Une seule écoute de profil utilisateur partagée entre le frontend et l'admin
+function useUserProfile() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
-  const [postLoginIntent, setPostLoginIntent] = useState<'PUBLISH' | 'DASHBOARD' | null>(null);
 
   useEffect(() => {
     let unsubUserDoc: (() => void) | null = null;
@@ -206,6 +216,19 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
       if (unsubUserDoc) unsubUserDoc();
     };
   }, []);
+
+  return { currentUser, setCurrentUser, authReady, profileError, setProfileError };
+}
+
+function PublicApp({
+  currentUser,
+  setCurrentUser,
+  authReady,
+  profileError,
+  setProfileError,
+  onSwitchToAdmin,
+}: PublicAppProps) {
+  const [postLoginIntent, setPostLoginIntent] = useState<'PUBLISH' | 'DASHBOARD' | null>(null);
 
   const [publicAds, setPublicAds] = useState<Ad[]>([]);
   const [myAds, setMyAds] = useState<Ad[]>([]);
@@ -2394,6 +2417,7 @@ function cleanUndefined(obj: any): any {
 }
 
 export default function App() {
+  const { currentUser, setCurrentUser, authReady, profileError, setProfileError } = useUserProfile();
   const [currentView, setCurrentView] = useState<'frontend' | 'admin'>(() => {
     if (typeof window !== 'undefined') {
       if (window.location.pathname.startsWith('/admin')) {
@@ -2434,9 +2458,59 @@ export default function App() {
     window.history.replaceState(null, '', '/');
   };
 
-  return currentView === 'admin' ? (
-    <AdminApp onSwitchToFrontend={switchToFrontend} />
-  ) : (
-    <PublicApp onSwitchToAdmin={switchToAdmin} />
+  if (currentView === 'admin') {
+    if (!authReady) {
+      return (
+        <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white p-6">
+          <div className="w-10 h-10 border-4 border-amber-400 border-t-transparent rounded-full animate-spin mb-4" />
+          <p className="text-sm font-semibold text-slate-300">Vérification des accréditations administratives...</p>
+        </div>
+      );
+    }
+
+    // Garde d'accès dans le routeur (S-11) : Si non admin, écran refusé SANS charger le chunk AdminApp
+    if (!currentUser || !isUserAdmin(currentUser)) {
+      return (
+        <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center select-none">
+          <div className="w-16 h-16 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mb-5 shadow-xl">
+            <ShieldCheck className="w-8 h-8 text-rose-400" />
+          </div>
+          <h1 className="text-2xl font-black mb-2">Accès Cockpit Administrateur Refusé</h1>
+          <p className="text-slate-400 text-sm max-w-md mb-6 leading-relaxed">
+            Cette interface d'arbitrage et de modération est strictement réservée au personnel administratif de BIZBOOSTER Gabon.
+          </p>
+          <button
+            onClick={switchToFrontend}
+            className="px-6 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-lg"
+          >
+            Retourner au portail public
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <React.Suspense
+        fallback={
+          <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white p-6">
+            <div className="w-10 h-10 border-4 border-amber-400 border-t-transparent rounded-full animate-spin mb-4" />
+            <p className="text-sm font-semibold text-slate-300">Chargement du Cockpit Administrateur...</p>
+          </div>
+        }
+      >
+        <AdminApp currentUser={currentUser} onSwitchToFrontend={switchToFrontend} />
+      </React.Suspense>
+    );
+  }
+
+  return (
+    <PublicApp
+      currentUser={currentUser}
+      setCurrentUser={setCurrentUser}
+      authReady={authReady}
+      profileError={profileError}
+      setProfileError={setProfileError}
+      onSwitchToAdmin={isUserAdmin(currentUser) ? switchToAdmin : undefined}
+    />
   );
 }

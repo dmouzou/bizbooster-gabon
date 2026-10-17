@@ -45,7 +45,7 @@ import { signOut, EmailAuthProvider, reauthenticateWithCredential } from 'fireba
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../services/firebase';
-import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserSuperAdmin } from '../types';
+import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
 import { getFirebaseQuotaComparison, trackSmsSent, trackDownloadRequest, resetSmsCounters, resetDownloadCounters } from '../services/platformMetrics';
 import { RealTimeAnalytics } from './RealTimeAnalytics';
@@ -126,6 +126,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onDismissReport,
   onDeleteReportedAd,
 }) => {
+  // S-11 : Garde d'accès stricte dans AdminPanel
+  if (!isUserAdmin(currentUser)) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center select-none">
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mb-4">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <h1 className="text-2xl font-black mb-2">Accès restreint au Cockpit</h1>
+        <p className="text-slate-400 text-sm max-w-md mb-6 leading-relaxed">
+          Votre compte ne dispose pas des privilèges administrateur nécessaires pour accéder à cette interface.
+        </p>
+        {onSwitchToFrontend && (
+          <button
+            onClick={onSwitchToFrontend}
+            className="px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-sm transition-all cursor-pointer shadow-md"
+          >
+            Retourner au site public
+          </button>
+        )}
+      </div>
+    );
+  }
+
   const isSuper = isUserSuperAdmin(currentUser);
 
   // Point 3: SUPER ADMIN one-click option to show or hide all test ads (defaults to false / OFF)
