@@ -87,11 +87,24 @@ export const ReportAdModal: React.FC<ReportAdModalProps> = ({
     }
   };
 
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-60 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-60 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in motion-reduce:animate-none fade-in duration-200">
       <div
         className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="report-ad-title"
       >
         {/* Header */}
         <div className="bg-red-950 text-white p-5 flex items-center justify-between border-b border-red-900">
@@ -100,13 +113,14 @@ export const ReportAdModal: React.FC<ReportAdModalProps> = ({
               <ShieldAlert className="w-5 h-5 text-red-400" />
             </div>
             <div>
-              <h3 className="font-black text-base sm:text-lg text-white">Signaler cette annonce</h3>
+              <h3 id="report-ad-title" className="font-black text-base sm:text-lg text-white">Signaler cette annonce</h3>
               <p className="text-xs text-red-200">Protection des acheteurs & lutte anti-fraude au Gabon</p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="text-red-300 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+            aria-label="Fermer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -204,7 +218,7 @@ export const ReportAdModal: React.FC<ReportAdModalProps> = ({
                   className="flex-1 py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-extrabold rounded-xl text-xs shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {isSubmitting ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <RefreshCw className="w-4 h-4 animate-spin motion-reduce:animate-none" />
                   ) : (
                     <span>Envoyer le signalement</span>
                   )}

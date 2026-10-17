@@ -89,11 +89,24 @@ export const ShareAdModal: React.FC<ShareAdModalProps> = ({ isOpen, onClose, ad 
     }
   };
 
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 z-60 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
       <div
         className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative my-auto animate-in zoom-in-95"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="share-ad-title"
       >
         {/* Header */}
         <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
@@ -102,13 +115,14 @@ export const ShareAdModal: React.FC<ShareAdModalProps> = ({ isOpen, onClose, ad 
               <Share2 className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-black text-white">Partager cette annonce</h3>
+              <h3 id="share-ad-title" className="text-base font-black text-white">Partager cette annonce</h3>
               <p className="text-[11px] text-slate-400">Réseaux sociaux & Messageries Gabon</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+            className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            aria-label="Fermer"
           >
             <X className="w-5 h-5" />
           </button>

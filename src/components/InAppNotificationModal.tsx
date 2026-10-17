@@ -636,7 +636,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
 
   return (
     <div
-      className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] w-full max-w-lg px-3 sm:px-4 select-none animate-in slide-in-from-top-4 fade-in duration-300 pointer-events-auto"
+      className="fixed top-4 left-1/2 -translate-x-1/2 z-40 w-full max-w-lg px-3 sm:px-4 select-none animate-in slide-in-from-top-4 fade-in duration-300 pointer-events-auto"
       role="alert"
       aria-live="assertive"
       onMouseEnter={() => setIsHovered(true)}
@@ -671,7 +671,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
 
                 {/* Indicateur de délai de lecture (15s) avec pause */}
                 {isHovered ? (
-                  <span className="text-[10px] bg-slate-800/90 text-amber-300 border border-amber-400/40 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shadow-2xs animate-pulse">
+                  <span className="text-[10px] bg-slate-800/90 text-amber-300 border border-amber-400/40 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shadow-2xs animate-pulse motion-reduce:animate-none">
                     <Pause className="w-2.5 h-2.5" />
                     <span>Lecture en pause</span>
                   </span>
@@ -710,7 +710,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
               onClick={dismissActive}
               className="absolute top-3.5 right-3.5 text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-white/10 transition-colors cursor-pointer"
               title="Fermer la notification (compte à rebours 15s)"
-              aria-label="Fermer"
+              aria-label="Fermer la notification"
             >
               <X className="w-4 h-4" />
             </button>
@@ -721,7 +721,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
         <div className="h-1.5 bg-slate-950/80 w-full overflow-hidden">
           <div
             key={activeNotification.id}
-            className={`h-full ${theme.progressBarClass} animate-progress-shrink`}
+            className={`h-full ${theme.progressBarClass} animate-progress-shrink motion-reduce:animate-none`}
             style={{
               animationDuration: `${MAX_DURATION_MS}ms`,
               animationPlayState: isHovered ? 'paused' : 'running',

@@ -42,6 +42,16 @@ export const AppAlertModal: React.FC<AppAlertModalProps> = ({ config, onClose })
     onClose();
   };
 
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleCancel();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [config]);
+
   const getIcon = () => {
     switch (type) {
       case 'success':
@@ -83,7 +93,7 @@ export const AppAlertModal: React.FC<AppAlertModalProps> = ({ config, onClose })
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[150] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-60 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
       onClick={handleCancel}
     >
       <div
@@ -91,11 +101,12 @@ export const AppAlertModal: React.FC<AppAlertModalProps> = ({ config, onClose })
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="app-alert-title"
       >
         {/* Brand Header */}
         <div className="bg-slate-900 text-white px-5 py-3.5 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
             <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
               BIZBOOSTER Gabon
             </span>
@@ -105,6 +116,7 @@ export const AppAlertModal: React.FC<AppAlertModalProps> = ({ config, onClose })
             onClick={handleCancel}
             className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
             title="Fermer"
+            aria-label="Fermer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -115,7 +127,7 @@ export const AppAlertModal: React.FC<AppAlertModalProps> = ({ config, onClose })
           <div className="flex items-start gap-4">
             <div className="shrink-0">{getIcon()}</div>
             <div className="flex-1 min-w-0">
-              <h3 className="text-base font-black text-slate-900 mb-1.5 leading-snug">
+              <h3 id="app-alert-title" className="text-base font-black text-slate-900 mb-1.5 leading-snug">
                 {config.title || defaultTitle}
               </h3>
               <div className="text-xs text-slate-600 leading-relaxed whitespace-pre-line">
