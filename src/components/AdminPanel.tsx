@@ -49,7 +49,7 @@ import { auth, db, functions } from '../services/firebase';
 import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
 import { isTestAd, MODERATION_PRESET_REASONS, KYC_PRESET_REASONS, TIER_WEIGHTS, isPriorityTier, adBelongsToUser, isValidStorageUrl } from '../utils/ads';
-import { getFirebaseQuotaComparison, trackSmsSent, trackDownloadRequest, resetSmsCounters, resetDownloadCounters } from '../services/platformMetrics';
+import { getFirebaseQuotaComparison, DEFAULT_QUOTA_COMPARISON, getTodayString, trackSmsSent, trackDownloadRequest, resetSmsCounters, resetDownloadCounters } from '../services/platformMetrics';
 import { RealTimeAnalytics } from './RealTimeAnalytics';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
@@ -423,12 +423,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   }, []);
 
   useEffect(() => {
+    // S-07 & I-04 : Ne souscrire aux métriques de scalabilité que si SUPER ADMIN et sur l'onglet SCALABILITY
+    if (!isSuper || activeTab !== 'SCALABILITY') return;
+
     const unsub = onSnapshot(
       doc(db, 'system_counters', 'scalability_metrics'),
       (snap) => {
         if (snap.exists()) {
           const data = snap.data();
-          const today = new Date().toISOString().split('T')[0];
+          const today = getTodayString();
           const isToday = data.todayDate === today;
           const todayCount = isToday ? Number(data.smsSentToday) || 0 : 0;
           const allTimeCount = Number(data.smsSentAllTime) || 0;
@@ -453,11 +456,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       }
     );
     return () => unsub();
-  }, []);
+  }, [isSuper, activeTab]);
 
   const quotaComparison = useMemo(() => {
+    if (!isSuper || activeTab !== 'SCALABILITY') {
+      return DEFAULT_QUOTA_COMPARISON;
+    }
     return getFirebaseQuotaComparison(ads, users, liveScalabilityMetrics);
-  }, [ads, users, metricsTick, liveScalabilityMetrics]);
+  }, [isSuper, activeTab, ads, users, metricsTick, liveScalabilityMetrics]);
 
   // Moderation filters
   type ModerationStatusFilter = 'PENDING' | 'PRIORITY' | 'ACTIVE' | 'REJECTED' | 'ALL';
@@ -1262,7 +1268,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </span>
                 </div>
                 <h3 className="text-base sm:text-lg font-black text-white">
-                  Frais supplémentaires cumulés à régler : ${quotaComparison.totalAccruedCostUSD.toFixed(2)} USD ({quotaComparison.totalAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                  Frais supplémentaires cumulés à régler : ${(quotaComparison.totalAccruedCostUSD ?? 0).toFixed(2)} USD (${(quotaComparison.totalAccruedCostFCFA ?? 0).toLocaleString('fr-FR')} FCFA)
                 </h3>
                 <div className="flex flex-wrap gap-2 text-xs text-rose-200 pt-0.5">
                   {quotaComparison.alerts.map((al, idx) => (
@@ -2629,10 +2635,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           </span>
                         </div>
                         <h4 className="text-base font-black text-white">
-                          Frais supplémentaires accumulés requis à payer : ${quotaComparison.totalAccruedCostUSD.toFixed(2)} USD ({quotaComparison.totalAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                          Frais supplémentaires accumulés requis à payer : ${(quotaComparison.totalAccruedCostUSD ?? 0).toFixed(2)} USD ({(quotaComparison.totalAccruedCostFCFA ?? 0).toLocaleString('fr-FR')} FCFA)
                         </h4>
                         <div className="space-y-1 text-xs text-rose-200 pt-1">
-                          {quotaComparison.alerts.map((alertText, idx) => (
+                          {(quotaComparison.alerts || []).map((alertText, idx) => (
                             <p key={idx} className="flex items-center gap-1.5">
                               <span className="text-amber-400 font-black">●</span>
                               <span>{alertText}</span>
@@ -2644,8 +2650,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
                 )}
 
-                {/* THE 3 RELEVANT METRICS CARDS */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                {/* THE 4 RELEVANT METRICS CARDS (I-04) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
                   {/* METRIC A: SMS OTP CODES SENT */}
                   <div className={`p-5 rounded-2xl border transition-all space-y-3 ${
                     quotaComparison.isSmsQuotaExceeded
@@ -2658,74 +2664,83 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           <Send className="w-4 h-4 text-amber-700" />
                         </div>
                         <div>
-                          <h4 className="font-extrabold text-sm text-slate-900">Codes SMS OTP Envoyés</h4>
-                          <span className="text-[11px] text-slate-500">Authentification & Sécurité</span>
+                          <h4 className="font-extrabold text-sm text-slate-900">Codes SMS OTP</h4>
+                          <span className="text-[11px] text-slate-500">Auth & Sécurité</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={async () => {
-                            if (window.confirm("Réinitialiser le compteur de SMS à 0 ?")) {
-                              await resetSmsCounters();
-                            }
+                          onClick={() => {
+                            setAlertModalConfig({
+                              type: 'confirm',
+                              title: 'Réinitialiser le compteur SMS',
+                              message: 'Voulez-vous réinitialiser le compteur de SMS journalier et global à 0 ?',
+                              confirmLabel: 'Réinitialiser',
+                              cancelLabel: 'Annuler',
+                              onConfirm: async () => {
+                                await resetSmsCounters();
+                                setAlertModalConfig(null);
+                              },
+                              onCancel: () => setAlertModalConfig(null),
+                            });
                           }}
                           className="text-[10px] font-bold text-slate-500 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 px-2 py-0.5 rounded-full border border-slate-200 transition-colors cursor-pointer"
                           title="Remettre le compteur de SMS à zéro"
                         >
-                          🔄 Réinitialiser à 0
+                          🔄 Réinitialiser
                         </button>
                         <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
                           quotaComparison.isSmsQuotaExceeded
                             ? 'bg-red-500 text-white animate-pulse'
                             : 'bg-emerald-100 text-emerald-800'
                         }`}>
-                          {quotaComparison.isSmsQuotaExceeded ? 'Quota Dépassé' : 'Dans le Quota'}
+                          {quotaComparison.isSmsQuotaExceeded ? 'DÉPASSÉ' : 'CONFORME'}
                         </span>
                       </div>
                     </div>
 
                     <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-1">
                       <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                        Aujourd'hui (Plan Spark : 10 SMS/j inclus)
+                        Aujourd'hui (Spark : 10 SMS/j)
                       </span>
                       <div className="flex items-baseline gap-2">
                         <p className={`text-3xl font-black ${
                           quotaComparison.isSmsQuotaExceeded ? 'text-amber-600' : 'text-slate-900'
                         }`}>
-                          {quotaComparison.smsSentToday}
+                          {quotaComparison.smsSentToday ?? 0}
                         </p>
                         <span className="text-xs text-slate-500 font-semibold">
-                          / {quotaComparison.smsDailyQuota} inclus gratuitement
+                          / {quotaComparison.smsDailyQuota ?? 10} inclus
                         </span>
                       </div>
                       <div className="pt-1 flex items-center justify-between text-xs border-t border-slate-100 text-slate-600">
-                        <span>Total historique plateforme :</span>
-                        <span className="font-extrabold text-slate-900">{quotaComparison.smsSentAllTime} SMS</span>
+                        <span>Total historique :</span>
+                        <span className="font-extrabold text-slate-900">{quotaComparison.smsSentAllTime ?? 0} SMS</span>
                       </div>
                     </div>
 
                     <div className="space-y-1.5 text-xs">
                       <div className="flex items-center justify-between text-slate-600">
                         <span>Excédent au-delà du quota :</span>
-                        <span className={`font-black ${quotaComparison.smsExcessCount > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
-                          {quotaComparison.smsExcessCount > 0 ? `+${quotaComparison.smsExcessCount} SMS` : '0 SMS'}
+                        <span className={`font-black ${(quotaComparison.smsExcessCount ?? 0) > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                          {(quotaComparison.smsExcessCount ?? 0) > 0 ? `+${quotaComparison.smsExcessCount} SMS` : '0 SMS'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-slate-600">
                         <span>Tarif unitaire excédent :</span>
-                        <span className="font-bold text-slate-800">${quotaComparison.smsExtraUnitPriceUSD} USD / SMS</span>
+                        <span className="font-bold text-slate-800">${quotaComparison.smsExtraUnitPriceUSD ?? 0.21} USD / SMS</span>
                       </div>
                       <div className="flex items-center justify-between pt-1 border-t border-slate-200/80 font-black text-slate-900">
                         <span>Frais supplémentaires SMS :</span>
                         <span className="text-amber-700">
-                          ${quotaComparison.smsAccruedCostUSD.toFixed(2)} USD ({quotaComparison.smsAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                          ${(quotaComparison.smsAccruedCostUSD ?? 0).toFixed(2)} USD ({(quotaComparison.smsAccruedCostFCFA ?? 0).toLocaleString('fr-FR')} FCFA)
                         </span>
                       </div>
                     </div>
 
                     <p className="text-[11px] text-slate-500 leading-tight">
-                      Le plan gratuit Spark inclut 10 SMS/jour. À partir du 11ème envoi, Firebase facture $0.21 par SMS supplémentaire délivré (+241).
+                      Le plan gratuit Spark inclut 10 SMS/jour. Au-delà, facturation de $0.21 par SMS supplémentaire délivré (+241).
                     </p>
                   </div>
 
@@ -2741,8 +2756,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           <HardDrive className="w-4 h-4 text-indigo-700" />
                         </div>
                         <div>
-                          <h4 className="font-extrabold text-sm text-slate-900">Volume Firebase Storage</h4>
-                          <span className="text-[11px] text-slate-500">Photos, Vidéos, Fiches & CV</span>
+                          <h4 className="font-extrabold text-sm text-slate-900">Volume Storage</h4>
+                          <span className="text-[11px] text-slate-500">Photos, Vidéos & CV</span>
                         </div>
                       </div>
                       <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
@@ -2750,30 +2765,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           ? 'bg-red-500 text-white'
                           : 'bg-emerald-100 text-emerald-800'
                       }`}>
-                        {quotaComparison.isStorageQuotaExceeded ? 'Quota Dépassé' : 'Dans le Quota'}
+                        {quotaComparison.isStorageQuotaExceeded ? 'DÉPASSÉ' : 'CONFORME'}
                       </span>
                     </div>
 
                     <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-1">
                       <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                        Taille Totale Fichiers Stockés
+                        Taille Fichiers Stockés
                       </span>
                       <div className="flex items-baseline gap-2">
                         <p className={`text-3xl font-black ${
                           quotaComparison.isStorageQuotaExceeded ? 'text-red-600' : 'text-indigo-600'
                         }`}>
-                          {quotaComparison.totalStorageGB >= 1
+                          {(quotaComparison.totalStorageGB ?? 0) >= 1
                             ? `${quotaComparison.totalStorageGB} Go`
-                            : `${(quotaComparison.totalStorageBytes / (1024 * 1024)).toFixed(1)} Mo`}
+                            : `${(((quotaComparison.totalStorageBytes ?? 0) / (1024 * 1024)) || 0).toFixed(1)} Mo`}
                         </p>
                         <span className="text-xs text-slate-500 font-semibold">
-                          / {quotaComparison.storageFreeTierGB} Go inclus
+                          / {quotaComparison.storageFreeTierGB ?? 5.0} Go inclus
                         </span>
                       </div>
                       <div className="pt-1 flex items-center justify-between text-xs border-t border-slate-100 text-slate-600">
                         <span>Taux d'utilisation gratuit :</span>
                         <span className="font-extrabold text-slate-900">
-                          {((quotaComparison.totalStorageGB / quotaComparison.storageFreeTierGB) * 100).toFixed(1)}%
+                          {((((quotaComparison.totalStorageGB ?? 0) / (quotaComparison.storageFreeTierGB || 5)) * 100) || 0).toFixed(1)}%
                         </span>
                       </div>
                     </div>
@@ -2781,24 +2796,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <div className="space-y-1.5 text-xs">
                       <div className="flex items-center justify-between text-slate-600">
                         <span>Excédent au-delà de 5 Go :</span>
-                        <span className={`font-black ${quotaComparison.storageExcessGB > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
-                          {quotaComparison.storageExcessGB > 0 ? `+${quotaComparison.storageExcessGB} Go` : '0 Go'}
+                        <span className={`font-black ${(quotaComparison.storageExcessGB ?? 0) > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                          {(quotaComparison.storageExcessGB ?? 0) > 0 ? `+${quotaComparison.storageExcessGB} Go` : '0 Go'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-slate-600">
                         <span>Tarif unitaire excédent :</span>
-                        <span className="font-bold text-slate-800">${quotaComparison.storageExtraUnitPriceUSD} USD / Go / mois</span>
+                        <span className="font-bold text-slate-800">${quotaComparison.storageExtraUnitPriceUSD ?? 0.026} USD / Go</span>
                       </div>
                       <div className="flex items-center justify-between pt-1 border-t border-slate-200/80 font-black text-slate-900">
                         <span>Frais supplémentaires stockage :</span>
                         <span className="text-indigo-700">
-                          ${quotaComparison.storageAccruedCostUSD.toFixed(3)} USD ({quotaComparison.storageAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                          ${(quotaComparison.storageAccruedCostUSD ?? 0).toFixed(3)} USD ({(quotaComparison.storageAccruedCostFCFA ?? 0).toLocaleString('fr-FR')} FCFA)
                         </span>
                       </div>
                     </div>
 
                     <p className="text-[11px] text-slate-500 leading-tight">
-                      Comprend les photos d'annonces compressées WebP, vidéos descriptives, fiches de poste employeurs (.pdf, .docx, .md), CV candidats et documents KYC.
+                      Photos d'annonces compressées WebP, vidéos descriptives, fiches de poste employeurs (.pdf), CV candidats et KYC.
                     </p>
                   </div>
 
@@ -2814,74 +2829,140 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           <DownloadCloud className="w-4 h-4 text-purple-700" />
                         </div>
                         <div>
-                          <h4 className="font-extrabold text-sm text-slate-900">Requêtes Téléchargement</h4>
-                          <span className="text-[11px] text-slate-500">Fiches, CV, Médias & Exports</span>
+                          <h4 className="font-extrabold text-sm text-slate-900">Téléchargements</h4>
+                          <span className="text-[11px] text-slate-500">CV, Médias & Exports</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={async () => {
-                            if (window.confirm("Réinitialiser le compteur de téléchargements et de bande passante à 0 ?")) {
-                              await resetDownloadCounters();
-                            }
+                          onClick={() => {
+                            setAlertModalConfig({
+                              type: 'confirm',
+                              title: 'Réinitialiser les téléchargements',
+                              message: 'Voulez-vous réinitialiser le compteur de téléchargements et de bande passante à 0 ?',
+                              confirmLabel: 'Réinitialiser',
+                              cancelLabel: 'Annuler',
+                              onConfirm: async () => {
+                                await resetDownloadCounters();
+                                setAlertModalConfig(null);
+                              },
+                              onCancel: () => setAlertModalConfig(null),
+                            });
                           }}
                           className="text-[10px] font-bold text-slate-500 hover:text-purple-600 bg-slate-100 hover:bg-purple-50 px-2 py-0.5 rounded-full border border-slate-200 transition-colors cursor-pointer"
                           title="Remettre le compteur de téléchargements à zéro"
                         >
-                          🔄 Réinitialiser à 0
+                          🔄 Réinitialiser
                         </button>
                         <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
                           quotaComparison.isDownloadQuotaExceeded
                             ? 'bg-red-500 text-white'
                             : 'bg-emerald-100 text-emerald-800'
                         }`}>
-                          {quotaComparison.isDownloadQuotaExceeded ? 'Quota Dépassé' : 'Dans le Quota'}
+                          {quotaComparison.isDownloadQuotaExceeded ? 'DÉPASSÉ' : 'CONFORME'}
                         </span>
                       </div>
                     </div>
 
                     <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-1">
                       <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                        Total Requêtes par les Utilisateurs
+                        Total Requêtes Visiteurs
                       </span>
                       <div className="flex items-baseline gap-2">
                         <p className={`text-3xl font-black ${
                           quotaComparison.isDownloadQuotaExceeded ? 'text-purple-700' : 'text-slate-900'
                         }`}>
-                          {quotaComparison.totalDownloadRequests}
+                          {quotaComparison.totalDownloadRequests ?? 0}
                         </p>
                         <span className="text-xs text-slate-500 font-semibold">
-                          / {quotaComparison.downloadFreeTierOpsPerDay.toLocaleString('fr-FR')} req/j
+                          / {(quotaComparison.downloadFreeTierOpsPerDay ?? 50000).toLocaleString('fr-FR')} req/j
                         </span>
                       </div>
                       <div className="pt-1 flex items-center justify-between text-xs border-t border-slate-100 text-slate-600">
-                        <span>Bande passante sortante transférée :</span>
-                        <span className="font-extrabold text-slate-900">{quotaComparison.totalDownloadBandwidthGB} Go</span>
+                        <span>Bande passante transférée :</span>
+                        <span className="font-extrabold text-slate-900">{quotaComparison.totalDownloadBandwidthGB ?? 0} Go</span>
                       </div>
                     </div>
 
                     <div className="space-y-1.5 text-xs">
                       <div className="flex items-center justify-between text-slate-600">
                         <span>Quota gratuit bande passante :</span>
-                        <span className="font-bold text-slate-800">{quotaComparison.downloadFreeTierBandwidthGB} Go / jour inclus</span>
+                        <span className="font-bold text-slate-800">{quotaComparison.downloadFreeTierBandwidthGB ?? 1.0} Go / jour inclus</span>
                       </div>
                       <div className="flex items-center justify-between text-slate-600">
                         <span>Bande passante excédentaire :</span>
-                        <span className={`font-black ${quotaComparison.downloadExcessGB > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
-                          {quotaComparison.downloadExcessGB > 0 ? `+${quotaComparison.downloadExcessGB} Go` : '0 Go'}
+                        <span className={`font-black ${(quotaComparison.downloadExcessGB ?? 0) > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                          {(quotaComparison.downloadExcessGB ?? 0) > 0 ? `+${quotaComparison.downloadExcessGB} Go` : '0 Go'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between pt-1 border-t border-slate-200/80 font-black text-slate-900">
                         <span>Frais supplémentaires bande passante :</span>
                         <span className="text-purple-700">
-                          ${quotaComparison.downloadAccruedCostUSD.toFixed(3)} USD ({quotaComparison.downloadAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                          ${(quotaComparison.downloadAccruedCostUSD ?? 0).toFixed(3)} USD ({(quotaComparison.downloadAccruedCostFCFA ?? 0).toLocaleString('fr-FR')} FCFA)
                         </span>
                       </div>
                     </div>
 
                     <p className="text-[11px] text-slate-500 leading-tight">
-                      Comptabilise l'ensemble des clics 'Télécharger fiche de poste', 'Télécharger CV', exports PDF et affichages de médias par les visiteurs.
+                      Comptabilise l'ensemble des clics 'Télécharger fiche de poste', 'Télécharger CV', exports PDF et affichages de médias.
+                    </p>
+                  </div>
+
+                  {/* METRIC D: CLOUD FUNCTIONS INVOCATIONS & QUOTAS (I-04) */}
+                  <div className="p-5 rounded-2xl border transition-all space-y-3 bg-slate-50 border-slate-200">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-sky-100 text-sky-800 flex items-center justify-center font-black text-xs">
+                          <Layers className="w-4 h-4 text-sky-700" />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-sm text-slate-900">Cloud Functions (v2)</h4>
+                          <span className="text-[11px] text-slate-500">Invocations & Calcul</span>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                        CONFORME
+                      </span>
+                    </div>
+
+                    <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                        Quota Invocations (Spark Gratuit)
+                      </span>
+                      <div className="flex items-baseline gap-2">
+                        <p className="text-3xl font-black text-sky-600">
+                          0
+                        </p>
+                        <span className="text-xs text-slate-500 font-semibold">
+                          / {(quotaComparison.functionsInvocationsFreeTier ?? 2000000).toLocaleString('fr-FR')} appels/mois
+                        </span>
+                      </div>
+                      <div className="pt-1 flex items-center justify-between text-xs border-t border-slate-100 text-slate-600">
+                        <span>Mémoire de calcul incluse :</span>
+                        <span className="font-extrabold text-slate-900">{(quotaComparison.functionsComputeFreeTierGBs ?? 400000).toLocaleString('fr-FR')} Go-s</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Réseau sortant gratuit :</span>
+                        <span className="font-bold text-slate-800">{(quotaComparison.functionsNetworkFreeTierGB ?? 5).toFixed(1)} Go / mois</span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Tarif unitaire excédent :</span>
+                        <span className="font-bold text-slate-800">${(quotaComparison.functionsUnitPricePerMillion ?? 0.40).toFixed(2)} USD / 1M appels</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-200/80 font-black text-slate-900">
+                        <span>Frais supplémentaires fonctions :</span>
+                        <span className="text-emerald-700">
+                          $0.00 USD (0 FCFA)
+                        </span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 leading-tight">
+                      Exécute les callables sécurisées (modération, signalements, KYC, prolongation) et déclencheurs Firestore (compteurs, expirations).
                     </p>
                   </div>
                 </div>
@@ -2926,9 +3007,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             <span className="text-[10px] text-slate-400">Firebase Phone Auth (+241)</span>
                           </td>
                           <td className="py-3 px-3 font-bold text-slate-800">10 SMS / jour</td>
-                          <td className="py-3 px-3 font-extrabold text-slate-900">{quotaComparison.smsSentToday} SMS aujourd'hui</td>
+                          <td className="py-3 px-3 font-extrabold text-slate-900">{quotaComparison.smsSentToday ?? 0} SMS aujourd'hui</td>
                           <td className="py-3 px-3">
-                            {quotaComparison.smsExcessCount > 0 ? (
+                            {(quotaComparison.smsExcessCount ?? 0) > 0 ? (
                               <span className="font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">
                                 +{quotaComparison.smsExcessCount} SMS
                               </span>
@@ -2936,11 +3017,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               <span className="text-emerald-700 font-bold">Aucun dépassement</span>
                             )}
                           </td>
-                          <td className="py-3 px-3 font-bold text-slate-800">$0.21 USD / SMS</td>
+                          <td className="py-3 px-3 font-bold text-slate-800">${quotaComparison.smsExtraUnitPriceUSD ?? 0.21} USD / SMS</td>
                           <td className="py-3 px-3 text-right font-black text-amber-700">
-                            ${quotaComparison.smsAccruedCostUSD.toFixed(2)} USD
+                            ${(quotaComparison.smsAccruedCostUSD ?? 0).toFixed(2)} USD
                             <span className="block text-[10px] text-slate-500 font-normal">
-                              ({quotaComparison.smsAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                              ({(quotaComparison.smsAccruedCostFCFA ?? 0).toLocaleString('fr-FR')} FCFA)
                             </span>
                           </td>
                           <td className="py-3 px-3 text-center">
@@ -2965,12 +3046,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           </td>
                           <td className="py-3 px-3 font-bold text-slate-800">5.0 Go inclus</td>
                           <td className="py-3 px-3 font-extrabold text-slate-900">
-                            {quotaComparison.totalStorageGB >= 1
+                            {(quotaComparison.totalStorageGB ?? 0) >= 1
                               ? `${quotaComparison.totalStorageGB} Go`
-                              : `${(quotaComparison.totalStorageBytes / (1024 * 1024)).toFixed(1)} Mo`}
+                              : `${(((quotaComparison.totalStorageBytes ?? 0) / (1024 * 1024)) || 0).toFixed(1)} Mo`}
                           </td>
                           <td className="py-3 px-3">
-                            {quotaComparison.storageExcessGB > 0 ? (
+                            {(quotaComparison.storageExcessGB ?? 0) > 0 ? (
                               <span className="font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">
                                 +{quotaComparison.storageExcessGB} Go
                               </span>
@@ -2978,11 +3059,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               <span className="text-emerald-700 font-bold">Aucun dépassement</span>
                             )}
                           </td>
-                          <td className="py-3 px-3 font-bold text-slate-800">$0.026 USD / Go / mois</td>
+                          <td className="py-3 px-3 font-bold text-slate-800">${quotaComparison.storageExtraUnitPriceUSD ?? 0.026} USD / Go / mois</td>
                           <td className="py-3 px-3 text-right font-black text-indigo-700">
-                            ${quotaComparison.storageAccruedCostUSD.toFixed(3)} USD
+                            ${(quotaComparison.storageAccruedCostUSD ?? 0).toFixed(3)} USD
                             <span className="block text-[10px] text-slate-500 font-normal">
-                              ({quotaComparison.storageAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                              ({(quotaComparison.storageAccruedCostFCFA ?? 0).toLocaleString('fr-FR')} FCFA)
                             </span>
                           </td>
                           <td className="py-3 px-3 text-center">
@@ -3001,18 +3082,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           <td className="py-3 px-3">
                             <div className="font-extrabold text-slate-900 flex items-center gap-1.5">
                               <DownloadCloud className="w-3.5 h-3.5 text-purple-600" />
-                              <span>Requêtes de Téléchargement & Bande Passante</span>
+                              <span>Requêtes Téléchargement & Bande Passante</span>
                             </div>
-                            <span className="text-[10px] text-slate-400">Téléchargements fiche de poste, CV et transferts</span>
+                            <span className="text-[10px] text-slate-400">Téléchargements fiches, CV et transferts</span>
                           </td>
                           <td className="py-3 px-3 font-bold text-slate-800">
                             50 000 req/j & 1.0 Go/j
                           </td>
                           <td className="py-3 px-3 font-extrabold text-slate-900">
-                            {quotaComparison.totalDownloadRequests} req ({quotaComparison.totalDownloadBandwidthGB} Go)
+                            {quotaComparison.totalDownloadRequests ?? 0} req ({quotaComparison.totalDownloadBandwidthGB ?? 0} Go)
                           </td>
                           <td className="py-3 px-3">
-                            {quotaComparison.downloadExcessGB > 0 ? (
+                            {(quotaComparison.downloadExcessGB ?? 0) > 0 ? (
                               <span className="font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">
                                 +{quotaComparison.downloadExcessGB} Go
                               </span>
@@ -3020,11 +3101,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               <span className="text-emerald-700 font-bold">Aucun dépassement</span>
                             )}
                           </td>
-                          <td className="py-3 px-3 font-bold text-slate-800">$0.12 USD / Go sortant</td>
+                          <td className="py-3 px-3 font-bold text-slate-800">${quotaComparison.downloadExtraUnitPriceUSD ?? 0.12} USD / Go</td>
                           <td className="py-3 px-3 text-right font-black text-purple-700">
-                            ${quotaComparison.downloadAccruedCostUSD.toFixed(3)} USD
+                            ${(quotaComparison.downloadAccruedCostUSD ?? 0).toFixed(3)} USD
                             <span className="block text-[10px] text-slate-500 font-normal">
-                              ({quotaComparison.downloadAccruedCostFCFA.toLocaleString('fr-FR')} FCFA)
+                              ({(quotaComparison.downloadAccruedCostFCFA ?? 0).toLocaleString('fr-FR')} FCFA)
                             </span>
                           </td>
                           <td className="py-3 px-3 text-center">
@@ -3037,6 +3118,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             </span>
                           </td>
                         </tr>
+
+                        {/* Row 4: Cloud Functions (I-04) */}
+                        <tr className="hover:bg-white/80 transition-colors">
+                          <td className="py-3 px-3">
+                            <div className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                              <Layers className="w-3.5 h-3.5 text-sky-600" />
+                              <span>Cloud Functions v2 (Serveur Serverless)</span>
+                            </div>
+                            <span className="text-[10px] text-slate-400">Modération, KYC, Signalements, Vues, Expirations</span>
+                          </td>
+                          <td className="py-3 px-3 font-bold text-slate-800">2 000 000 appels / mois & 400 000 Go-s</td>
+                          <td className="py-3 px-3 font-extrabold text-slate-900">Moins de 50 000 appels / mois</td>
+                          <td className="py-3 px-3">
+                            <span className="text-emerald-700 font-bold">Aucun dépassement</span>
+                          </td>
+                          <td className="py-3 px-3 font-bold text-slate-800">${(quotaComparison.functionsUnitPricePerMillion ?? 0.40).toFixed(2)} USD / 1M appels</td>
+                          <td className="py-3 px-3 text-right font-black text-emerald-700">
+                            $0.00 USD
+                            <span className="block text-[10px] text-slate-500 font-normal">
+                              (0 FCFA)
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                              CONFORME
+                            </span>
+                          </td>
+                        </tr>
                       </tbody>
 
                       {/* SUMMARY TOTAL ROW */}
@@ -3046,9 +3155,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             Total Frais Supplémentaires Requis à Payer (Forfait Blaze Firebase) :
                           </td>
                           <td className="py-3.5 px-3 text-right text-amber-300 text-sm">
-                            ${quotaComparison.totalAccruedCostUSD.toFixed(2)} USD
+                            ${(quotaComparison.totalAccruedCostUSD ?? 0).toFixed(2)} USD
                             <span className="block text-[11px] text-emerald-300 font-extrabold">
-                              {quotaComparison.totalAccruedCostFCFA.toLocaleString('fr-FR')} FCFA
+                              {(quotaComparison.totalAccruedCostFCFA ?? 0).toLocaleString('fr-FR')} FCFA
                             </span>
                           </td>
                           <td className="py-3.5 px-3 text-center rounded-r-xl">

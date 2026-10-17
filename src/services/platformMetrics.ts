@@ -34,12 +34,57 @@ export interface FirebaseQuotaComparison {
   downloadAccruedCostFCFA: number;
   isDownloadQuotaExceeded: boolean;
 
+  // Cloud Functions Quotas (I-04)
+  functionsInvocationsFreeTier: number; // 2 000 000 appels / mois
+  functionsComputeFreeTierGBs: number; // 400 000 Go-secondes
+  functionsNetworkFreeTierGB: number; // 5 Go / mois
+  functionsUnitPricePerMillion: number; // $0.40 USD / 1M appels
+
   // Global Accrued Costs
   totalAccruedCostUSD: number;
   totalAccruedCostFCFA: number;
   isAnyQuotaExceeded: boolean;
   alerts: string[];
 }
+
+export const DEFAULT_QUOTA_COMPARISON: FirebaseQuotaComparison = {
+  smsSentToday: 0,
+  smsSentAllTime: 0,
+  smsDailyQuota: 10,
+  smsExcessCount: 0,
+  smsExtraUnitPriceUSD: 0.21,
+  smsAccruedCostUSD: 0,
+  smsAccruedCostFCFA: 0,
+  isSmsQuotaExceeded: false,
+
+  totalStorageBytes: 0,
+  totalStorageGB: 0,
+  storageFreeTierGB: 5.0,
+  storageExcessGB: 0,
+  storageExtraUnitPriceUSD: 0.026,
+  storageAccruedCostUSD: 0,
+  storageAccruedCostFCFA: 0,
+  isStorageQuotaExceeded: false,
+
+  totalDownloadRequests: 0,
+  totalDownloadBandwidthGB: 0,
+  downloadFreeTierOpsPerDay: 50000,
+  downloadFreeTierBandwidthGB: 1.0,
+  downloadExcessGB: 0,
+  downloadAccruedCostUSD: 0,
+  downloadAccruedCostFCFA: 0,
+  isDownloadQuotaExceeded: false,
+
+  functionsInvocationsFreeTier: 2000000,
+  functionsComputeFreeTierGBs: 400000,
+  functionsNetworkFreeTierGB: 5.0,
+  functionsUnitPricePerMillion: 0.40,
+
+  totalAccruedCostUSD: 0,
+  totalAccruedCostFCFA: 0,
+  isAnyQuotaExceeded: false,
+  alerts: [],
+};
 
 const FCFA_EXCHANGE_RATE = 615; // 1 USD ≈ 615 FCFA (XAF)
 
@@ -50,8 +95,16 @@ const SMS_SENT_ALL_TIME_KEY = 'bizbooster_sms_sent_all_time';
 const DOWNLOAD_REQUESTS_KEY = 'bizbooster_download_requests_count';
 const DOWNLOAD_BANDWIDTH_BYTES_KEY = 'bizbooster_download_bandwidth_bytes';
 
-function getTodayString(): string {
-  return new Date().toISOString().split('T')[0];
+/**
+ * Calcule la date du jour au fuseau horaire du Gabon (UTC+1, Africa/Libreville).
+ * Calculée dynamiquement au rendu et non à l'import de module.
+ */
+export function getTodayString(d = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Libreville' }).format(d);
+  } catch {
+    return d.toISOString().split('T')[0];
+  }
 }
 
 /**
@@ -367,6 +420,11 @@ export function getFirebaseQuotaComparison(
     downloadAccruedCostUSD,
     downloadAccruedCostFCFA,
     isDownloadQuotaExceeded,
+
+    functionsInvocationsFreeTier: 2000000,
+    functionsComputeFreeTierGBs: 400000,
+    functionsNetworkFreeTierGB: 5.0,
+    functionsUnitPricePerMillion: 0.40,
 
     totalAccruedCostUSD,
     totalAccruedCostFCFA,

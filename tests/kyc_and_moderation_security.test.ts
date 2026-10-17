@@ -34,3 +34,28 @@ describe('Étape 4.4 : Sécurisation KYC & URLs de stockage (S-06, S-14)', () =>
     expect(isPriorityTier('STANDARD')).toBe(false);
   });
 });
+
+describe('Étape 4.5 : Onglet Scalabilité & Quotas (I-04, S-07)', () => {
+  it('calcule la date du jour au fuseau horaire du Gabon (UTC+1)', async () => {
+    const { getTodayString } = await import('../src/services/platformMetrics');
+    const today = getTodayString();
+    expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // Test a specific UTC time that rolls over to the next day in Libreville (UTC+1)
+    // 2026-10-17 23:30:00 UTC is 2026-10-18 00:30:00 in Gabon
+    const lateUtcDate = new Date('2026-10-17T23:30:00Z');
+    expect(getTodayString(lateUtcDate)).toBe('2026-10-18');
+  });
+
+  it('fournit des valeurs de fallback sécurisées dans DEFAULT_QUOTA_COMPARISON', async () => {
+    const { DEFAULT_QUOTA_COMPARISON } = await import('../src/services/platformMetrics');
+    expect(DEFAULT_QUOTA_COMPARISON.smsSentToday).toBe(0);
+    expect(DEFAULT_QUOTA_COMPARISON.totalStorageGB).toBe(0);
+    expect(DEFAULT_QUOTA_COMPARISON.totalDownloadRequests).toBe(0);
+    expect(DEFAULT_QUOTA_COMPARISON.functionsInvocationsFreeTier).toBe(2000000);
+    expect(DEFAULT_QUOTA_COMPARISON.functionsUnitPricePerMillion).toBe(0.40);
+    expect(DEFAULT_QUOTA_COMPARISON.totalAccruedCostUSD).toBe(0);
+    expect(DEFAULT_QUOTA_COMPARISON.isAnyQuotaExceeded).toBe(false);
+  });
+});
+
