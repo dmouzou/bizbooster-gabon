@@ -229,4 +229,106 @@ describe('Firestore Security Rules (Phase 1)', () => {
     await assertFails(getDoc(doc(normalUserDb, 'settings', 'system_config')));
     await assertSucceeds(getDoc(doc(normalUserDb, 'settings', 'public_config')));
   });
+
+  // 7. Étape 1.1 : Fermer l'élévation de privilèges (S-01)
+  it('un ADMIN ne peut pas sécrire isSuperAdmin, isAdmin, role ou subscription, mais peut approuver le KYC', async () => {
+    // Pré-créer un utilisateur et un admin dans Firestore
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users', 'admin_1'), {
+        role: 'ADMIN',
+        name: 'Modérateur',
+      });
+      await setDoc(doc(context.firestore(), 'users', 'target_user'), {
+        role: 'USER',
+        name: 'Utilisateur Cible',
+        idVerificationStatus: 'PENDING',
+      });
+    });
+
+    const adminDb = testEnv.authenticatedContext('admin_1', { role: 'ADMIN' }).firestore();
+    const adminSelfRef = doc(adminDb, 'users', 'admin_1');
+    const targetRef = doc(adminDb, 'users', 'target_user');
+
+    // Tentative de l'ADMIN de s'écrire isSuperAdmin: true -> doit échouer
+    await assertFails(updateDoc(adminSelfRef, { isSuperAdmin: true }));
+
+    // Tentative de l'ADMIN de modifier son rôle en SUPER_ADMIN -> doit échouer
+    await assertFails(updateDoc(adminSelfRef, { role: 'SUPER_ADMIN' }));
+
+    // Tentative de l'ADMIN de s'attribuer un forfait VIP -> doit échouer
+    await assertFails(updateDoc(adminSelfRef, { subscriptionTier: 'VIP' }));
+
+    // Par contre, l'ADMIN peut approuver le KYC d'un utilisateur (champs de adminAllowedUserKeys) -> doit réussir
+    await assertSucceeds(
+      updateDoc(targetRef, {
+        idVerificationStatus: 'VERIFIED',
+        isKycVerified: true,
+        isVerified: true,
+        idVerifiedAt: new Date().toISOString(),
+      })
+    );
+  });
+
+  // 8. Étape 1.2 : Verrouiller KYC et badges (S-02, S-06)
+  it('un propriétaire ne peut pas auto-attribuer VERIFIED, ni isKycVerified, et changer idDocumentUrl impose PENDING', async () => {
+    const userDb = testEnv.authenticatedContext('user_kyc_test').firestore();
+    const profileRef = doc(userDb, 'users', 'user_kyc_test');
+
+    // Tentative de création avec idVerificationStatus: 'VERIFIED' -> doit échouer
+    await assertFails(
+      setDoc(profileRef, {
+        role: 'USER',
+        name: 'Frauduleux',
+        idVerificationStatus: 'VERIFIED',
+      })
+    );
+
+    // Tentative de création avec isKycVerified: true -> doit échouer
+    await assertFails(
+      setDoc(profileRef, {
+        role: 'USER',
+        name: 'Frauduleux',
+        isKycVerified: true,
+      })
+    );
+
+    // Création légitime en NOT_SUBMITTED -> doit réussir
+    await assertSucceeds(
+      setDoc(profileRef, {
+        role: 'USER',
+        name: 'Honnête',
+        idVerificationStatus: 'NOT_SUBMITTED',
+      })
+    );
+
+    // Tentative de mise à jour pour s'auto-attribuer isKycVerified -> doit échouer
+    await assertFails(
+      updateDoc(profileRef, {
+        isKycVerified: true,
+      })
+    );
+
+    // Pré-valider le compte via le contexte de règles désactivées
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(doc(context.firestore(), 'users', 'user_kyc_test'), {
+        idVerificationStatus: 'VERIFIED',
+        idDocumentUrl: 'https://storage.googleapis.com/kyc/doc1.png',
+      });
+    });
+
+    // Tentative de remplacer idDocumentUrl en restant VERIFIED -> doit échouer
+    await assertFails(
+      updateDoc(profileRef, {
+        idDocumentUrl: 'https://storage.googleapis.com/kyc/doc2.png',
+      })
+    );
+
+    // Remplacer idDocumentUrl en repassant le statut à PENDING -> doit réussir
+    await assertSucceeds(
+      updateDoc(profileRef, {
+        idDocumentUrl: 'https://storage.googleapis.com/kyc/doc2.png',
+        idVerificationStatus: 'PENDING',
+      })
+    );
+  });
 });

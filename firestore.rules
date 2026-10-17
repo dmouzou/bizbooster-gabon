@@ -143,6 +143,17 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
     }
 
+    function adminAllowedUserKeys() {
+      return [
+        'idVerificationStatus',
+        'idVerifiedAt',
+        'idRejectionReason',
+        'isKycVerified',
+        'isVerified',
+        'updatedAt'
+      ];
+    }
+
     // ---------------------------------------------------------------
     // USERS
     // ---------------------------------------------------------------
@@ -152,17 +163,24 @@ service cloud.firestore {
 
       allow create: if isOwner(userId)
                     && request.resource.data.role == 'USER'
-                    && !request.resource.data.keys().hasAny(privilegedKeys());
+                    && !request.resource.data.keys().hasAny(privilegedKeys())
+                    && !request.resource.data.keys().hasAny(['isKycVerified', 'isVerified'])
+                    && request.resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') in ['NOT_SUBMITTED', 'PENDING'];
 
       allow update: if isSuperAdmin()
-                    || (isAdmin() && !request.resource.data.diff(resource.data).affectedKeys()
-                        .hasAny(['isExempt', 'exemptFromPaymentAndKyc', 'role', 'subscriptionTier',
-                                 'subscriptionExpiresAt', 'freeBoostsRemaining']))
+                    || (isAdmin() && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly(adminAllowedUserKeys()))
                     || (isOwner(userId)
                         && request.resource.data.get('role', 'USER') == resource.data.get('role', 'USER')
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(privilegedKeys())
-                        && (request.resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') != 'VERIFIED'
-                            || resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') == 'VERIFIED'));
+                        && !request.resource.data.diff(resource.data).affectedKeys()
+                            .hasAny(['isKycVerified', 'isVerified', 'isAdmin', 'isSuperAdmin'])
+                        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['idVerificationStatus'])
+                            || request.resource.data.idVerificationStatus in ['NOT_SUBMITTED', 'PENDING'])
+                        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['idDocumentUrl'])
+                            || request.resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') == 'PENDING')
+                        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['phone'])
+                            || request.resource.data.phone == resource.data.phone));
 
       allow delete: if isSuperAdmin();
     }
