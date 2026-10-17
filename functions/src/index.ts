@@ -3247,3 +3247,5 @@ export const activateExemptSubscription = onCall(
   }
 );
 
+export { setRole } from "./setRole";
+

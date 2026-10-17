@@ -1,3 +1,7 @@
+import { normalizeRole, type UserRole } from './utils/roles';
+export type { UserRole };
+export { normalizeRole };
+
 export type MainCategory = 
   | 'IMMOBILIER' 
   | 'MATERIEL_ROULANT' 
@@ -235,7 +239,6 @@ export interface Ad {
 export type SubscriptionTier = 'STANDARD' | 'PRO' | 'ELITE' | 'BUSINESS';
 export type BoosterPackType = 'BOOST_5' | 'BOOST_10';
 export type AdPackType = 'PACK_5' | 'PACK_10';
-export type UserRole = 'USER' | 'ADMIN' | 'SUPER_ADMIN';
 
 export interface UserProfile {
   id: string;
@@ -247,7 +250,7 @@ export interface UserProfile {
   isVerified: boolean;
   termsAccepted: boolean;
   termsAcceptedAt: string;
-  role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' | 'SUPER ADMIN' | string;
+  role: UserRole;
   createdAt: string;
 
   // Subscription & Boosters
@@ -283,15 +286,12 @@ export interface UserProfile {
 }
 
 export const isUserSuperAdmin = (user?: { role?: string } | null): boolean => {
-  if (!user || !user.role) return false;
-  const normalized = String(user.role).trim().toUpperCase().replace(/[\s_-]+/g, '');
-  return normalized === 'SUPERADMIN';
+  return normalizeRole(user?.role) === 'SUPER_ADMIN';
 };
 
 export const isUserAdmin = (user?: { role?: string } | null): boolean => {
-  if (!user || !user.role) return false;
-  const normalized = String(user.role).trim().toUpperCase().replace(/[\s_-]+/g, '');
-  return normalized === 'SUPERADMIN' || normalized === 'ADMIN';
+  const r = normalizeRole(user?.role);
+  return r === 'SUPER_ADMIN' || r === 'ADMIN';
 };
 
 export const getTierPriority = (ad: { isOwnerVip?: boolean; ownerTier?: SubscriptionTier }): number => {

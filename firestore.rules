@@ -15,24 +15,25 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Super Admin = custom claim OR users/{uid}.role in ['SUPER_ADMIN', 'SUPER ADMIN']
+    // Super Admin = custom claim d'abord (zéro get() facturé), sinon repli document users/{uid}.role
     function isSuperAdmin() {
       return isSignedIn() && (
         ('role' in request.auth.token && (request.auth.token.role == 'SUPER_ADMIN' || request.auth.token.role == 'SUPER ADMIN')) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (!('role' in request.auth.token) &&
+         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'SUPER_ADMIN' ||
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'SUPER ADMIN'))
       );
     }
 
-    // Admin = custom claim OR users/{uid}.role in ['ADMIN', 'SUPER_ADMIN', 'SUPER ADMIN']
+    // Admin = custom claim d'abord (zéro get() facturé), sinon repli document users/{uid}.role
     function isAdmin() {
       return isSignedIn() && (
-        isSuperAdmin() ||
-        ('role' in request.auth.token && request.auth.token.role == 'ADMIN') ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'ADMIN' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'SUPER_ADMIN'))
+        ('role' in request.auth.token && (request.auth.token.role == 'ADMIN' || request.auth.token.role == 'SUPER_ADMIN' || request.auth.token.role == 'SUPER ADMIN')) ||
+        (!('role' in request.auth.token) &&
+         (isSuperAdmin() ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'ADMIN')))
       );
     }
 

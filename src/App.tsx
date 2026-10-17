@@ -60,6 +60,8 @@ import {
   TutoringLevel,
   TutoringSubject,
   UserProfile,
+  isUserAdmin,
+  isUserSuperAdmin,
 } from './types';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment, writeBatch, deleteField } from 'firebase/firestore';
@@ -1367,7 +1369,7 @@ function cleanUndefined(obj: any): any {
       paymentInfo.isFreeVip ||
       currentUser?.exemptFromPaymentAndKyc ||
       currentUser?.isExempt ||
-      currentUser?.role === 'ADMIN' ||
+      isUserAdmin(currentUser) ||
       currentUser?.subscriptionTier === 'BUSINESS'
     );
 

@@ -457,4 +457,15 @@ describe('Firestore Security Rules (Phase 1)', () => {
       deleteDoc(doc(normalDb, 'user_notifications', 'user_notif_1_notif_abc'))
     );
   });
+
+  // 11. Étape 1.5 : Rôles et custom claims (S-12)
+  it('un utilisateur avec custom claim ADMIN ou SUPER_ADMIN accède sans document users/{uid}', async () => {
+    // admin_ghost n'a aucun document dans users
+    const ghostAdminDb = testEnv.authenticatedContext('admin_ghost', { role: 'ADMIN' }).firestore();
+    await assertSucceeds(getDoc(doc(ghostAdminDb, 'settings', 'system_config')));
+
+    const ghostSuperAdminDb = testEnv.authenticatedContext('super_ghost', { role: 'SUPER_ADMIN' }).firestore();
+    await assertSucceeds(getDoc(doc(ghostSuperAdminDb, 'system_counters', 'scalability_metrics')));
+  });
 });
+
