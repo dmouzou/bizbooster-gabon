@@ -15,7 +15,6 @@ import { Ad, AdReport, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAd
 import { AdminPanel } from './components/AdminPanel';
 import { AdDetailModal } from './components/AdDetailModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
-import { INITIAL_ADS } from './data/initialAds';
 import { getFrontendUrl } from './utils/navigation';
 import { AppAlertModal, AlertModalConfig } from './components/AppAlertModal';
 import { BizboosterLogo } from './components/BizboosterLogo';
@@ -388,13 +387,8 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
     });
   };
 
-  // Merge INITIAL_ADS with live Firestore ads so test & demo ads are available for moderation examination
-  const allAds = useMemo(() => {
-    const map = new Map<string, Ad>();
-    INITIAL_ADS.forEach((a) => map.set(a.id, a));
-    ads.forEach((a) => map.set(a.id, a));
-    return Array.from(map.values());
-  }, [ads]);
+  // Étape 4.2 & S-18 : Modération sur les annonces réelles uniquement (pas de démo en production)
+  const allAds = ads;
 
   const handleSwitchToFrontend = () => {
     try {

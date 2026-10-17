@@ -68,7 +68,7 @@ import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, d
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
-import { isTestAd } from './components/AdminPanel';
+import { isTestAd } from './utils/ads';
 import { markNotificationAsSeenLocally, rejectionNotifId } from './services/notificationService';
 // S-11 : Lazy-loading d'AdminApp pour ne pas livrer le bundle d'administration à tous les visiteurs
 const AdminApp = React.lazy(() => import('./AdminApp'));

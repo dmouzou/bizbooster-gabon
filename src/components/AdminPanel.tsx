@@ -47,6 +47,7 @@ import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../services/firebase';
 import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAdmin } from '../types';
 import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
+import { isTestAd, MODERATION_PRESET_REASONS, KYC_PRESET_REASONS, TIER_WEIGHTS, isPriorityTier, adBelongsToUser } from '../utils/ads';
 import { getFirebaseQuotaComparison, trackSmsSent, trackDownloadRequest, resetSmsCounters, resetDownloadCounters } from '../services/platformMetrics';
 import { RealTimeAnalytics } from './RealTimeAnalytics';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
@@ -72,38 +73,6 @@ interface AdminPanelProps {
   onResolveReport?: (reportId: string, notes?: string) => Promise<void> | void;
   onDismissReport?: (reportId: string, notes?: string) => Promise<void> | void;
   onDeleteReportedAd?: (adId: string, reportId: string) => Promise<void> | void;
-}
-
-// Helper function to detect seed, simulator, and test ads (Point 3)
-export function isTestAd(ad: Ad): boolean {
-  if (ad.isTest) return true;
-  const id = (ad.id || '').toLowerCase();
-  const title = (ad.title || '').toLowerCase();
-  const desc = (ad.description || '').toLowerCase();
-  const phone = (ad.contactPhone || '').replace(/\s+/g, '');
-  const ref = (ad.transactionRef || '').toLowerCase();
-
-  if (title.includes('test') || desc.includes('test')) return true;
-  if (id.startsWith('test') || id.startsWith('ad-test')) return true;
-  if (
-    id.startsWith('ad-immo-') ||
-    id.startsWith('ad-auto-') ||
-    id.startsWith('ad-truck-') ||
-    id.startsWith('ad-machinery-') ||
-    id.startsWith('ad-bric-') ||
-    id.startsWith('ad-emp-') ||
-    id.startsWith('ad-cours-') ||
-    id.startsWith('ad-tut-') ||
-    id.startsWith('ad-necro-') ||
-    id.startsWith('ad-pending-') ||
-    id.startsWith('ad-rejected-')
-  ) {
-    return true;
-  }
-  if (ref.startsWith('test-') || ref.startsWith('sim-') || ref.includes('demo')) return true;
-  if (phone.includes('000000') || phone.includes('123456')) return true;
-
-  return false;
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
@@ -179,49 +148,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     return () => unsub();
   }, []);
 
-  // Sync registered advertisers list into system_config so frontend can verify directory membership
-  useEffect(() => {
-    if (users && users.length > 0) {
-      const userIds = users.map((u) => u.id).filter(Boolean);
-      const userPhones = users
-        .map((u) => (u.contactPhone || u.phoneNumber || '').replace(/\D/g, ''))
-        .filter(Boolean);
-      setDoc(
-        doc(db, 'settings', 'system_config'),
-        {
-          registeredUserIds: userIds,
-          registeredPhones: userPhones,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      ).catch((e) => console.warn('Could not sync registered advertisers to Firestore:', e));
-    }
-  }, [users]);
-
-  const registeredUserIdsSet = useMemo(() => new Set((users || []).map((u) => u.id)), [users]);
-  const registeredPhonesList = useMemo(
-    () => (users || []).map((u) => (u.contactPhone || u.phoneNumber || '').replace(/\D/g, '')).filter(Boolean),
-    [users]
-  );
-
-  // An ad is a test ad if it does not originate from a registered advertiser in the directory
-  const isAdFromNonRegistered = (ad: Ad): boolean => {
-    if (isTestAd(ad)) return true;
-    if (!ad.userId || ad.userId.startsWith('demo-') || ad.userId.startsWith('test-')) return true;
-    if (registeredUserIdsSet.size > 0) {
-      if (registeredUserIdsSet.has(ad.userId)) return false;
-      const cleanPhone = (ad.contactPhone || '').replace(/\D/g, '');
-      if (cleanPhone && registeredPhonesList.some((p) => p.includes(cleanPhone) || cleanPhone.includes(p))) {
-        return false;
-      }
-      return true;
-    }
-    return false;
-  };
-
+  // S-13 : Suppression de la synchronisation de registeredUserIds dans system_config (évite fuite, conflit et limite de 1 MiB)
+  // B-04 : Détection de test unifiée et sécurisée via isTestAd (drapeau ad.isTest)
   const testAdsCount = useMemo(
-    () => ads.filter(isAdFromNonRegistered).length,
-    [ads, registeredUserIdsSet, registeredPhonesList]
+    () => ads.filter(isTestAd).length,
+    [ads]
   );
   const [alertModalConfig, setAlertModalConfig] = useState<AlertModalConfig | null>(null);
 
@@ -537,48 +468,81 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   type AdvertiserSortOption = 'DATE_DESC' | 'DATE_ASC' | 'NAME_ASC' | 'TIER_DESC' | 'ADS_DESC' | 'REVENUE_DESC';
   const [advSortBy, setAdvSortBy] = useState<AdvertiserSortOption>('DATE_DESC');
   const [advSearchQuery, setAdvSearchQuery] = useState('');
-  const [advKycFilter, setAdvKycFilter] = useState<'ALL' | 'EXEMPT' | 'VERIFIED' | 'PENDING' | 'NOT_SUBMITTED'>('ALL');
+  const [advKycFilter, setAdvKycFilter] = useState<'ALL' | 'EXEMPT' | 'VERIFIED' | 'PENDING' | 'NOT_SUBMITTED' | 'REJECTED'>('ALL');
 
   // Reports filters (Point 4: Trier par)
   const [reportStatusFilter, setReportStatusFilter] = useState<'ALL' | 'PENDING' | 'RESOLVED' | 'DISMISSED'>('PENDING');
   const [reportSearchQuery, setReportSearchQuery] = useState('');
   const [reportSortBy, setReportSortBy] = useState<'DATE_DESC' | 'DATE_ASC' | 'REPORTS_COUNT' | 'REASON'>('DATE_DESC');
 
+  // Pagination côté client (O-04, O-05 : évite la saturation du DOM sur de grands catalogues)
+  const [visibleAdsCount, setVisibleAdsCount] = useState(50);
+  const [visibleUsersCount, setVisibleUsersCount] = useState(50);
+
   // Modal states
   const [rejectingAd, setRejectingAd] = useState<Ad | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [customRejectText, setCustomRejectText] = useState('');
 
-  // KYC review modal
+  // KYC review modal (B-12 : valeur initiale alignée sur KYC_PRESET_REASONS[0])
   const [previewKycUser, setPreviewKycUser] = useState<UserProfile | null>(null);
   const [rejectingKycUser, setRejectingKycUser] = useState<UserProfile | null>(null);
-  const [kycRejectionReason, setKycRejectionReason] = useState('Document illisible ou tronqué.');
+  const [kycRejectionReason, setKycRejectionReason] = useState(KYC_PRESET_REASONS[0]);
 
-  // Quick preset rejection reasons conforming to CGU & BizBooster Gabon context (Point 2)
-  const PRESET_REASONS = [
-    'Photos non conformes, floues, avec filigranes ou sans rapport avec le bien réel (CGU Art. 2.2).',
-    'Prix irréaliste, fictif ou manifestement erroné (ex: 0 FCFA ou 1 FCFA pour tromper les filtres - CGU Art. 2.1).',
-    'Non-respect de la catégorie ou description trompeuse / incohérente (CGU Art. 2).',
-    'Contenu prohibé ou illicite : bien ou service interdit par la loi gabonaise (armes, stupéfiants, contrefaçons, faune protégée - CGU Art. 2.3).',
-    'Propos injurieux, diffamatoires, indécents ou portant atteinte aux bonnes mœurs et à la dignité (CGU Art. 2.2 & 2.6).',
-    'Annonce en double ou publication répétée (spam) d’un même bien ou service.',
-    'Coordonnées de contact, liens externes ou publicités incrustés directement dans le titre ou les visuels.',
-    'Avis d’obsèques ou Avis de recherche : signalement frauduleux, informations invérifiables ou atteinte à la dignité (CGU Art. 2.6).',
-  ];
+  // I-08 : Constantes déplacées au niveau module dans utils/ads.ts
+  const PRESET_REASONS = MODERATION_PRESET_REASONS;
 
-  const KYC_PRESET_REASONS = [
-    'Photo du document floue ou illisible.',
-    'Pièce d’identité expirée (date de validité dépassée).',
-    'Document non conforme (seuls CNI, Carte de séjour ou Passeport sont acceptés).',
-    'Nom ou prénom ne correspondant pas aux informations du compte.',
-    'Document rogné ou incomplet.',
-  ];
+  // O-05 : Debounce de recherche pour fluidifier la saisie sous 50ms
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(searchQuery);
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedSearchQuery(searchQuery), 200);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  const [debouncedAdvSearchQuery, setDebouncedAdvSearchQuery] = useState(advSearchQuery);
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedAdvSearchQuery(advSearchQuery), 200);
+    return () => clearTimeout(handler);
+  }, [advSearchQuery]);
+
+  useEffect(() => {
+    setVisibleAdsCount(50);
+  }, [statusFilter, categoryFilter, debouncedSearchQuery, moderationSortBy]);
+
+  useEffect(() => {
+    setVisibleUsersCount(50);
+  }, [advKycFilter, debouncedAdvSearchQuery, advSortBy]);
+
+  // O-05 : Map utilisateur O(1) pour accélérer la résolution de forfait et d'appartenance
+  const userByIdMap = useMemo(() => new Map((users || []).map((u) => [u.id, u])), [users]);
 
   // Helper to identify priority validation users (Pro, Elite, Business)
-  const isAdPriorityUser = (ad: Ad) => {
-    const user = users.find((u) => u.id === ad.userId || (ad.contactPhone && u.contactPhone === ad.contactPhone));
+  const isAdPriorityUser = useCallback((ad: Ad) => {
+    const user = ad.userId ? userByIdMap.get(ad.userId) : undefined;
     const tier = ad.ownerTier || user?.subscriptionTier;
-    return tier === 'PRO' || tier === 'ELITE' || tier === 'BUSINESS';
+    return isPriorityTier(tier);
+  }, [userByIdMap]);
+
+  // S-16 & O-05 : Pré-calcul O(1) des statistiques annonceurs par userId strict
+  const userStatsMap = useMemo(() => {
+    const map = new Map<string, { totalAds: number; activeAds: number; totalSpent: number }>();
+    ads.forEach((a) => {
+      if (!a.userId || isTestAd(a)) return;
+      const cur = map.get(a.userId) || { totalAds: 0, activeAds: 0, totalSpent: 0 };
+      cur.totalAds++;
+      if (a.status === 'ACTIVE') cur.activeAds++;
+      if (a.paymentVerified || a.status === 'ACTIVE') {
+        cur.totalSpent += Number(a.paidAmount) || 0;
+      }
+      map.set(a.userId, cur);
+    });
+    return map;
+  }, [ads]);
+
+  const getTime = (d?: string | number) => {
+    if (!d) return 0;
+    const t = new Date(d).getTime();
+    return isNaN(t) ? 0 : t;
   };
 
   // Counts & financial metrics
@@ -603,9 +567,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         rejected++;
       }
 
-      // Point 2: Audience (totalViews) & Recettes (totalRevenue) strictly exclude test ads!
+      // Point 2 & B-15: Audience & Recettes excluent strictement les tests et annonces rejetées
       if (!isTestAd(ad)) {
-        totalRevenue += Number(ad.paidAmount) || 0;
+        if (ad.paymentVerified || ad.status === 'ACTIVE') {
+          totalRevenue += Number(ad.paidAmount) || 0;
+        }
         totalViews += Number(ad.viewsCount) || 0;
       }
     });
@@ -619,7 +585,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       totalRevenue,
       totalViews,
     };
-  }, [ads, users]);
+  }, [ads, isAdPriorityUser]);
 
   // Reports counts
   const reportStats = useMemo(() => {
@@ -641,7 +607,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     };
   }, [reports]);
 
-  // Filtered ads in moderation queue with sorting
+  // Filtered ads in moderation queue with sorting (B-04, O-05)
   const filteredAds = useMemo(() => {
     const list = ads.filter((ad) => {
       const isPending = ad.status === 'PENDING_REVIEW' || !!ad.pendingExtension;
@@ -650,13 +616,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       if (statusFilter === 'ACTIVE' && ad.status !== 'ACTIVE') return false;
       if (statusFilter === 'REJECTED' && ad.status !== 'REJECTED') return false;
 
-      // Point 3: Super Admin filter to hide test ads (ads not from registered advertisers)
-      if (isSuper && !showTestAds && isAdFromNonRegistered(ad)) return false;
+      // Point 3 & B-04: Filtre Super Admin robuste basé sur ad.isTest
+      if (isSuper && !showTestAds && isTestAd(ad)) return false;
 
       if (categoryFilter !== 'ALL' && ad.mainCategory !== categoryFilter) return false;
 
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
+      if (debouncedSearchQuery.trim()) {
+        const q = debouncedSearchQuery.toLowerCase();
         const matchesTitle = (ad.title || '').toLowerCase().includes(q);
         const matchesPhone = (ad.contactPhone || '').toLowerCase().includes(q);
         const matchesName = (ad.contactName || '').toLowerCase().includes(q);
@@ -670,15 +636,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     // Apply Sorting (Requirement 5)
     return list.sort((a, b) => {
       if (moderationSortBy === 'PRIORITY_TIER') {
-        const tierWeight: Record<string, number> = { BUSINESS: 4, ELITE: 3, PRO: 2, STARTER: 1, STANDARD: 0, FREE: 0 };
-        const tierA = a.ownerTier || users.find((u) => u.id === a.userId)?.subscriptionTier || 'STANDARD';
-        const tierB = b.ownerTier || users.find((u) => u.id === b.userId)?.subscriptionTier || 'STANDARD';
-        const diff = (tierWeight[tierB] || 0) - (tierWeight[tierA] || 0);
+        const userA = a.userId ? userByIdMap.get(a.userId) : undefined;
+        const userB = b.userId ? userByIdMap.get(b.userId) : undefined;
+        const tierA = a.ownerTier || userA?.subscriptionTier || 'STANDARD';
+        const tierB = b.ownerTier || userB?.subscriptionTier || 'STANDARD';
+        const diff = (TIER_WEIGHTS[tierB] || 0) - (TIER_WEIGHTS[tierA] || 0);
         if (diff !== 0) return diff;
-        return new Date(b.createdAt || b.publishedAt || 0).getTime() - new Date(a.createdAt || a.publishedAt || 0).getTime();
+        return getTime(b.createdAt || b.publishedAt) - getTime(a.createdAt || a.publishedAt);
       }
       if (moderationSortBy === 'DATE_ASC') {
-        return new Date(a.createdAt || a.publishedAt || 0).getTime() - new Date(b.createdAt || b.publishedAt || 0).getTime();
+        return getTime(a.createdAt || a.publishedAt) - getTime(b.createdAt || b.publishedAt);
       }
       if (moderationSortBy === 'PRICE_DESC') {
         return (Number(b.price) || 0) - (Number(a.price) || 0);
@@ -690,11 +657,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         return (Number(b.reportsCount) || 0) - (Number(a.reportsCount) || 0);
       }
       // Default: DATE_DESC
-      return new Date(b.createdAt || b.publishedAt || 0).getTime() - new Date(a.createdAt || a.publishedAt || 0).getTime();
+      return getTime(b.createdAt || b.publishedAt) - getTime(a.createdAt || a.publishedAt);
     });
-  }, [ads, users, statusFilter, categoryFilter, searchQuery, moderationSortBy, isSuper, showTestAds]);
+  }, [ads, userByIdMap, statusFilter, categoryFilter, debouncedSearchQuery, moderationSortBy, isSuper, showTestAds, isAdPriorityUser]);
 
-  // Registered Advertisers List (grounded in users collection with Point 4 sorting)
+  // Registered Advertisers List (grounded in users collection with O(1) userStatsMap)
   const filteredUsers = useMemo(() => {
     const list = users.filter((u) => {
       const isExempt = Boolean(u.exemptFromPaymentAndKyc || u.isExempt);
@@ -704,9 +671,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       if (advKycFilter === 'VERIFIED' && kycStatus !== 'VERIFIED') return false;
       if (advKycFilter === 'PENDING' && kycStatus !== 'PENDING') return false;
       if (advKycFilter === 'NOT_SUBMITTED' && kycStatus !== 'NOT_SUBMITTED') return false;
+      if (advKycFilter === 'REJECTED' && kycStatus !== 'REJECTED') return false;
 
-      if (advSearchQuery.trim()) {
-        const q = advSearchQuery.toLowerCase();
+      if (debouncedAdvSearchQuery.trim()) {
+        const q = debouncedAdvSearchQuery.toLowerCase();
         const name = (u.name || '').toLowerCase();
         const phone = (u.contactPhone || u.phoneNumber || '').toLowerCase();
         if (!name.includes(q) && !phone.includes(q)) return false;
@@ -717,14 +685,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
     return list.sort((a, b) => {
       if (advSortBy === 'DATE_DESC') {
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return timeB - timeA;
+        return getTime(b.createdAt) - getTime(a.createdAt);
       }
       if (advSortBy === 'DATE_ASC') {
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return timeA - timeB;
+        return getTime(a.createdAt) - getTime(b.createdAt);
       }
       if (advSortBy === 'NAME_ASC') {
         return (a.name || '').localeCompare(b.name || '', 'fr-FR');
@@ -734,18 +698,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         return tierRank(b.subscriptionTier) - tierRank(a.subscriptionTier);
       }
       if (advSortBy === 'ADS_DESC') {
-        const countA = ads.filter((ad) => ad.userId === a.id || (ad.contactPhone && (ad.contactPhone === a.contactPhone || ad.contactPhone === a.phoneNumber))).length;
-        const countB = ads.filter((ad) => ad.userId === b.id || (ad.contactPhone && (ad.contactPhone === b.contactPhone || ad.contactPhone === b.phoneNumber))).length;
+        const countA = userStatsMap.get(a.id)?.activeAds || 0;
+        const countB = userStatsMap.get(b.id)?.activeAds || 0;
         return countB - countA;
       }
       if (advSortBy === 'REVENUE_DESC') {
-        const revA = ads.filter((ad) => ad.userId === a.id || (ad.contactPhone && (ad.contactPhone === a.contactPhone || ad.contactPhone === a.phoneNumber))).reduce((acc, x) => acc + (Number(x.paidAmount) || 0), 0);
-        const revB = ads.filter((ad) => ad.userId === b.id || (ad.contactPhone && (ad.contactPhone === b.contactPhone || ad.contactPhone === b.phoneNumber))).reduce((acc, x) => acc + (Number(x.paidAmount) || 0), 0);
+        const revA = userStatsMap.get(a.id)?.totalSpent || 0;
+        const revB = userStatsMap.get(b.id)?.totalSpent || 0;
         return revB - revA;
       }
       return 0;
     });
-  }, [users, advKycFilter, advSearchQuery, advSortBy, ads]);
+  }, [users, advKycFilter, debouncedAdvSearchQuery, advSortBy, userStatsMap]);
 
   // Filtered & Sorted Reports (Point 4: Trier par)
   const filteredReports = useMemo(() => {
@@ -1310,7 +1274,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {/* List of Ads in Moderation */}
           {filteredAds.length > 0 ? (
             <div className="space-y-4">
-              {filteredAds.map((ad) => {
+              {filteredAds.slice(0, visibleAdsCount).map((ad) => {
                 const isPending = ad.status === 'PENDING_REVIEW' || !!ad.pendingExtension;
                 const isActive = ad.status === 'ACTIVE';
                 const isRejected = ad.status === 'REJECTED';
@@ -1335,6 +1299,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <img
                           src={ad.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=500&q=80'}
                           alt={ad.title || 'Annonce'}
+                          loading="lazy"
                           className="w-full h-full object-cover"
                         />
                         {(ad.images?.length || 0) > 1 && (
@@ -1504,6 +1469,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
                 );
               })}
+              {filteredAds.length > visibleAdsCount && (
+                <div className="text-center pt-4">
+                  <button
+                    onClick={() => setVisibleAdsCount((prev) => prev + 50)}
+                    className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-colors shadow-xs cursor-pointer"
+                  >
+                    Charger 50 annonces supplémentaires ({visibleAdsCount} affichées sur {filteredAds.length})
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="bg-white rounded-3xl p-10 text-center border border-slate-200">
@@ -1584,6 +1559,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               >
                 ✓ KYC Validés ({users.filter((u) => u.idVerificationStatus === 'VERIFIED').length})
               </button>
+              <button
+                onClick={() => setAdvKycFilter('REJECTED')}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                  advKycFilter === 'REJECTED' ? 'bg-red-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-200 border border-slate-200'
+                }`}
+              >
+                ✕ KYC Rejetés ({users.filter((u) => u.idVerificationStatus === 'REJECTED').length})
+              </button>
+              <button
+                onClick={() => setAdvKycFilter('NOT_SUBMITTED')}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                  advKycFilter === 'NOT_SUBMITTED' ? 'bg-slate-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-200 border border-slate-200'
+                }`}
+              >
+                Non soumis ({users.filter((u) => !u.idVerificationStatus || u.idVerificationStatus === 'NOT_SUBMITTED').length})
+              </button>
             </div>
 
             {/* Point 4: Controls for Advertisers: Option Trier par & Search */}
@@ -1636,15 +1627,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredUsers.map((u) => {
+                  {filteredUsers.slice(0, visibleUsersCount).map((u) => {
                     const isExempt = Boolean(u.exemptFromPaymentAndKyc || u.isExempt);
                     const kycStatus = u.idVerificationStatus || 'NOT_SUBMITTED';
 
-                    // Ads for this user
-                    const userAds = ads.filter((a) => a.userId === u.id || (a.contactPhone && (a.contactPhone === u.contactPhone || a.contactPhone === u.phoneNumber)));
-                    const activeUserAds = userAds.filter((a) => a.status === 'ACTIVE');
+                    // O-05 & S-16: Statistiques O(1) précalculées par userId
+                    const userStats = userStatsMap.get(u.id) || { totalAds: 0, activeAds: 0, totalSpent: 0 };
                     const isStaff = u.role === 'ADMIN' || u.role === 'SUPER_ADMIN' || u.role === 'SUPER ADMIN';
-                    const totalSpent = userAds.reduce((acc, a) => acc + (Number(a.paidAmount) || 0), 0);
 
                     return (
                       <tr key={u.id} className="hover:bg-slate-50/70 transition-colors">
@@ -1680,13 +1669,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
                         {/* Ads Count */}
                         <td className="p-3">
-                          <span className="font-bold text-slate-900">{userAds.length}</span>
-                          <span className="text-slate-400"> ({activeUserAds.length} en ligne)</span>
+                          <span className="font-bold text-slate-900">{userStats.totalAds}</span>
+                          <span className="text-slate-400"> ({userStats.activeAds} en ligne)</span>
                         </td>
 
                         {/* Total Spent */}
                         <td className="p-3 font-mono font-bold text-slate-900">
-                          {formatFCFA(totalSpent)}
+                          {formatFCFA(userStats.totalSpent)}
                         </td>
 
                         {/* Exemption VIP Status (Super Admin Only) - Point 6: Not for moderators */}
@@ -1968,6 +1957,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   })}
                 </tbody>
               </table>
+              {filteredUsers.length > visibleUsersCount && (
+                <div className="text-center p-4 border-t border-slate-100 bg-slate-50/50">
+                  <button
+                    onClick={() => setVisibleUsersCount((prev) => prev + 50)}
+                    className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors shadow-xs cursor-pointer"
+                  >
+                    Charger 50 annonceurs supplémentaires ({visibleUsersCount} affichés sur {filteredUsers.length})
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="bg-slate-50 rounded-2xl p-8 text-center text-slate-500 text-xs">

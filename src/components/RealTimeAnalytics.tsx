@@ -33,7 +33,7 @@ import {
 import { Ad, UserProfile } from '../types';
 import { formatFCFA } from '../utils/formatters';
 import { GABON_PROVINCES } from '../data/gabonLocations';
-import { isTestAd } from './AdminPanel';
+import { isTestAd } from '../utils/ads';
 
 interface RealTimeAnalyticsProps {
   ads: Ad[];
