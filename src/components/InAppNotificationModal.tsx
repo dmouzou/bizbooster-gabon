@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X,
   CheckCircle2,
@@ -15,10 +15,9 @@ import {
 } from 'lucide-react';
 import { Ad, UserProfile } from '../types';
 import {
-  fetchSeenNotificationIds,
-  saveDispatchedNotification,
+  persistSeenOnce,
   getLocalSeenNotificationIds,
-  markNotificationAsSeenLocally,
+  rejectionNotifId,
 } from '../services/notificationService';
 
 export type NotificationType =
@@ -66,16 +65,6 @@ export interface NotificationVisualTheme {
   icon: React.ReactNode;
 }
 
-/**
- * Palettes graphiques distinctives selon la nature de la notification :
- * - Rouge/Rubis pour Rejets & Alertes
- * - Émeraude pour Validations & Publications
- * - Ambre/Orange pour Échéances imminentes
- * - Jaune/Or pour Boosters & Options Vedettes
- * - Cyan/Bleu pour Identité & Sécurité KYC
- * - Paliers d'audience : Ciel (10), Violet Flamme (100), Or Solaire (1000)
- * - Indigo/Pourpre pour Abonnements & Forfaits
- */
 export function getNotificationTheme(type: NotificationType): NotificationVisualTheme {
   switch (type) {
     case 'AD_REJECTED':
@@ -216,6 +205,8 @@ export function getNotificationTheme(type: NotificationType): NotificationVisual
 }
 
 export const MAX_DURATION_MS = 15000; // Plafond maximal de 15 secondes
+const RECENCY_WINDOW_MS = 7 * 24 * 3600 * 1000; // Fenêtre de récence commune de 7 jours (B-08)
+const MAX_SESSION_NOTIFICATIONS = 5; // Limite de 5 notifications par session (B-08)
 
 export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
   currentUser,
@@ -226,98 +217,77 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
   onOpenSubscriptions,
 }) => {
   const [activeNotification, setActiveNotification] = useState<InAppNotification | null>(null);
-  const [remainingTimeMs, setRemainingTimeMs] = useState<number>(MAX_DURATION_MS);
+  const [secondsLeft, setSecondsLeft] = useState<number>(15);
   const [isHovered, setIsHovered] = useState<boolean>(false);
-  const [isSyncComplete, setIsSyncComplete] = useState<boolean>(false);
 
   // File d'attente et contrôle des états
   const queueRef = useRef<InAppNotification[]>([]);
   const isWaitingRef = useRef<boolean>(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Initialisation synchrone immédiate depuis localStorage + currentUser (0ms, aucun délai réseau)
-  const getInitialSeenIds = (): Set<string> => {
+  // Référence stable pour la notification active (Annexe B, corrige B-01)
+  const activeRef = useRef<InAppNotification | null>(null);
+  const remainingRef = useRef<number>(MAX_DURATION_MS);
+
+  // Initialisation synchrone immédiate depuis localStorage + currentUser (0ms, aucun délai réseau, B-07)
+  const getInitialSeenIds = (user?: UserProfile | null): Set<string> => {
     const set = new Set<string>();
-    if (currentUser?.id) {
-      const local = getLocalSeenNotificationIds(currentUser.id);
+    if (user?.id) {
+      const local = getLocalSeenNotificationIds(user.id);
       local.forEach((id) => set.add(id));
-      if (Array.isArray(currentUser.seenNotificationIds)) {
-        currentUser.seenNotificationIds.forEach((id) => set.add(id));
+      if (Array.isArray(user.seenNotificationIds)) {
+        user.seenNotificationIds.forEach((id) => set.add(id));
       }
     }
     return set;
   };
 
-  const seenIdsRef = useRef<Set<string>>(getInitialSeenIds());
+  const seenIdsRef = useRef<Set<string>>(getInitialSeenIds(currentUser));
 
-  // 1. Initialisation : synchronisation des IDs vus depuis Firestore + cache local
+  // Réinitialisation propre lors du changement d'utilisateur (B-07)
+  const prevUserIdRef = useRef<string | undefined>(currentUser?.id);
   useEffect(() => {
-    if (!currentUser?.id) {
-      setIsSyncComplete(true);
-      return;
-    }
-
-    // Réinjection synchrone immédiate au cas où currentUser vient d'arriver
-    const local = getLocalSeenNotificationIds(currentUser.id);
-    local.forEach((id) => seenIdsRef.current.add(id));
-    if (Array.isArray(currentUser.seenNotificationIds)) {
+    if (currentUser?.id !== prevUserIdRef.current) {
+      prevUserIdRef.current = currentUser?.id;
+      seenIdsRef.current = getInitialSeenIds(currentUser);
+      queueRef.current = [];
+      activeRef.current = null;
+      setActiveNotification(null);
+      isWaitingRef.current = false;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    } else if (currentUser?.id && Array.isArray(currentUser.seenNotificationIds)) {
       currentUser.seenNotificationIds.forEach((id) => seenIdsRef.current.add(id));
     }
+  }, [currentUser?.id, currentUser?.seenNotificationIds]);
 
-    let isCancelled = false;
-    fetchSeenNotificationIds(currentUser.id)
-      .then((remoteIds) => {
-        if (!isCancelled) {
-          remoteIds.forEach((id) => seenIdsRef.current.add(id));
-          setIsSyncComplete(true);
-        }
-      })
-      .catch((err) => {
-        console.warn('[InAppNotificationModal] Erreur remote sync:', err);
-        if (!isCancelled) {
-          setIsSyncComplete(true);
-        }
-      });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [currentUser?.id]);
-
-  // 2. Traitement de la notification suivante
-  const processNextNotification = () => {
-    if (activeNotification || isWaitingRef.current || queueRef.current.length === 0) {
-      return;
-    }
-
+  // Traitement de la notification suivante (Annexe B)
+  const showNext = useCallback(() => {
+    if (activeRef.current || isWaitingRef.current) return;
     const next = queueRef.current.shift();
-    if (next) {
-      // Verrouillage immédiat dès la prise en charge
-      seenIdsRef.current.add(next.id);
-      if (currentUser?.id) {
-        markNotificationAsSeenLocally(currentUser.id, next.id);
-        saveDispatchedNotification(currentUser.id, next);
-      }
-      setActiveNotification(next);
-      setRemainingTimeMs(MAX_DURATION_MS);
-      setIsHovered(false);
-    }
-  };
+    if (!next) return;
 
-  // 3. Fermeture de la notification active
-  const dismissActive = () => {
-    if (!activeNotification) return;
-
-    const notifToClose = activeNotification;
-    setActiveNotification(null);
-    setRemainingTimeMs(MAX_DURATION_MS);
+    activeRef.current = next;
+    setActiveNotification(next);
+    remainingRef.current = MAX_DURATION_MS;
+    setSecondsLeft(Math.ceil(MAX_DURATION_MS / 1000));
     setIsHovered(false);
 
-    // Sauvegarde immédiate et persistante dans Firebase pour zéro répétition
+    // Une seule persistance atomique en batch, à l'affichage (B-06)
     if (currentUser?.id) {
-      markNotificationAsSeenLocally(currentUser.id, notifToClose.id);
-      saveDispatchedNotification(currentUser.id, notifToClose);
+      seenIdsRef.current.add(next.id);
+      persistSeenOnce(currentUser.id, next);
     }
+  }, [currentUser?.id]);
+
+  // Fermeture de la notification active (Annexe B)
+  const dismissActive = useCallback(() => {
+    if (!activeRef.current) return;
+    activeRef.current = null;
+    setActiveNotification(null);
+    setIsHovered(false);
 
     // Intervalle respiratoire de 2 secondes avant la notification suivante (si la file n'est pas vide)
     if (queueRef.current.length > 0) {
@@ -325,16 +295,47 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
         isWaitingRef.current = false;
-        processNextNotification();
+        showNext();
       }, 2000);
     }
-  };
+  }, [showNext]);
 
-  // 3b. Nettoyage immédiat : si une annonce a été modifiée ou n'est plus REJECTED, purger immédiatement toute notification de rejet active ou en file
+  // Réinitialiser le compte à rebours dès qu'une notification est activée
+  useEffect(() => {
+    if (activeNotification) {
+      remainingRef.current = MAX_DURATION_MS;
+      setSecondsLeft(Math.ceil(MAX_DURATION_MS / 1000));
+    }
+  }, [activeNotification?.id]);
+
+  // Minuterie par échéance : pause au survol, aucun effet de bord dans un updater (Annexe B, corrige B-05)
+  useEffect(() => {
+    if (!activeNotification || isHovered) return;
+    const startedAt = Date.now();
+    const id = window.setTimeout(dismissActive, remainingRef.current);
+    return () => {
+      remainingRef.current = Math.max(0, remainingRef.current - (Date.now() - startedAt));
+      window.clearTimeout(id);
+    };
+  }, [activeNotification, isHovered, dismissActive]);
+
+  // Décompte visuel des secondes restantes
+  useEffect(() => {
+    if (!activeNotification || isHovered) return;
+    const startedAt = Date.now();
+    const startRemaining = remainingRef.current;
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      const rem = Math.max(0, startRemaining - elapsed);
+      setSecondsLeft(Math.max(1, Math.ceil(rem / 1000)));
+    }, 250);
+    return () => clearInterval(interval);
+  }, [activeNotification, isHovered]);
+
+  // Nettoyage immédiat : si une annonce a été modifiée ou n'est plus REJECTED
   useEffect(() => {
     if (!currentUser?.id || !userAds) return;
 
-    // Purger de la file d'attente les notifications des annonces qui ne sont plus à l'état REJECTED
     queueRef.current = queueRef.current.filter((notif) => {
       if (notif.type === 'AD_REJECTED' && notif.adId) {
         const matchingAd = userAds.find((a) => a.id === notif.adId);
@@ -345,20 +346,17 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
       return true;
     });
 
-    // Fermer immédiatement la notification active si elle affiche le rejet d'une annonce qui n'est plus REJECTED
     if (activeNotification?.type === 'AD_REJECTED' && activeNotification.adId) {
       const matchingAd = userAds.find((a) => a.id === activeNotification.adId);
       if (matchingAd && matchingAd.status !== 'REJECTED') {
-        setActiveNotification(null);
-        setRemainingTimeMs(MAX_DURATION_MS);
-        setIsHovered(false);
+        dismissActive();
       }
     }
-  }, [userAds, currentUser?.id, activeNotification]);
+  }, [userAds, currentUser?.id, activeNotification, dismissActive]);
 
-  // 4. Analyse et génération des notifications en attente (uniquement après synchronisation complète)
+  // Analyse et génération des notifications en attente avec fenêtre de récence et limitation par session
   useEffect(() => {
-    if (!isSyncComplete || !currentUser?.id) return;
+    if (!currentUser?.id || !userAds) return;
     const now = Date.now();
     const candidateNotifications: InAppNotification[] = [];
 
@@ -376,7 +374,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
           return true;
         }
       }
-      if (activeNotification?.id === id) return true;
+      if (activeRef.current?.id === id) return true;
       return queueRef.current.some((n) => n.id === id);
     };
 
@@ -384,31 +382,33 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
       const createdAtMs = new Date(ad.createdAt || 0).getTime() || now;
       const updatedAtMs = new Date(ad.updatedAt || ad.createdAt || 0).getTime() || now;
 
-      // 1. Annonce rejetée (notifId stable basé sur moderatedAt pour ne pas re-déclencher après modification par l'utilisateur)
+      // 1. Annonce rejetée (fonction partagée rejectionNotifId B-09, fenêtre de récence B-08)
       if (ad.status === 'REJECTED') {
-        const rejectionKey = ad.moderatedAt || ad.createdAt || 'rejected';
-        const notifId = `rej_${ad.id}_${rejectionKey}`;
-        if (!isAlreadyKnown(notifId)) {
-          const reason = ad.moderationReason || (ad as any).rejectionReason;
-          candidateNotifications.push({
-            id: notifId,
-            type: 'AD_REJECTED',
-            title: 'Annonce non validée par la modération',
-            message: `Votre annonce « ${ad.title} » n'a pas été validée. ${
-              reason
-                ? `Motif : ${reason}`
-                : 'Veuillez vérifier et corriger les critères de conformité.'
-            }`,
-            timestamp: updatedAtMs,
-            adId: ad.id,
-            badgeLabel: 'Rejetée',
-            actionLabel: 'Corriger l\'annonce',
-            onAction: () => onEditAd && onEditAd(ad),
-          });
+        const isRecent = now - updatedAtMs <= RECENCY_WINDOW_MS;
+        if (isRecent) {
+          const notifId = rejectionNotifId(ad);
+          if (!isAlreadyKnown(notifId)) {
+            const reason = ad.moderationReason || (ad as any).rejectionReason;
+            candidateNotifications.push({
+              id: notifId,
+              type: 'AD_REJECTED',
+              title: 'Annonce non validée par la modération',
+              message: `Votre annonce « ${ad.title} » n'a pas été validée. ${
+                reason
+                  ? `Motif : ${reason}`
+                  : 'Veuillez vérifier et corriger les critères de conformité.'
+              }`,
+              timestamp: updatedAtMs,
+              adId: ad.id,
+              badgeLabel: 'Rejetée',
+              actionLabel: 'Corriger l\'annonce',
+              onAction: () => onEditAd && onEditAd(ad),
+            });
+          }
         }
       }
 
-      // 2. Annonce validée (création initiale ou revalidation suite à des modifications de l'annonceur)
+      // 2. Annonce validée
       if (ad.status === 'ACTIVE') {
         const isModified = Boolean(ad.updatedAt);
         const modTimeMs = ad.moderatedAt ? new Date(ad.moderatedAt).getTime() : 0;
@@ -416,16 +416,13 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
         const isValidationAfterEdit = isModified && (modTimeMs === 0 || modTimeMs >= updateTimeMs - 10000);
 
         if (isValidationAfterEdit) {
-          // Validation suite à des modifications apportées par l'annonceur
           const validationKey = ad.moderatedAt || ad.updatedAt || 'edit';
           const notifId = `val_edit_${ad.id}_${validationKey}`;
           const validationTimeMs = modTimeMs || updateTimeMs || now;
-          const isRecent = now - validationTimeMs <= 7 * 24 * 3600 * 1000;
+          const isRecent = now - validationTimeMs <= RECENCY_WINDOW_MS;
 
           if (isRecent && !isAlreadyKnown(notifId)) {
-            // Verrouiller également l'ID initial pour éviter tout conflit
             seenIdsRef.current.add(`val_${ad.id}`);
-
             candidateNotifications.push({
               id: notifId,
               type: 'AD_VALIDATED',
@@ -439,9 +436,8 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
             });
           }
         } else {
-          // Validation initiale lors de la première publication
           const publishedMs = new Date(ad.publishedAt || ad.createdAt || 0).getTime() || createdAtMs;
-          const isRecent = now - publishedMs <= 7 * 24 * 3600 * 1000;
+          const isRecent = now - publishedMs <= RECENCY_WINDOW_MS;
           const notifId = `val_${ad.id}`;
 
           if (isRecent && !isAlreadyKnown(notifId)) {
@@ -484,10 +480,10 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
         }
       }
 
-      // 4. Boost « En Tête de Liste » arrivé à terme
+      // 4. Boost « En Tête de Liste » arrivé à terme (avec fenêtre de récence 7j)
       if (ad.featuredUntil) {
         const featExpMs = new Date(ad.featuredUntil).getTime();
-        if (featExpMs <= now) {
+        if (featExpMs <= now && now - featExpMs <= RECENCY_WINDOW_MS) {
           const notifId = `boost_exp_${ad.id}_${ad.featuredUntil}`;
           if (!isAlreadyKnown(notifId)) {
             candidateNotifications.push({
@@ -505,11 +501,11 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
         }
       }
 
-      // 5. Paliers de vues (On ne retient que le jalon le plus élevé atteint pour éviter le spam)
+      // 5. Paliers de vues (fenêtre de récence 7 jours)
       const views = ad.viewsCount || 0;
       if (views >= 1000) {
         const notifId = `view_1000_${ad.id}`;
-        if (!isAlreadyKnown(notifId)) {
+        if (!isAlreadyKnown(notifId) && now - createdAtMs <= RECENCY_WINDOW_MS) {
           candidateNotifications.push({
             id: notifId,
             type: 'VIEW_MILESTONE_1000',
@@ -524,7 +520,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
         }
       } else if (views >= 100) {
         const notifId = `view_100_${ad.id}`;
-        if (!isAlreadyKnown(notifId)) {
+        if (!isAlreadyKnown(notifId) && now - createdAtMs <= RECENCY_WINDOW_MS) {
           candidateNotifications.push({
             id: notifId,
             type: 'VIEW_MILESTONE_100',
@@ -539,7 +535,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
         }
       } else if (views >= 10) {
         const notifId = `view_10_${ad.id}`;
-        if (!isAlreadyKnown(notifId)) {
+        if (!isAlreadyKnown(notifId) && now - createdAtMs <= RECENCY_WINDOW_MS) {
           candidateNotifications.push({
             id: notifId,
             type: 'VIEW_MILESTONE_10',
@@ -555,19 +551,22 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
       }
     }
 
-    // 6. Identité vérifiée (KYC validé)
+    // 6. Identité vérifiée (KYC validé avec fenêtre de récence 7j)
     if (currentUser.isKycVerified || currentUser.idVerificationStatus === 'VERIFIED') {
-      const notifId = `kyc_verified_${currentUser.id}`;
-      if (!isAlreadyKnown(notifId)) {
-        candidateNotifications.push({
-          id: notifId,
-          type: 'IDENTITY_VERIFIED',
-          title: 'Identité validée avec succès !',
-          message:
-            'Félicitations, votre pièce d\'identité a été validée. Le badge de confiance « Annonceur Vérifié » est actif sur votre profil et vos annonces.',
-          timestamp: now - 3600000,
-          badgeLabel: 'Vérifié ✓',
-        });
+      const verifiedAtMs = currentUser.idVerifiedAt ? new Date(currentUser.idVerifiedAt).getTime() : now;
+      if (now - verifiedAtMs <= RECENCY_WINDOW_MS) {
+        const notifId = `kyc_verified_${currentUser.id}`;
+        if (!isAlreadyKnown(notifId)) {
+          candidateNotifications.push({
+            id: notifId,
+            type: 'IDENTITY_VERIFIED',
+            title: 'Identité validée avec succès !',
+            message:
+              'Félicitations, votre pièce d\'identité a été validée. Le badge de confiance « Annonceur Vérifié » est actif sur votre profil et vos annonces.',
+            timestamp: verifiedAtMs,
+            badgeLabel: 'Vérifié ✓',
+          });
+        }
       }
     }
 
@@ -597,45 +596,18 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
       }
     }
 
-    // Tri chronologique des notifications à injecter
+    // Tri chronologique des notifications et limitation de session (B-08)
     candidateNotifications.sort((a, b) => a.timestamp - b.timestamp);
+    const cappedCandidates = candidateNotifications.slice(0, MAX_SESSION_NOTIFICATIONS);
 
-    if (candidateNotifications.length > 0) {
-      // Verrouillage IMMÉDIAT des IDs (en mémoire, localement et sur Firebase)
-      candidateNotifications.forEach((n) => {
-        seenIdsRef.current.add(n.id);
-        if (currentUser.id) {
-          markNotificationAsSeenLocally(currentUser.id, n.id);
-          saveDispatchedNotification(currentUser.id, n);
-        }
-      });
+    if (cappedCandidates.length > 0) {
+      // Bloquer localement les IDs pour la session pour éviter toute réinjection dans queueRef
+      cappedCandidates.forEach((n) => seenIdsRef.current.add(n.id));
 
-      queueRef.current = [...queueRef.current, ...candidateNotifications];
-      processNextNotification();
+      queueRef.current = [...queueRef.current, ...cappedCandidates];
+      showNext();
     }
-  }, [isSyncComplete, currentUser?.id, userAds]);
-
-  // 5. Compte à rebours sécurisé plafonné à 15 secondes avec pause au survol
-  useEffect(() => {
-    if (!activeNotification) return;
-
-    const intervalStep = 100; // Rafraîchissement tous les 100ms
-    const timer = setInterval(() => {
-      setRemainingTimeMs((prev) => {
-        if (isHovered) {
-          return prev; // Maintien du timer en pause tant que l'utilisateur lit
-        }
-        if (prev <= intervalStep) {
-          clearInterval(timer);
-          dismissActive();
-          return 0;
-        }
-        return prev - intervalStep;
-      });
-    }, intervalStep);
-
-    return () => clearInterval(timer);
-  }, [activeNotification, isHovered]);
+  }, [currentUser?.id, userAds, showNext]);
 
   const handleAction = () => {
     if (activeNotification?.onAction) {
@@ -647,8 +619,6 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
   if (!activeNotification) return null;
 
   const theme = getNotificationTheme(activeNotification.type);
-  const secondsLeft = Math.max(1, Math.ceil(remainingTimeMs / 1000));
-  const progressPercent = Math.max(0, Math.min(100, (remainingTimeMs / MAX_DURATION_MS) * 100));
 
   return (
     <div
@@ -733,11 +703,15 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
           </div>
         </div>
 
-        {/* Barre de progression fluide (Plafond 15 secondes max) */}
+        {/* Barre de progression fluide (Animation CSS 15s, pause au survol, B-05) */}
         <div className="h-1.5 bg-slate-950/80 w-full overflow-hidden">
           <div
-            className={`h-full transition-all ease-linear ${theme.progressBarClass}`}
-            style={{ width: `${progressPercent}%` }}
+            key={activeNotification.id}
+            className={`h-full ${theme.progressBarClass} animate-progress-shrink`}
+            style={{
+              animationDuration: `${MAX_DURATION_MS}ms`,
+              animationPlayState: isHovered ? 'paused' : 'running',
+            }}
           />
         </div>
       </div>
