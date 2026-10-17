@@ -330,5 +330,12 @@ describe('Firestore Security Rules (Phase 1)', () => {
         idVerificationStatus: 'PENDING',
       })
     );
+
+    // Tentative de changer son numéro de téléphone -> doit échouer
+    await assertFails(
+      updateDoc(profileRef, {
+        phone: '+24177999999',
+      })
+    );
   });
 });
