@@ -215,12 +215,10 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // SETTINGS (public_config lisible par tous, system_config réservé aux admins, payment_gateway fermé au client)
+    // SETTINGS (liste blanche stricte : public_config lisible par tous, system_config lisible par admins)
     // ---------------------------------------------------------------
     match /settings/{settingId} {
-      allow read: if settingId == 'public_config'
-                  || (settingId == 'system_config' && isAdmin())
-                  || (settingId != 'system_config' && settingId != 'payment_gateway');
+      allow read: if settingId == 'public_config' || (settingId == 'system_config' && isAdmin());
       allow write: if settingId != 'payment_gateway' && isAdmin();
     }
 
@@ -241,8 +239,11 @@ service cloud.firestore {
     // ---------------------------------------------------------------
     match /user_notifications/{notifId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isAdmin() || (isSignedIn() && request.resource.data.userId == request.auth.uid);
-      allow update, delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if (isAdmin() && request.resource.data.userId is string)
+                    || (isSignedIn()
+                        && request.resource.data.userId == request.auth.uid
+                        && notifId == request.auth.uid + '_' + request.resource.data.notifId);
+      allow update, delete: if isAdmin();
     }
 
     // ---------------------------------------------------------------

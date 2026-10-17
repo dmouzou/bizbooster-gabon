@@ -6,7 +6,7 @@ import {
   RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import * as fs from 'fs';
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 
 const PROJECT_ID = 'bizbooster-gabon-test';
 
@@ -415,6 +415,46 @@ describe('Firestore Security Rules (Phase 1)', () => {
       setDoc(doc(superAdminDb, 'system_counters', 'scalability_metrics'), {
         totalSmsSent: 0,
       })
+    );
+  });
+
+  // 10. Étape 1.4 : Réglages et notifications (S-08, S-09)
+  it('settings liste blanche stricte et user_notifications non modifiable par le client', async () => {
+    // Pré-créer un document dans settings autre que public_config
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'settings', 'secret_internal_config'), {
+        secretKey: 'top_secret',
+      });
+      await setDoc(doc(context.firestore(), 'user_notifications', 'user_notif_1_notif_abc'), {
+        userId: 'user_notif_1',
+        notifId: 'notif_abc',
+        title: 'Notification d origine',
+      });
+    });
+
+    // 1. Lecture de secret_internal_config par un utilisateur normal -> doit échouer (liste blanche)
+    const normalDb = testEnv.authenticatedContext('user_notif_1').firestore();
+    await assertFails(getDoc(doc(normalDb, 'settings', 'secret_internal_config')));
+
+    // 2. Création de notification par le propriétaire avec ID deterministe userId_notifId -> doit réussir
+    await assertSucceeds(
+      setDoc(doc(normalDb, 'user_notifications', 'user_notif_1_notif_new'), {
+        userId: 'user_notif_1',
+        notifId: 'notif_new',
+        title: 'Validation annonce',
+      })
+    );
+
+    // 3. Tentative de falsification / mise à jour de la notification par le propriétaire -> doit échouer
+    await assertFails(
+      updateDoc(doc(normalDb, 'user_notifications', 'user_notif_1_notif_abc'), {
+        title: 'Notification modifiée frauduleusement',
+      })
+    );
+
+    // 4. Tentative de suppression par le propriétaire -> doit échouer
+    await assertFails(
+      deleteDoc(doc(normalDb, 'user_notifications', 'user_notif_1_notif_abc'))
     );
   });
 });

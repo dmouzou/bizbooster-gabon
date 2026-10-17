@@ -136,8 +136,9 @@ export async function saveDispatchedNotification(
     // 3. Document de log détaillé dans `user_notifications`
     try {
       const logDocRef = doc(db, 'user_notifications', `${userId}_${notif.id}`);
-      const logData: PersistedNotificationLog = {
+      const logData = {
         id: notif.id,
+        notifId: notif.id,
         userId,
         type: notif.type,
         title: notif.title,
@@ -148,9 +149,13 @@ export async function saveDispatchedNotification(
         status: 'DISPATCHED',
       };
 
-      await setDoc(logDocRef, logData, { merge: true });
-    } catch (logErr) {
-      console.warn('[NotificationService] Erreur écriture log audit notification:', logErr);
+      await setDoc(logDocRef, logData);
+    } catch (logErr: any) {
+      if (logErr?.code === 'permission-denied') {
+        // Document d'audit déjà créé et verrouillé contre la falsification
+      } else {
+        console.warn('[NotificationService] Erreur écriture log audit notification:', logErr);
+      }
     }
   } catch (err) {
     console.warn('[NotificationService] Erreur écriture Firestore notification:', err);
