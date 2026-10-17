@@ -1,16 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import {
-  addDoc,
   collection,
-  deleteDoc,
-  deleteField,
   doc,
   getDoc,
   getDocs,
   onSnapshot,
   query,
-  updateDoc,
   where,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -181,16 +177,7 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
     };
   }, [status]);
 
-  const log = (targetId: string, action: string, reason?: string) =>
-    addDoc(collection(db, 'moderation_logs'), {
-      targetId,
-      action,
-      moderatorId: auth.currentUser?.uid || 'admin',
-      timestamp: new Date().toISOString(),
-      ...(reason ? { reason } : {}),
-    });
-
-  // 3. Approve ad or paid extension via Cloud Function sécurisée
+  // 3. Modération via Cloud Functions sécurisées (Phase 3 - Étape 3.1)
   const handleApproveAd = async (adId: string) => {
     try {
       const approveAdCallable = httpsCallable<{ adId: string }, { success: boolean; adId: string }>(
@@ -198,7 +185,6 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
         'approveAd'
       );
       await approveAdCallable({ adId });
-      await log(adId, 'APPROVED');
       showAlert("Annonce approuvée avec succès !", 'success');
     } catch (e: any) {
       console.error(e);
@@ -208,15 +194,15 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
 
   const handleRejectAd = async (adId: string, reason: string) => {
     try {
-      await updateDoc(doc(db, 'ads', adId), {
-        status: 'REJECTED',
-        moderationReason: reason,
-        moderatedAt: new Date().toISOString(),
-      });
-      await log(adId, 'REJECTED', reason);
-    } catch (e) {
+      const rejectAdCallable = httpsCallable<{ adId: string; reason: string }, { success: boolean }>(
+        functions,
+        'rejectAd'
+      );
+      await rejectAdCallable({ adId, reason });
+      showAlert("Annonce rejetée avec succès.", 'success');
+    } catch (e: any) {
       console.error(e);
-      showAlert('Échec du rejet.', 'error');
+      showAlert("Échec du rejet : " + (e?.message || 'Erreur réseau.'), 'error');
     }
   };
 
@@ -236,20 +222,18 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
     const { adId, reportId } = deleteModalState;
     setDeleteModalState(null);
     try {
-      await deleteDoc(doc(db, 'ads', adId));
-      if (reportId) {
-        await updateDoc(doc(db, 'reports', reportId), {
-          status: 'RESOLVED',
-          resolvedAt: new Date().toISOString(),
-          resolutionNotes: 'Annonce frauduleuse supprimée définitivement par la modération.',
-        });
-        await log(adId, 'AD_DELETED_FOR_FRAUD');
-      } else {
-        await log(adId, 'DELETED');
-      }
-    } catch (e) {
+      const deleteAdCallable = httpsCallable<{ adId: string; reason: string }, { success: boolean }>(
+        functions,
+        'deleteAd'
+      );
+      await deleteAdCallable({
+        adId,
+        reason: reportId ? 'Annonce frauduleuse' : 'Suppression modération',
+      });
+      showAlert('Annonce supprimée avec succès.', 'success');
+    } catch (e: any) {
       console.error(e);
-      showAlert('Échec de la suppression.', 'error');
+      showAlert('Échec de la suppression : ' + (e?.message || 'Erreur.'), 'error');
     }
   };
 
@@ -260,40 +244,44 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       return;
     }
     try {
-      await updateDoc(doc(db, 'users', userId), {
-        exemptFromPaymentAndKyc: isExempt,
-        isExempt: isExempt,
-      });
-      await log(userId, isExempt ? 'EXEMPTION_GRANTED' : 'EXEMPTION_REVOKED');
-    } catch (e) {
+      const setExemptionCallable = httpsCallable<{ userId: string; isExempt: boolean }, { success: boolean }>(
+        functions,
+        'setExemption'
+      );
+      await setExemptionCallable({ userId, isExempt });
+      showAlert(isExempt ? 'Exonération accordée avec succès.' : 'Exonération révoquée avec succès.', 'success');
+    } catch (e: any) {
       console.error(e);
-      showAlert("Erreur lors de la mise à jour de l'exonération.", 'error');
+      showAlert("Erreur lors de la mise à jour de l'exonération : " + (e?.message || 'Erreur.'), 'error');
     }
   };
 
   const handleApproveKyc = async (userId: string) => {
     try {
-      await updateDoc(doc(db, 'users', userId), {
-        idVerificationStatus: 'VERIFIED',
-        idVerifiedAt: new Date().toISOString(),
-      });
-      await log(userId, 'KYC_APPROVED');
-    } catch (e) {
+      const targetUser = users.find((u) => u.id === userId);
+      const approveKycCallable = httpsCallable<{ uid: string; idDocumentUrl?: string }, { success: boolean }>(
+        functions,
+        'approveKyc'
+      );
+      await approveKycCallable({ uid: userId, idDocumentUrl: targetUser?.idDocumentUrl });
+      showAlert("Pièce d'identité validée avec succès.", 'success');
+    } catch (e: any) {
       console.error(e);
-      showAlert("Erreur lors de la validation de la pièce d'identité.", 'error');
+      showAlert("Erreur lors de la validation KYC : " + (e?.message || 'Erreur.'), 'error');
     }
   };
 
   const handleRejectKyc = async (userId: string, reason: string) => {
     try {
-      await updateDoc(doc(db, 'users', userId), {
-        idVerificationStatus: 'REJECTED',
-        idRejectionReason: reason,
-      });
-      await log(userId, 'KYC_REJECTED', reason);
-    } catch (e) {
+      const rejectKycCallable = httpsCallable<{ uid: string; reason: string }, { success: boolean }>(
+        functions,
+        'rejectKyc'
+      );
+      await rejectKycCallable({ uid: userId, reason });
+      showAlert("Pièce d'identité rejetée.", 'success');
+    } catch (e: any) {
       console.error(e);
-      showAlert("Erreur lors du rejet de la pièce d'identité.", 'error');
+      showAlert("Erreur lors du rejet KYC : " + (e?.message || 'Erreur.'), 'error');
     }
   };
 
@@ -304,21 +292,15 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       return;
     }
     try {
-      const isPaid = tier === 'PRO' || tier === 'ELITE' || tier === 'BUSINESS';
-      const targetUser = users.find((u) => u.id === userId);
-      const currentBoosts = targetUser?.freeBoostsRemaining || 0;
-      const boostsToAdd = tier === 'BUSINESS' ? 6 : tier === 'ELITE' ? 3 : tier === 'PRO' ? 1 : 0;
-      const newBoosts = Math.min(20, currentBoosts + boostsToAdd);
-
-      await updateDoc(doc(db, 'users', userId), {
-        subscriptionTier: tier,
-        subscriptionExpiresAt: isPaid ? new Date(Date.now() + 30 * 86400000).toISOString() : null,
-        freeBoostsRemaining: newBoosts,
-      });
-      await log(userId, 'SUBSCRIPTION_UPDATED', `Forfait défini sur: ${tier} (+${boostsToAdd} boosters crédités)`);
-    } catch (e) {
+      const setSubscriptionCallable = httpsCallable<
+        { userId: string; subscriptionTier: string; durationDays: number },
+        { success: boolean }
+      >(functions, 'setSubscription');
+      await setSubscriptionCallable({ userId, subscriptionTier: tier, durationDays: 30 });
+      showAlert(`Forfait ${tier} appliqué avec succès.`, 'success');
+    } catch (e: any) {
       console.error(e);
-      showAlert("Erreur lors de la mise à jour de l'abonnement.", 'error');
+      showAlert("Erreur lors de la mise à jour de l'abonnement : " + (e?.message || 'Erreur.'), 'error');
     }
   };
 
@@ -328,14 +310,20 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
       return;
     }
     try {
-      const safeCount = Math.max(0, Math.min(20, Math.round(count)));
-      await updateDoc(doc(db, 'users', userId), {
-        freeBoostsRemaining: safeCount,
-      });
-      await log(userId, 'BOOSTERS_UPDATED', `Solde de boosters ajusté à ${safeCount}`);
-    } catch (e) {
+      const targetUser = users.find((u) => u.id === userId);
+      const current = Number(targetUser?.freeBoostsRemaining) || 0;
+      const delta = Math.round(count) - current;
+      if (delta === 0) return;
+
+      const adjustBoostersCallable = httpsCallable<{ userId: string; delta: number }, { success: boolean }>(
+        functions,
+        'adjustBoosters'
+      );
+      await adjustBoostersCallable({ userId, delta });
+      showAlert('Solde de boosters ajusté.', 'success');
+    } catch (e: any) {
       console.error(e);
-      showAlert("Erreur lors de la modification des boosters.", 'error');
+      showAlert('Erreur lors de la modification des boosters : ' + (e?.message || 'Erreur.'), 'error');
     }
   };
 
@@ -366,43 +354,44 @@ export default function AdminApp({ onSwitchToFrontend }: AdminAppProps = {}) {
     }
 
     try {
-      await updateDoc(doc(db, 'users', userId), {
-        role: 'SUPER_ADMIN',
-      });
-      await log(userId, 'ROLE_PROMOTED_SUPER_ADMIN', `Modérateur promu au rang de Super Administrateur`);
+      const setRoleCallable = httpsCallable<{ targetUid: string; role: string }, { success: boolean }>(
+        functions,
+        'setRole'
+      );
+      await setRoleCallable({ targetUid: userId, role: 'SUPER_ADMIN' });
       showAlert(`Le modérateur "${targetUser.name || targetUser.contactPhone}" a été promu Super Administrateur avec succès.`, 'success', 'Promotion Réussie');
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      showAlert("Erreur lors de la mise à jour du rôle.", 'error');
+      showAlert("Erreur lors de la mise à jour du rôle : " + (e?.message || 'Erreur.'), 'error');
     }
   };
 
   // 5. Fraud Reports handlers
   const handleResolveReport = async (reportId: string, notes?: string) => {
     try {
-      await updateDoc(doc(db, 'reports', reportId), {
-        status: 'RESOLVED',
-        resolvedAt: new Date().toISOString(),
-        resolutionNotes: notes || 'Signalement traité par la modération',
-      });
-      await log(reportId, 'REPORT_RESOLVED');
-    } catch (e) {
+      const resolveReportCallable = httpsCallable<{ reportId: string; note?: string }, { success: boolean }>(
+        functions,
+        'resolveReport'
+      );
+      await resolveReportCallable({ reportId, note: notes });
+      showAlert('Signalement résolu avec succès.', 'success');
+    } catch (e: any) {
       console.error(e);
-      showAlert('Erreur lors du traitement du signalement.', 'error');
+      showAlert('Erreur lors du traitement du signalement : ' + (e?.message || 'Erreur.'), 'error');
     }
   };
 
   const handleDismissReport = async (reportId: string, notes?: string) => {
     try {
-      await updateDoc(doc(db, 'reports', reportId), {
-        status: 'DISMISSED',
-        resolvedAt: new Date().toISOString(),
-        resolutionNotes: notes || 'Signalement classé sans suite (non fondé)',
-      });
-      await log(reportId, 'REPORT_DISMISSED');
-    } catch (e) {
+      const dismissReportCallable = httpsCallable<{ reportId: string; note?: string }, { success: boolean }>(
+        functions,
+        'dismissReport'
+      );
+      await dismissReportCallable({ reportId, note: notes });
+      showAlert('Signalement classé sans suite.', 'success');
+    } catch (e: any) {
       console.error(e);
-      showAlert('Erreur lors du classement du signalement.', 'error');
+      showAlert('Erreur lors du classement du signalement : ' + (e?.message || 'Erreur.'), 'error');
     }
   };
 

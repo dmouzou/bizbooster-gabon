@@ -2320,13 +2320,8 @@ async function checkIsAdmin(
   const userDoc = await db.collection("users").doc(uid).get();
   if (!userDoc.exists) return false;
   const data = userDoc.data() || {};
-  return (
-    data.role === "ADMIN" ||
-    data.role === "SUPER_ADMIN" ||
-    data.role === "SUPER ADMIN" ||
-    data.isAdmin === true ||
-    data.isSuperAdmin === true
-  );
+  const docRole = String(data.role || "").toUpperCase().replace(/[\s_-]+/g, "");
+  return docRole === "ADMIN" || docRole === "SUPERADMIN";
 }
 
 /**
@@ -2717,6 +2712,21 @@ export const approveAd = onCall(
       }
 
       await adRef.update(updates);
+    }
+
+    // Journal d'audit serveur atomique pour la modération (B-13, S-10)
+    try {
+      const logRef = db.collection("moderation_logs").doc();
+      await logRef.set({
+        action: "APPROVE_AD",
+        targetId: adId,
+        adminId: request.auth.uid,
+        adminEmail: (request.auth.token as any)?.email || null,
+        adTitle: ad.title || "Sans titre",
+        timestamp: FieldValue.serverTimestamp(),
+      });
+    } catch (logErr) {
+      console.warn("[approveAd] Erreur journal moderation_logs:", logErr);
     }
 
     return {success: true, adId};
@@ -3248,4 +3258,15 @@ export const activateExemptSubscription = onCall(
 );
 
 export { setRole } from "./setRole";
+export {
+  rejectAd,
+  deleteAd,
+  approveKyc,
+  rejectKyc,
+  setSubscription,
+  adjustBoosters,
+  resolveReport,
+  dismissReport,
+  setExemption,
+} from "./moderation";
 
