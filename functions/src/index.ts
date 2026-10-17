@@ -2887,68 +2887,7 @@ export const syncOwnerTierOnUserChange = onDocumentUpdated(
   }
 );
 
-/**
- * Phase 2 - 7. registerView : Enregistrement atomique des vues d'annonces.
- * Ignore le propriétaire et déduplique par 24h.
- */
-export const registerView = onCall(
-  {cors: true},
-  async (request) => {
-    const {adId, deviceId} = request.data || {};
-    if (!adId) {
-      throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
-    }
-
-    const db = getFirestore();
-    const adRef = db.collection("ads").doc(String(adId));
-    const adSnap = await adRef.get();
-    if (!adSnap.exists) {
-      return {counted: false, reason: "not_found"};
-    }
-    const ad = adSnap.data() || {};
-    if (ad.status !== "ACTIVE") {
-      return {counted: false, reason: "not_active"};
-    }
-    // Ignore le propriétaire de l'annonce
-    if (request.auth && ad.userId === request.auth.uid) {
-      return {counted: false, reason: "owner"};
-    }
-
-    const viewerKey = request.auth?.uid ?
-      `user_${request.auth.uid}` :
-      `device_${String(deviceId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
-
-    const viewDocId = `${adId}_${viewerKey}`;
-    const viewRef = db.collection("ad_views").doc(viewDocId);
-    const now = Date.now();
-    const nowIso = new Date(now).toISOString();
-
-    const viewSnap = await viewRef.get();
-    if (viewSnap.exists) {
-      const lastViewed = viewSnap.data()?.viewedAt ?
-        new Date(viewSnap.data()?.viewedAt).getTime() : 0;
-      if (now - lastViewed < 24 * 3600 * 1000) {
-        return {counted: false, reason: "deduplicated"};
-      }
-    }
-
-    await viewRef.set(
-      {
-        adId: String(adId),
-        viewerKey,
-        viewedAt: nowIso,
-        expiresAt: new Date(now + 7 * 86400000).toISOString(),
-      },
-      {merge: true}
-    );
-
-    await adRef.update({
-      viewsCount: FieldValue.increment(1),
-    });
-
-    return {counted: true};
-  }
-);
+// registerView durci exporté depuis ./registerView (Annexe C, Étape 3.2 & 3.3)
 
 /**
  * Phase 6.3 extendAdVip : Prolongation gratuite réservée aux abonnés Business actifs et membres VIP.
@@ -3269,4 +3208,7 @@ export {
   dismissReport,
   setExemption,
 } from "./moderation";
+export { registerView } from "./registerView";
+export { reportAd } from "./reports";
+export { resubmitAd } from "./resubmitAd";
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, AlertTriangle, ShieldAlert, CheckCircle2, RefreshCw } from 'lucide-react';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../services/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { auth, functions } from '../services/firebase';
 import { Ad } from '../types';
 
 interface ReportAdModalProps {
@@ -52,17 +52,16 @@ export const ReportAdModal: React.FC<ReportAdModalProps> = ({
     setError(null);
 
     try {
-      const reportId = `${ad.id}_${auth.currentUser.uid}`;
-      const reportRef = doc(db, 'reports', reportId);
+      const reportAdCallable = httpsCallable<
+        { adId: string; reason: string; details: string; reporterPhone?: string },
+        { success: boolean; reportId: string }
+      >(functions, 'reportAd');
 
-      await setDoc(reportRef, {
+      await reportAdCallable({
         adId: ad.id,
         reason,
         details: details.trim(),
-        reporterId: auth.currentUser.uid,
-        reporterPhone: reporterPhone.trim() || auth.currentUser.phoneNumber || 'Non renseigné',
-        status: 'PENDING',
-        createdAt: serverTimestamp(),
+        reporterPhone: reporterPhone.trim() || auth.currentUser.phoneNumber || '',
       });
 
       setSubmitted(true);
@@ -75,10 +74,13 @@ export const ReportAdModal: React.FC<ReportAdModalProps> = ({
       }, 2500);
     } catch (err: any) {
       console.error('Failed to submit report:', err);
-      if (err?.code === 'permission-denied') {
-        setError('Signalement refusé ou déjà enregistré pour cette annonce.');
+      const errCode = err?.code || '';
+      if (errCode === 'functions/already-exists' || errCode === 'already-exists') {
+        setError('Vous avez déjà signalé cette annonce.');
+      } else if (errCode === 'functions/unauthenticated' || errCode === 'unauthenticated') {
+        setError('Vous devez être connecté pour signaler une annonce.');
       } else {
-        setError('Impossible d\'enregistrer le signalement. Veuillez vérifier votre connexion.');
+        setError(err?.message || 'Impossible d\'enregistrer le signalement. Veuillez vérifier votre connexion.');
       }
     } finally {
       setIsSubmitting(false);
