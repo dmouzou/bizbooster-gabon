@@ -165,9 +165,8 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
           setAuthReady(true);
           setProfileError(null);
           if (snap.exists()) {
-            const data = snap.data();
-            const { password, ...safeData } = data as any;
-            const existingFavs: string[] = safeData.favoriteAdIds || [];
+            const data = (snap.data() || {}) as any;
+            const existingFavs: string[] = data.favoriteAdIds || [];
             try {
               const guestStored = localStorage.getItem('bizbooster_guest_favorites');
               if (guestStored) {
@@ -184,8 +183,8 @@ function PublicApp({ onSwitchToAdmin }: { onSwitchToAdmin?: () => void } = {}) {
               // ignore
             }
             setCurrentUser({
+              ...data,
               id: fbUser.uid,
-              ...safeData,
             } as UserProfile);
           } else {
             setCurrentUser(null);

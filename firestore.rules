@@ -51,9 +51,7 @@ service cloud.firestore {
         'consumedFreeAdsCount',
         'activeBoosterPack',
         'activePack',
-        'idVerifiedAt',
-        'password',
-        'lastPasswordChangeDate'
+        'idVerifiedAt'
       ];
     }
 
@@ -163,7 +161,7 @@ service cloud.firestore {
       allow create: if isOwner(userId)
                     && request.resource.data.role == 'USER'
                     && !request.resource.data.keys().hasAny(privilegedKeys())
-                    && !request.resource.data.keys().hasAny(['isKycVerified', 'isVerified'])
+                    && !request.resource.data.keys().hasAny(['isKycVerified', 'isVerified', 'password', 'lastPasswordChangeDate'])
                     && request.resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') in ['NOT_SUBMITTED', 'PENDING'];
 
       allow update: if isSuperAdmin()
@@ -173,7 +171,7 @@ service cloud.firestore {
                         && request.resource.data.get('role', 'USER') == resource.data.get('role', 'USER')
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(privilegedKeys())
                         && !request.resource.data.diff(resource.data).affectedKeys()
-                            .hasAny(['isKycVerified', 'isVerified', 'isAdmin', 'isSuperAdmin'])
+                            .hasAny(['isKycVerified', 'isVerified', 'isAdmin', 'isSuperAdmin', 'password', 'lastPasswordChangeDate'])
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['idVerificationStatus'])
                             || request.resource.data.idVerificationStatus in ['NOT_SUBMITTED', 'PENDING'])
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['idDocumentUrl'])

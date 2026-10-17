@@ -467,5 +467,36 @@ describe('Firestore Security Rules (Phase 1)', () => {
     const ghostSuperAdminDb = testEnv.authenticatedContext('super_ghost', { role: 'SUPER_ADMIN' }).firestore();
     await assertSucceeds(getDoc(doc(ghostSuperAdminDb, 'system_counters', 'scalability_metrics')));
   });
+
+  // 12. Étape 1.6 : Suppression et interdiction absolue du champ password (S-03)
+  it('interdit la création ou la mise à jour d un champ password dans users', async () => {
+    const userDb = testEnv.authenticatedContext('user_pwd_test').firestore();
+    const userRef = doc(userDb, 'users', 'user_pwd_test');
+
+    // Tentative de création avec champ password -> refusé
+    await assertFails(
+      setDoc(userRef, {
+        role: 'USER',
+        name: 'Tentative Password',
+        password: 'plain_password',
+      })
+    );
+
+    // Création normale sans password -> autorisé
+    await assertSucceeds(
+      setDoc(userRef, {
+        role: 'USER',
+        name: 'Utilisateur Sans Mot De Passe',
+      })
+    );
+
+    // Tentative de mise à jour avec password -> refusé
+    await assertFails(
+      updateDoc(userRef, {
+        password: 'hacked_password',
+      })
+    );
+  });
 });
+
 
