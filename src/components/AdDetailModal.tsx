@@ -1,12 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3, ShieldCheck, Heart, Download, FileText, ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
 import { Ad, UserProfile } from '../types';
 import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
 import { isAdVipCornerEligible } from '../utils/vipCorner';
+import { isValidStorageUrl } from '../utils/ads';
 import { ReportAdModal } from './ReportAdModal';
 import { ShareAdModal } from './ShareAdModal';
 import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
 import { trackDownloadRequest } from '../services/platformMetrics';
+
+export const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1000&q=80';
+
+/**
+ * Validation d'origine de médias (S-14)
+ * Autorise Firebase/Google Cloud Storage ainsi que le domaine Unsplash pour les images de test initiales.
+ */
+export function isTrustedMediaUrl(url?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  if (isValidStorageUrl(url)) return true;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'https:' && (parsed.hostname === 'images.unsplash.com' || parsed.hostname.endsWith('.unsplash.com'))) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
 
 interface AdDetailModalProps {
   ad: Ad | null;
@@ -27,8 +48,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
   isFavorite = false,
   onToggleFavorite,
 }) => {
-  if (!ad) return null;
-
+  // B-03 : Règle des hooks React - Tous les hooks doivent impérativement être déclarés au niveau supérieur avant tout retour anticipé.
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isReportOpen, setIsReportOpen] = useState(false);
@@ -37,27 +57,33 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const [touchEndX, setTouchEndX] = useState<number | null>(null);
 
-  const images = (ad.images && ad.images.length > 0)
-    ? ad.images
-    : ['https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1000&q=80'];
+  // S-14 : Validation d'origine et nettoyage de la liste des images
+  const images = useMemo(() => {
+    if (!ad?.images || !Array.isArray(ad.images) || ad.images.length === 0) {
+      return [FALLBACK_IMAGE];
+    }
+    const valid = ad.images.filter((img) => isTrustedMediaUrl(img));
+    return valid.length > 0 ? valid : [FALLBACK_IMAGE];
+  }, [ad?.images]);
+
   const currentImage = images[activeImageIndex] || images[0];
   const hasMultipleImages = images.length > 1;
 
   // Réinitialiser la première image lors de l'ouverture d'une nouvelle annonce
-  React.useEffect(() => {
+  useEffect(() => {
     setActiveImageIndex(0);
     setIsLightboxOpen(false);
-  }, [ad.id]);
+  }, [ad?.id]);
 
-  const handlePrevImage = (e?: React.MouseEvent) => {
+  const handlePrevImage = useCallback((e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setActiveImageIndex((prev) => (prev > 0 ? prev - 1 : images.length - 1));
-  };
+  }, [images.length]);
 
-  const handleNextImage = (e?: React.MouseEvent) => {
+  const handleNextImage = useCallback((e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setActiveImageIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0));
-  };
+  }, [images.length]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     setTouchStartX(e.targetTouches[0].clientX);
@@ -81,7 +107,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
   };
 
   // Navigation clavier dans le lightbox plein écran
-  React.useEffect(() => {
+  useEffect(() => {
     if (!isLightboxOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -94,7 +120,10 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isLightboxOpen, hasMultipleImages, images.length]);
+  }, [isLightboxOpen, handlePrevImage, handleNextImage]);
+
+  // Retour anticipé sécurisé après tous les hooks
+  if (!ad) return null;
 
   const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
   const isOwner = isAdOwner(ad, currentUser ?? null);
@@ -248,6 +277,8 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                 aria-hidden="true"
                 className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-35 select-none pointer-events-none z-0"
                 referrerPolicy="no-referrer"
+                loading="lazy"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_IMAGE; }}
               />
 
               {/* Photo intégrale non rognée (object-contain) */}
@@ -256,6 +287,8 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                 alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
                 className="relative z-10 w-full h-full object-contain drop-shadow-md select-none transition-transform duration-300 group-hover/gallery:scale-[1.01]"
                 referrerPolicy="no-referrer"
+                loading="lazy"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_IMAGE; }}
               />
 
               {/* Badge compteur de photos */}
@@ -324,6 +357,8 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                       alt=""
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
+                      loading="lazy"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_IMAGE; }}
                     />
                     {activeImageIndex === idx && (
                       <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none" />
@@ -334,8 +369,8 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
             )}
           </div>
 
-          {/* Video Player if ad has video */}
-          {ad.videoUrl && (
+          {/* Video Player if ad has video (S-14: validation stockage Cloud) */}
+          {ad.videoUrl && isValidStorageUrl(ad.videoUrl) && (
             <div className="bg-slate-900 rounded-2xl p-4 text-white space-y-2 border border-slate-800">
               <div className="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase tracking-wide">
                 <Video className="w-4 h-4 text-purple-400" />
@@ -402,9 +437,11 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
 
             <div className="flex items-center gap-3">
               <div className="text-right">
-                <div className="text-xs text-slate-500 font-medium">Validité initiale : {ad.durationDays} jours</div>
+                <div className="text-xs text-slate-500 font-medium">Validité initiale : {ad.durationDays ?? 'N/A'} jours</div>
                 <div className="text-xs text-slate-700 font-bold">
-                  Publiée le {new Date(ad.publishedAt).toLocaleDateString('fr-FR')}
+                  Publiée le {ad.publishedAt && !isNaN(new Date(ad.publishedAt).getTime())
+                    ? new Date(ad.publishedAt).toLocaleDateString('fr-FR')
+                    : 'Récemment'}
                 </div>
               </div>
 
@@ -583,11 +620,12 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                           </p>
                         </div>
                       </div>
-                      {docUrl && (
+                      {docUrl && isValidStorageUrl(docUrl) && (
                         <a
                           href={docUrl}
                           target="_blank"
                           rel="noopener noreferrer"
+                          referrerPolicy="no-referrer"
                           download={docFileName}
                           onClick={() => {
                             trackDownloadRequest(docFileSize || 250000);
@@ -606,10 +644,35 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
 
             <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
               <span className="font-bold text-xs uppercase text-slate-500 tracking-wider block">Garantie BIZBOOSTER</span>
-              <p className="text-slate-700 text-xs sm:text-sm flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Paiement certifié {ad.paymentMethod === 'AIRTEL_MONEY' ? 'Airtel Money' : 'Moov Money'}</span>
-              </p>
+              {(() => {
+                if (ad.paidAmount && ad.paidAmount > 0) {
+                  const operator = ad.paymentMethod === 'AIRTEL_MONEY'
+                    ? 'Airtel Money'
+                    : ad.paymentMethod === 'MOOV_MONEY'
+                    ? 'Moov Money'
+                    : 'Mobile Money';
+                  return (
+                    <p className="text-slate-700 text-xs sm:text-sm flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Paiement certifié {operator}</span>
+                    </p>
+                  );
+                }
+                if (ad.isOwnerVip || (ad as any).isVipCorner) {
+                  return (
+                    <p className="text-slate-700 text-xs sm:text-sm flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-amber-500 shrink-0" />
+                      <span>Publication certifiée BIZBOOSTER (Coin VIP)</span>
+                    </p>
+                  );
+                }
+                return (
+                  <p className="text-slate-700 text-xs sm:text-sm flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Publication certifiée BIZBOOSTER</span>
+                  </p>
+                );
+              })()}
               {isVerified && (
                 <button
                   type="button"
@@ -781,6 +844,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
               alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
               className="max-w-full max-h-[80vh] object-contain rounded-xl drop-shadow-2xl select-none"
               referrerPolicy="no-referrer"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_IMAGE; }}
             />
 
             {/* Flèches de navigation en plein écran */}

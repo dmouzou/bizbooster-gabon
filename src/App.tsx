@@ -64,7 +64,7 @@ import {
   isUserSuperAdmin,
 } from './types';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment, writeBatch, deleteField, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
@@ -154,11 +154,18 @@ function useUserProfile() {
 
   useEffect(() => {
     let unsubUserDoc: (() => void) | null = null;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+    let delay = 1000;
+    let isCancelled = false;
 
     const unsubAuth = onAuthStateChanged(auth, (fbUser) => {
       if (unsubUserDoc) {
         unsubUserDoc();
         unsubUserDoc = null;
+      }
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+        retryTimeout = null;
       }
 
       if (!fbUser) {
@@ -168,51 +175,100 @@ function useUserProfile() {
         return;
       }
 
-      // Real-time listener for current user profile (picks up KYC approvals, VIP exemption, etc.)
-      unsubUserDoc = onSnapshot(
-        doc(db, 'users', fbUser.uid),
-        (snap) => {
-          setAuthReady(true);
-          setProfileError(null);
-          if (snap.exists()) {
-            const data = (snap.data() || {}) as any;
-            const existingFavs: string[] = data.favoriteAdIds || [];
-            try {
-              const guestStored = localStorage.getItem('bizbooster_guest_favorites');
-              if (guestStored) {
-                const guestFavs: string[] = JSON.parse(guestStored);
-                if (Array.isArray(guestFavs) && guestFavs.length > 0) {
-                  const merged = Array.from(new Set([...existingFavs, ...guestFavs]));
-                  if (merged.length !== existingFavs.length) {
-                    updateDoc(doc(db, 'users', fbUser.uid), { favoriteAdIds: merged });
+      const setupUserListener = () => {
+        if (isCancelled) return;
+        unsubUserDoc = onSnapshot(
+          doc(db, 'users', fbUser.uid),
+          (snap) => {
+            delay = 1000;
+            setAuthReady(true);
+            setProfileError(null);
+            if (snap.exists()) {
+              const data = (snap.data() || {}) as any;
+              const existingFavs: string[] = data.favoriteAdIds || [];
+              try {
+                const guestStored = localStorage.getItem('bizbooster_guest_favorites');
+                if (guestStored) {
+                  const guestFavs: string[] = JSON.parse(guestStored);
+                  if (Array.isArray(guestFavs) && guestFavs.length > 0) {
+                    const merged = Array.from(new Set([...existingFavs, ...guestFavs]));
+                    if (merged.length !== existingFavs.length) {
+                      updateDoc(doc(db, 'users', fbUser.uid), { favoriteAdIds: merged });
+                    }
+                    localStorage.removeItem('bizbooster_guest_favorites');
                   }
-                  localStorage.removeItem('bizbooster_guest_favorites');
                 }
+              } catch {
+                // ignore
               }
-            } catch {
-              // ignore
+              // B-16 & S-16: id est toujours strictement égal à fbUser.uid
+              setCurrentUser({
+                ...data,
+                id: fbUser.uid,
+              } as UserProfile);
+            } else {
+              // Profil minimal sûr sans droits admin (B-16, S-16)
+              setCurrentUser({
+                id: fbUser.uid,
+                name: fbUser.displayName || 'Utilisateur',
+                phoneNumber: fbUser.phoneNumber || '',
+                contactPhone: fbUser.phoneNumber || '',
+                role: 'USER',
+                isVerified: false,
+                termsAccepted: true,
+                termsAcceptedAt: new Date().toISOString(),
+                createdAt: new Date().toISOString(),
+                subscriptionTier: 'STANDARD',
+                idVerificationStatus: 'NOT_SUBMITTED',
+                favoriteAdIds: [],
+              });
             }
-            setCurrentUser({
-              ...data,
-              id: fbUser.uid,
-            } as UserProfile);
-          } else {
-            setCurrentUser(null);
+          },
+          (err) => {
+            console.error('User profile listener error:', err);
+            setAuthReady(true);
+            if (err.code === 'permission-denied') {
+              setCurrentUser(null);
+              setProfileError('Accès à votre profil refusé (permission-denied). Veuillez vous reconnecter.');
+            } else {
+              // Erreur transitoire ou hors-ligne : fallback minimal sûr et backoff exponentiel
+              setCurrentUser((prev) => prev || ({
+                id: fbUser.uid,
+                name: fbUser.displayName || 'Utilisateur',
+                phoneNumber: fbUser.phoneNumber || '',
+                contactPhone: fbUser.phoneNumber || '',
+                role: 'USER',
+                isVerified: false,
+                termsAccepted: true,
+                termsAcceptedAt: new Date().toISOString(),
+                createdAt: new Date().toISOString(),
+                subscriptionTier: 'STANDARD',
+                idVerificationStatus: 'NOT_SUBMITTED',
+                favoriteAdIds: [],
+              }));
+
+              if (unsubUserDoc) {
+                unsubUserDoc();
+                unsubUserDoc = null;
+              }
+              if (!isCancelled) {
+                retryTimeout = setTimeout(() => {
+                  delay = Math.min(delay * 2, 30000);
+                  setupUserListener();
+                }, delay);
+              }
+            }
           }
-        },
-        (err) => {
-          console.error('User profile listener error:', err);
-          setAuthReady(true);
-          if (err.code === 'permission-denied') {
-            setCurrentUser(null);
-            setProfileError('Accès à votre profil refusé (permission-denied). Veuillez vous reconnecter.');
-          }
-        }
-      );
+        );
+      };
+
+      setupUserListener();
     });
 
     return () => {
+      isCancelled = true;
       unsubAuth();
+      if (retryTimeout) clearTimeout(retryTimeout);
       if (unsubUserDoc) unsubUserDoc();
     };
   }, []);
@@ -233,28 +289,90 @@ function PublicApp({
   const [publicAds, setPublicAds] = useState<Ad[]>([]);
   const [myAds, setMyAds] = useState<Ad[]>([]);
 
-  // Everyone: ACTIVE ads only (exactly what the security rules allow)
+  // Everyone: ACTIVE ads only (with exponential backoff recovery on listener error)
   useEffect(() => {
-    const q = query(collection(db, 'ads'), where('status', '==', 'ACTIVE'));
-    return onSnapshot(
-      q,
-      (snap) => setPublicAds(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Ad)),
-      (err) => console.error('Public ads listener error:', err)
-    );
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+    let delay = 1000;
+    let unsub: (() => void) | null = null;
+    let isCancelled = false;
+
+    const setupListener = () => {
+      if (isCancelled) return;
+      const q = query(collection(db, 'ads'), where('status', '==', 'ACTIVE'));
+      unsub = onSnapshot(
+        q,
+        (snap) => {
+          delay = 1000;
+          setPublicAds(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Ad));
+        },
+        (err) => {
+          console.warn('Public ads listener error, retrying with backoff:', err);
+          if (unsub) {
+            unsub();
+            unsub = null;
+          }
+          if (!isCancelled) {
+            retryTimeout = setTimeout(() => {
+              delay = Math.min(delay * 2, 30000);
+              setupListener();
+            }, delay);
+          }
+        }
+      );
+    };
+
+    setupListener();
+
+    return () => {
+      isCancelled = true;
+      if (retryTimeout) clearTimeout(retryTimeout);
+      if (unsub) unsub();
+    };
   }, []);
 
-  // Signed-in advertiser: their own ads in every status
+  // Signed-in advertiser: their own ads in every status (with exponential backoff recovery)
   useEffect(() => {
     if (!currentUser) {
       setMyAds([]);
       return;
     }
-    const q = query(collection(db, 'ads'), where('userId', '==', currentUser.id));
-    return onSnapshot(
-      q,
-      (snap) => setMyAds(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Ad)),
-      (err) => console.error('My ads listener error:', err)
-    );
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+    let delay = 1000;
+    let unsub: (() => void) | null = null;
+    let isCancelled = false;
+
+    const setupListener = () => {
+      if (isCancelled) return;
+      const q = query(collection(db, 'ads'), where('userId', '==', currentUser.id));
+      unsub = onSnapshot(
+        q,
+        (snap) => {
+          delay = 1000;
+          setMyAds(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Ad));
+        },
+        (err) => {
+          console.warn('My ads listener error, retrying with backoff:', err);
+          if (unsub) {
+            unsub();
+            unsub = null;
+          }
+          if (!isCancelled) {
+            retryTimeout = setTimeout(() => {
+              delay = Math.min(delay * 2, 30000);
+              setupListener();
+            }, delay);
+          }
+        }
+      );
+    };
+
+    setupListener();
+
+    return () => {
+      isCancelled = true;
+      if (retryTimeout) clearTimeout(retryTimeout);
+      if (unsub) unsub();
+    };
   }, [currentUser?.id]);
 
   // Point 3: Test ads visibility state (synced with Firestore system_config and localStorage, defaults to OFF/false)
@@ -550,6 +668,7 @@ function PublicApp({
 
   const handleToggleFavorite = async (adId: string) => {
     const isFav = activeFavoriteIds.includes(adId);
+    const prevFavs = activeFavoriteIds;
     const newFavs = isFav
       ? activeFavoriteIds.filter((id) => id !== adId)
       : [...activeFavoriteIds, adId];
@@ -563,10 +682,12 @@ function PublicApp({
       showToast(isFav ? 'Annonce retirée de vos favoris' : 'Annonce ajoutée à vos favoris ❤️');
       try {
         await updateDoc(doc(db, 'users', currentUser.id), {
-          favoriteAdIds: newFavs,
+          favoriteAdIds: isFav ? arrayRemove(adId) : arrayUnion(adId),
         });
       } catch (err) {
-        console.error('Error saving favorite to Firestore:', err);
+        console.error('Error saving favorite to Firestore, rolling back:', err);
+        setCurrentUser((prev) => (prev ? { ...prev, favoriteAdIds: prevFavs } : null));
+        showToast('Impossible de synchroniser vos favoris. Modification annulée.');
       }
     } else {
       setGuestFavoriteIds(newFavs);
@@ -660,7 +781,8 @@ function PublicApp({
     try {
       const url = new URL(window.location.href);
       url.searchParams.delete('ad');
-      const cleanUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+      url.hash = '';
+      const cleanUrl = url.pathname + (url.search ? url.search : '');
       window.history.replaceState(null, '', cleanUrl);
     } catch {
       // ignore
@@ -1128,7 +1250,9 @@ function PublicApp({
     try {
       const url = new URL(window.location.href);
       url.searchParams.set('ad', ad.id);
-      window.history.replaceState(null, '', url.toString());
+      url.hash = '';
+      const cleanUrl = url.pathname + (url.search ? url.search : '');
+      window.history.replaceState(null, '', cleanUrl);
     } catch {
       // ignore
     }
