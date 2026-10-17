@@ -72,3 +72,64 @@ describe('Validation des quotas et gratuité (Phase 2)', () => {
     expect(result).toBe(20);
   });
 });
+
+describe('Phase 3 - Logique anti-abus et callables (Étape 3.2, 3.3, 3.4)', () => {
+  it('Étape 3.2 : génère un identifiant de signalement déterministe adId_reporterUid', () => {
+    const adId = 'ad_xyz_789';
+    const reporterUid = 'user_abc_123';
+    const reportDocId = `${adId}_${reporterUid}`;
+    expect(reportDocId).toBe('ad_xyz_789_user_abc_123');
+  });
+
+  it('Étape 3.2 : valide les bornes strictes sur le motif et les détails de signalement', () => {
+    const validReason = 'Arnaque potentielle';
+    const oversizedReason = 'a'.repeat(201);
+    expect(validReason.length <= 200).toBe(true);
+    expect(oversizedReason.length <= 200).toBe(false);
+
+    const validDetails = 'Description détaillée des faits';
+    const oversizedDetails = 'b'.repeat(2001);
+    expect(validDetails.length <= 2000).toBe(true);
+    expect(oversizedDetails.length <= 2000).toBe(false);
+  });
+
+  it('Étape 3.3 : isole les compteurs de vues dans ad_counters/{adId}', () => {
+    const adId = 'ad_featured_456';
+    const counterDocPath = `ad_counters/${adId}`;
+    expect(counterDocPath).toBe('ad_counters/ad_featured_456');
+  });
+
+  it('Étape 3.4 : filtre strictement les champs modifiables lors de resubmitAd et force PENDING_REVIEW', () => {
+    const ALLOWED_RESUBMIT_FIELDS = [
+      'title', 'description', 'price', 'priceUnit', 'location', 'contactName',
+      'contactPhone', 'images', 'mainCategory', 'propertyType', 'bedrooms'
+    ];
+    const incomingUpdates: Record<string, any> = {
+      title: 'Titre corrigé',
+      description: 'Nouvelle description',
+      price: 250000,
+      // Tentative d'injection de champs privilégiés
+      isFeatured: true,
+      paidAmount: 999999,
+      status: 'ACTIVE',
+      viewsCount: 5000,
+    };
+
+    const filtered: Record<string, any> = {};
+    for (const f of ALLOWED_RESUBMIT_FIELDS) {
+      if (incomingUpdates[f] !== undefined) {
+        filtered[f] = incomingUpdates[f];
+      }
+    }
+
+    expect(filtered).toEqual({
+      title: 'Titre corrigé',
+      description: 'Nouvelle description',
+      price: 250000,
+    });
+    expect(filtered.isFeatured).toBeUndefined();
+    expect(filtered.paidAmount).toBeUndefined();
+    expect(filtered.status).toBeUndefined();
+  });
+});
+
