@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { doc, writeBatch, arrayUnion } from 'firebase/firestore';
 import { db } from './firebase';
 
 const LOCAL_STORAGE_PREFIX = 'bizbooster_seen_notifications_';
@@ -13,6 +13,20 @@ export interface PersistedNotificationLog {
   dispatchedAt: string;
   timestamp: number;
   status: 'DISPATCHED';
+}
+
+/**
+ * Générateur partagé et déterministe d'identifiant de notification de rejet (B-09).
+ * Évite les collisions silencieuses si moderatedAt est identique ou absent.
+ */
+export function rejectionNotifId(ad: {
+  id: string;
+  moderatedAt?: string | null;
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}): string {
+  const timestamp = ad.moderatedAt || ad.updatedAt || ad.createdAt || 'rejected';
+  return `rej_${ad.id}_${timestamp}`;
 }
 
 /**
@@ -61,45 +75,55 @@ export function markNotificationAsSeenLocally(userId: string, notifId: string): 
 }
 
 /**
- * Récupère l'ensemble des IDs de notifications déjà envoyées/affichées à l'utilisateur.
- * Synchronise les données enregistrées dans Firestore (users/{userId}) avec le cache local.
+ * Persistance unique à l'affichage en 1 seul batch atomique (B-06, Étape 2.3).
+ * Effectue au plus 2 écritures (1 update users + 1 set user_notifications).
  */
-export async function fetchSeenNotificationIds(userId: string): Promise<Set<string>> {
-  if (!userId) return new Set();
-
-  // 1. Initialisation synchrone immédiate
-  const seenSet = getLocalSeenNotificationIds(userId);
-
-  // 2. Synchronisation avec Firestore pour garantir la persistance multi-appareils
-  try {
-    const userRef = doc(db, 'users', userId);
-    const snap = await getDoc(userRef);
-    if (snap.exists()) {
-      const data = snap.data();
-      const firestoreIds: string[] = data?.seenNotificationIds || [];
-      firestoreIds.forEach((id) => seenSet.add(String(id)));
-
-      // Mettre à jour le cache local avec la fusion
-      try {
-        localStorage.setItem(
-          `${LOCAL_STORAGE_PREFIX}${userId}`,
-          JSON.stringify(Array.from(seenSet))
-        );
-      } catch (_) {}
-    }
-  } catch (err) {
-    console.warn('[NotificationService] Erreur synchronisation Firestore:', err);
+export async function persistSeenOnce(
+  userId: string,
+  notif: {
+    id: string;
+    type: string;
+    title: string;
+    message: string;
+    adId?: string | null;
   }
+): Promise<void> {
+  if (!userId || !notif.id) return;
 
-  return seenSet;
+  // 1. Sauvegarde locale synchrone immédiate
+  markNotificationAsSeenLocally(userId, notif.id);
+
+  // 2. Persistance atomique unique en 1 seul batch Firestore
+  try {
+    const batch = writeBatch(db);
+    const userRef = doc(db, 'users', userId);
+    batch.update(userRef, {
+      seenNotificationIds: arrayUnion(notif.id),
+    });
+
+    const logDocRef = doc(db, 'user_notifications', `${userId}_${notif.id}`);
+    batch.set(logDocRef, {
+      id: notif.id,
+      notifId: notif.id,
+      userId,
+      type: notif.type,
+      title: notif.title,
+      message: notif.message,
+      adId: notif.adId || null,
+      dispatchedAt: new Date().toISOString(),
+      timestamp: Date.now(),
+      status: 'DISPATCHED',
+    });
+
+    await batch.commit();
+  } catch (err: any) {
+    // Si permission-denied (règle anti-falsification) ou échec réseau temporaire, consigner
+    console.warn('[NotificationService] Persistance Firestore batch note:', err?.message || err);
+  }
 }
 
 /**
- * Sauvegarde de façon atomique et permanente l'envoi d'une notification dans Firebase :
- * 1. Enregistrement synchrone immédiat dans localStorage (immunité totale au reload)
- * 2. Ajout de l'ID dans `seenNotificationIds` du document utilisateur (`users/{userId}`) via arrayUnion
- * 3. Enregistrement d'un document d'audit dans la collection `user_notifications`
- * Cela garantit zéro répétition intempestive lors des reconnexions ou rechargements de page.
+ * Alias conservé pour rétrocompatibilité
  */
 export async function saveDispatchedNotification(
   userId: string,
@@ -111,53 +135,5 @@ export async function saveDispatchedNotification(
     adId?: string;
   }
 ): Promise<void> {
-  if (!userId || !notif.id) return;
-
-  // 1. Sauvegarde locale SYNCHRONE immédiate
-  markNotificationAsSeenLocally(userId, notif.id);
-
-  // 2. Sauvegarde persistante dans Firebase
-  try {
-    const userRef = doc(db, 'users', userId);
-    try {
-      await updateDoc(userRef, {
-        seenNotificationIds: arrayUnion(notif.id),
-      });
-    } catch (_) {
-      await setDoc(
-        userRef,
-        {
-          seenNotificationIds: arrayUnion(notif.id),
-        },
-        { merge: true }
-      );
-    }
-
-    // 3. Document de log détaillé dans `user_notifications`
-    try {
-      const logDocRef = doc(db, 'user_notifications', `${userId}_${notif.id}`);
-      const logData = {
-        id: notif.id,
-        notifId: notif.id,
-        userId,
-        type: notif.type,
-        title: notif.title,
-        message: notif.message,
-        adId: notif.adId || null,
-        dispatchedAt: new Date().toISOString(),
-        timestamp: Date.now(),
-        status: 'DISPATCHED',
-      };
-
-      await setDoc(logDocRef, logData);
-    } catch (logErr: any) {
-      if (logErr?.code === 'permission-denied') {
-        // Document d'audit déjà créé et verrouillé contre la falsification
-      } else {
-        console.warn('[NotificationService] Erreur écriture log audit notification:', logErr);
-      }
-    }
-  } catch (err) {
-    console.warn('[NotificationService] Erreur écriture Firestore notification:', err);
-  }
+  return persistSeenOnce(userId, notif);
 }

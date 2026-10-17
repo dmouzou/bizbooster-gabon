@@ -69,7 +69,7 @@ import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from './services/firebase';
 import { INITIAL_ADS } from './data/initialAds';
 import { isTestAd } from './components/AdminPanel';
-import { markNotificationAsSeenLocally } from './services/notificationService';
+import { markNotificationAsSeenLocally, rejectionNotifId } from './services/notificationService';
 import AdminApp from './AdminApp';
 
 function normalizeSearchText(str: string): string {
@@ -1294,11 +1294,7 @@ function cleanUndefined(obj: any): any {
       }
 
       if (wasRejected && currentUser?.id) {
-        const rejectionKey = targetAd.moderatedAt || targetAd.createdAt || 'rejected';
-        markNotificationAsSeenLocally(currentUser.id, `rej_${adId}_${rejectionKey}`);
-        if (targetAd.updatedAt) {
-          markNotificationAsSeenLocally(currentUser.id, `rej_${adId}_${targetAd.updatedAt}`);
-        }
+        markNotificationAsSeenLocally(currentUser.id, rejectionNotifId(targetAd));
       }
 
       if (wasActive) {
@@ -1464,8 +1460,8 @@ function cleanUndefined(obj: any): any {
       showToast("Erreur : utilisateur non identifié.");
       throw new Error("Utilisateur non identifié");
     }
-    // Filtrage strict : seules les clés autorisées non privilégiées peuvent être écrites par le client
-    const allowedKeys = ['name', 'location', 'favoriteAdIds', 'seenNotificationIds'];
+    // Filtrage strict : seules les clés autorisées non privilégiées peuvent être écrites par le client (retrait de seenNotificationIds B-10)
+    const allowedKeys = ['name', 'location', 'favoriteAdIds'];
     const filteredUpdate: Record<string, any> = {};
     for (const key of allowedKeys) {
       if ((updated as any)[key] !== undefined) {
