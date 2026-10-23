@@ -60,20 +60,46 @@ export const KYC_PRESET_REASONS = [
 ];
 
 /**
- * Validation d'origine de ressource Storage (S-14)
- * N'autorise que les domaines officiels Google Cloud / Firebase Storage.
+ * Validation d'origine de ressource Storage (S-14, R7)
+ * N'autorise que les domaines officiels Google Cloud / Firebase Storage
+ * ET exige le bucket du projet pour bloquer les buckets tiers.
  */
 export function isValidStorageUrl(url?: string): boolean {
   if (!url || typeof url !== 'string') return false;
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:') return false;
-    const validHosts = [
+
+    const allowedBuckets = [
+      'bizbooster-gabon.appspot.com',
+      'bizbooster-gabon.firebasestorage.app',
+      'bizbooster.appspot.com',
+    ];
+    const envBucket = (import.meta as any)?.env?.VITE_FIREBASE_STORAGE_BUCKET;
+    if (envBucket && typeof envBucket === 'string' && !allowedBuckets.includes(envBucket)) {
+      allowedBuckets.push(envBucket);
+    }
+
+    // Direct domain hosting bucket, e.g. https://bizbooster-gabon.appspot.com/path
+    const isDirectBucketHost = allowedBuckets.some(
+      (b) => parsed.hostname === b || parsed.hostname === b.replace(/\.appspot\.com$/, '') + '.appspot.com'
+    );
+
+    // Google Cloud Storage / Firebase Storage APIs with bucket in path
+    const isGoogleStorageHost = [
       'firebasestorage.googleapis.com',
       'storage.googleapis.com',
       'storage.cloud.google.com',
-    ];
-    return validHosts.includes(parsed.hostname) || parsed.hostname.endsWith('.appspot.com');
+    ].includes(parsed.hostname);
+
+    const hasAllowedBucketPath = allowedBuckets.some(
+      (b) =>
+        parsed.pathname.includes(`/b/${b}/`) ||
+        parsed.pathname.startsWith(`/${b}/`) ||
+        parsed.pathname.includes(`/b/${b.replace(/\.appspot\.com$/, '')}/`)
+    );
+
+    return isDirectBucketHost || (isGoogleStorageHost && hasAllowedBucketPath);
   } catch {
     return false;
   }

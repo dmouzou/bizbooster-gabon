@@ -47,8 +47,9 @@ export const registerView = onCall(
         return;
       }
 
-      // Enregistrer la vue et incrémenter le compteur dédié
-      tx.set(viewRef, { adId, at: FieldValue.serverTimestamp() });
+      // B24: TTL Firestore de 30 jours pour purger automatiquement les documents ad_views
+      const expireAt = new Date(Date.now() + 30 * 86400000);
+      tx.set(viewRef, { adId, at: FieldValue.serverTimestamp(), expireAt });
       tx.set(counterRef, { views: FieldValue.increment(1), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
       counted = true;
     });

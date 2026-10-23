@@ -233,11 +233,11 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
 
   // Réinitialisation et nettoyage lors de la fermeture
   const handleModalClose = async () => {
-    if (stage === 3 && auth.currentUser) {
+    if ((stage === 3 || stage === 4) && auth.currentUser) {
       try {
         await signOut(auth);
       } catch (e) {
-        console.error('Erreur signOut fermeture modal étape 3:', e);
+        console.error('Erreur signOut fermeture modal:', e);
       }
     }
 
@@ -307,7 +307,11 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     try {
       const verifier = getOrCreateRecaptcha();
       confirmationRef.current = await signInWithPhoneNumber(auth, smsE164, verifier);
-      await trackSmsSent(smsE164);
+      try {
+        await trackSmsSent(smsE164);
+      } catch (trackErr) {
+        console.warn('Erreur trackSmsSent (non bloquante):', trackErr);
+      }
       setSuccessNotice(`Code de confirmation SMS envoyé au ${smsE164}.`);
       return true;
     } catch (err: unknown) {
@@ -490,28 +494,34 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         await linkWithCredential(user, emailCred);
       } catch (linkErr: unknown) {
         const code = (linkErr as { code?: string })?.code;
+        const isCurrentLinked = code === 'auth/provider-already-linked' ||
+          user.email === toSyntheticEmail(digitsForReg, selectedCountry) ||
+          user.providerData.some((p) => p.email === toSyntheticEmail(digitsForReg, selectedCountry) || p.providerId === 'password');
+
         if (
           code === 'auth/email-already-in-use' ||
           code === 'auth/provider-already-linked' ||
           code === 'auth/credential-already-in-use'
         ) {
-          setErrorMessage('Ce numéro possède déjà un compte. Connectez-vous.');
-          return;
-        }
-        if (code === 'auth/weak-password') {
+          if (!isCurrentLinked) {
+            setErrorMessage('Ce numéro possède déjà un compte. Connectez-vous.');
+            return;
+          }
+          // Si déjà lié pour cette session (reprise après échec Firestore), on poursuit la création du document
+        } else if (code === 'auth/weak-password') {
           setErrorMessage('Mot de passe trop faible (6 caractères minimum).');
           return;
+        } else {
+          throw linkErr;
         }
-        throw linkErr;
       }
 
-      // Création du profil Firestore (sans password, sans lastPasswordChangeDate, sans idVerificationStatus)
+      // Création du profil Firestore (sans isVerified ni clés privilégiées côté client)
       await setDoc(doc(db, 'users', user.uid), {
         name: fullName.trim(),
         country: selectedCountry,
         operator: selectedCountry === 'GA' ? detectOperator(digitsForReg) : null,
         role: 'USER',
-        isVerified: true,
         termsAccepted: true,
         termsAcceptedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
@@ -961,6 +971,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   <button
                     type="button"
                     onClick={() => {
+                      confirmationRef.current = null;
                       setStage(1);
                       setOtpCode('');
                     }}

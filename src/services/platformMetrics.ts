@@ -30,6 +30,7 @@ export interface FirebaseQuotaComparison {
   downloadFreeTierOpsPerDay: number; // 50 000 requêtes
   downloadFreeTierBandwidthGB: number; // 1.0 GB / jour
   downloadExcessGB: number;
+  downloadExtraUnitPriceUSD: number;
   downloadAccruedCostUSD: number;
   downloadAccruedCostFCFA: number;
   isDownloadQuotaExceeded: boolean;
@@ -71,6 +72,7 @@ export const DEFAULT_QUOTA_COMPARISON: FirebaseQuotaComparison = {
   downloadFreeTierOpsPerDay: 50000,
   downloadFreeTierBandwidthGB: 1.0,
   downloadExcessGB: 0,
+  downloadExtraUnitPriceUSD: 0.12,
   downloadAccruedCostUSD: 0,
   downloadAccruedCostFCFA: 0,
   isDownloadQuotaExceeded: false,
@@ -417,6 +419,7 @@ export function getFirebaseQuotaComparison(
     downloadFreeTierOpsPerDay,
     downloadFreeTierBandwidthGB,
     downloadExcessGB,
+    downloadExtraUnitPriceUSD,
     downloadAccruedCostUSD,
     downloadAccruedCostFCFA,
     isDownloadQuotaExceeded,

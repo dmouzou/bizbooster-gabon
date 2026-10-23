@@ -22,6 +22,7 @@ import {
   PricingError,
   PriceContext,
   Quote,
+  PRICING_DURATIONS,
 } from "./pricing";
 
 export const FUNCTION_REGION = process.env.FUNCTION_REGION || "us-central1";
@@ -168,6 +169,20 @@ export async function resolveAuthUser(
   );
 }
 
+// Statuts d'annonces standardisés et partagés (Lot 2 - Correction 2 & B6)
+export const AD_STATUSES = [
+  "ACTIVE",
+  "EXPIRED",
+  "PENDING_PAYMENT",
+  "PENDING_REVIEW",
+  "REJECTED",
+  "SUSPENDED",
+] as const;
+export type AdStatus = (typeof AD_STATUSES)[number];
+
+export const EXTENDABLE_AD_STATUSES = ["ACTIVE", "EXPIRED"] as const;
+export type ExtendableAdStatus = (typeof EXTENDABLE_AD_STATUSES)[number];
+
 // Table des quotas partagée (Phase 7 - Décision D3: Standard = 0)
 export const SUBSCRIPTION_QUOTAS: Record<string, number> = {
   STANDARD: 0,
@@ -204,117 +219,135 @@ export const expireAds = onSchedule("every 60 minutes", async () => {
   const now = new Date().toISOString();
   const CHUNK_SIZE = 500;
 
-  // A. Expirer les annonces dont expiresAt <= now
-  const expiredAdsSnap = await db
-    .collection("ads")
-    .where("status", "==", "ACTIVE")
-    .where("expiresAt", "<=", now)
-    .get();
-
-  const expiredDocs = expiredAdsSnap.docs;
-  for (let i = 0; i < expiredDocs.length; i += CHUNK_SIZE) {
-    const chunk = expiredDocs.slice(i, i + CHUNK_SIZE);
-    const batch = db.batch();
-    chunk.forEach((doc) =>
-      batch.update(doc.ref, {status: "EXPIRED", updatedAt: now})
-    );
-    await batch.commit();
-  }
-
-  // A2. Terminer les boosts échus (isFeatured: false si featuredUntil <= now)
-  const expiredBoostsSnap = await db
-    .collection("ads")
-    .where("isFeatured", "==", true)
-    .where("featuredUntil", "<=", now)
-    .get();
-
-  for (let i = 0; i < expiredBoostsSnap.docs.length; i += CHUNK_SIZE) {
-    const chunk = expiredBoostsSnap.docs.slice(i, i + CHUNK_SIZE);
-    const boostBatch = db.batch();
-    chunk.forEach((d) => {
-      boostBatch.update(d.ref, {isFeatured: false, updatedAt: now});
-    });
-    await boostBatch.commit();
-  }
-
-  // B. Détecter les utilisateurs dont l'abonnement mensuel a expiré
-  const expiredUsersSnap = await db
-    .collection("users")
-    .where("subscriptionTier", "in", ["PRO", "ELITE", "BUSINESS"])
-    .where("subscriptionExpiresAt", "<=", now)
-    .get();
-
-  for (const userDoc of expiredUsersSnap.docs) {
-    const userData = userDoc.data() || {};
-
-    // Ignore les partenaires exemptés lors des rétrogradations et
-    // suspensions (Phase 7)
-    if (userData.isExempt || userData.exemptFromPaymentAndKyc) {
-      continue;
-    }
-
-    const userId = userDoc.id;
-
-    // Rétrograde en STANDARD
-    await userDoc.ref.update({
-      subscriptionTier: "STANDARD",
-      subscriptionExpiredAt: now,
-      updatedAt: now,
-    });
-
-    // Mettre à jour ownerTier sur les annonces de l'utilisateur rétrogradé
-    const userRemainingAdsSnap = await db
+  // Étape A: Expirer les annonces dont expiresAt <= now (B9: isolée en try/catch)
+  try {
+    const expiredAdsSnap = await db
       .collection("ads")
-      .where("userId", "==", userId)
-      .where("status", "in", ["ACTIVE", "PENDING_REVIEW"])
-      .get();
-    for (let i = 0; i < userRemainingAdsSnap.docs.length; i += CHUNK_SIZE) {
-      const chunk = userRemainingAdsSnap.docs.slice(i, i + CHUNK_SIZE);
-      const tierBatch = db.batch();
-      chunk.forEach((d) => {
-        tierBatch.update(d.ref, {
-          ownerTier: "STANDARD",
-          isOwnerVip: false,
-          updatedAt: now,
-        });
-      });
-      await tierBatch.commit();
-    }
-
-    // Quota Standard partagé (0 annonce gratuite pour Standard)
-    const standardQuota = SUBSCRIPTION_QUOTAS.STANDARD ?? 0;
-    const activeAdsSnap = await db
-      .collection("ads")
-      .where("userId", "==", userId)
       .where("status", "==", "ACTIVE")
+      .where("expiresAt", "<=", now)
       .get();
 
-    if (activeAdsSnap.size > standardQuota) {
-      const sortedDocs = [...activeAdsSnap.docs].sort((a, b) => {
-        const tA = new Date(
-          a.data().createdAt || a.data().publishedAt || 0
-        ).getTime();
-        const tB = new Date(
-          b.data().createdAt || b.data().publishedAt || 0
-        ).getTime();
-        return tA - tB;
+    const expiredDocs = expiredAdsSnap.docs;
+    for (let i = 0; i < expiredDocs.length; i += CHUNK_SIZE) {
+      const chunk = expiredDocs.slice(i, i + CHUNK_SIZE);
+      const batch = db.batch();
+      chunk.forEach((doc) =>
+        batch.update(doc.ref, {status: "EXPIRED", updatedAt: now})
+      );
+      await batch.commit();
+    }
+  } catch (errA) {
+    console.error("[expireAds] Erreur étape A (expiration annonces):", errA);
+  }
+
+  // Étape A2: Terminer les boosts échus (B9: isolée en try/catch)
+  try {
+    const expiredBoostsSnap = await db
+      .collection("ads")
+      .where("isFeatured", "==", true)
+      .where("featuredUntil", "<=", now)
+      .get();
+
+    for (let i = 0; i < expiredBoostsSnap.docs.length; i += CHUNK_SIZE) {
+      const chunk = expiredBoostsSnap.docs.slice(i, i + CHUNK_SIZE);
+      const boostBatch = db.batch();
+      chunk.forEach((d) => {
+        boostBatch.update(d.ref, {isFeatured: false, updatedAt: now});
+      });
+      await boostBatch.commit();
+    }
+  } catch (errA2) {
+    console.error("[expireAds] Erreur étape A2 (expiration boosts):", errA2);
+  }
+
+  // Étape B: Détecter les utilisateurs dont l'abonnement mensuel a expiré (B9: isolée en try/catch)
+  try {
+    const expiredUsersSnap = await db
+      .collection("users")
+      .where("subscriptionTier", "in", ["PRO", "ELITE", "BUSINESS"])
+      .where("subscriptionExpiresAt", "<=", now)
+      .get();
+
+    for (const userDoc of expiredUsersSnap.docs) {
+      const userData = userDoc.data() || {};
+
+      // Ignore les partenaires exemptés lors des rétrogradations et suspensions (Phase 7)
+      if (userData.isExempt || userData.exemptFromPaymentAndKyc) {
+        continue;
+      }
+
+      const userId = userDoc.id;
+
+      // Quota Standard partagé (0 annonce gratuite pour Standard)
+      const standardQuota = SUBSCRIPTION_QUOTAS.STANDARD ?? 0;
+      const activeAdsSnap = await db
+        .collection("ads")
+        .where("userId", "==", userId)
+        .where("status", "==", "ACTIVE")
+        .get();
+
+      // B23: Ne suspendre QUE les annonces issues du quota/forfait (paidAmount === 0 ou absent)
+      // Les annonces payées à l'unité (paidAmount > 0) ne doivent JAMAIS être suspendues pour fin de forfait
+      const quotaEligibleAds = activeAdsSnap.docs.filter((d) => {
+        const paid = Number(d.data().paidAmount || 0);
+        return paid === 0;
       });
 
-      const excessDocs = sortedDocs.slice(standardQuota);
-      for (let i = 0; i < excessDocs.length; i += CHUNK_SIZE) {
-        const chunk = excessDocs.slice(i, i + CHUNK_SIZE);
-        const quotaBatch = db.batch();
-        chunk.forEach((doc) => {
-          quotaBatch.update(doc.ref, {
-            status: "SUSPENDED",
-            suspensionReason: "FORFAIT_EXPIRE_QUOTA",
-            suspendedAt: now,
+      if (quotaEligibleAds.length > standardQuota) {
+        const sortedDocs = [...quotaEligibleAds].sort((a, b) => {
+          const tA = new Date(
+            a.data().createdAt || a.data().publishedAt || 0
+          ).getTime();
+          const tB = new Date(
+            b.data().createdAt || b.data().publishedAt || 0
+          ).getTime();
+          return tA - tB;
+        });
+
+        const excessDocs = sortedDocs.slice(standardQuota);
+        for (let i = 0; i < excessDocs.length; i += CHUNK_SIZE) {
+          const chunk = excessDocs.slice(i, i + CHUNK_SIZE);
+          const quotaBatch = db.batch();
+          chunk.forEach((doc) => {
+            quotaBatch.update(doc.ref, {
+              status: "SUSPENDED",
+              suspensionReason: "FORFAIT_EXPIRE_QUOTA",
+              suspendedAt: now,
+              updatedAt: now,
+            });
+          });
+          await quotaBatch.commit();
+        }
+      }
+
+      // B9: Rétrograder en STANDARD APRÈS la suspension des annonces en excès
+      await userDoc.ref.update({
+        subscriptionTier: "STANDARD",
+        subscriptionExpiredAt: now,
+        updatedAt: now,
+      });
+
+      // Mettre à jour ownerTier sur les annonces restantes de l'utilisateur rétrogradé
+      const userRemainingAdsSnap = await db
+        .collection("ads")
+        .where("userId", "==", userId)
+        .where("status", "in", ["ACTIVE", "PENDING_REVIEW"])
+        .get();
+      for (let i = 0; i < userRemainingAdsSnap.docs.length; i += CHUNK_SIZE) {
+        const chunk = userRemainingAdsSnap.docs.slice(i, i + CHUNK_SIZE);
+        const tierBatch = db.batch();
+        chunk.forEach((d) => {
+          tierBatch.update(d.ref, {
+            ownerTier: "STANDARD",
+            isOwnerVip: false,
             updatedAt: now,
           });
         });
-        await quotaBatch.commit();
+        await tierBatch.commit();
       }
     }
+  } catch (errB) {
+    console.error("[expireAds] Erreur étape B (expiration abonnements):", errB);
   }
 });
 
@@ -330,33 +363,24 @@ export const updateCounters = onDocumentWritten(
     const before = event.data?.before;
     const after = event.data?.after;
 
-    // Si modification : ignorer si seules views ou reports ont changé
-    if (before?.exists && after?.exists) {
-      const beforeData = before.data() || {};
-      const afterData = after.data() || {};
+    const beforeData = before?.data() || {};
+    const afterData = after?.data() || {};
 
-      const allKeys = new Set([
-        ...Object.keys(beforeData),
-        ...Object.keys(afterData),
-      ]);
-      let onlyViewsOrReports = true;
-      for (const key of allKeys) {
-        if (
-          key !== "viewsCount" &&
-        key !== "reportsCount" &&
-        key !== "updatedAt"
-        ) {
-          if (
-            JSON.stringify(beforeData[key]) !== JSON.stringify(afterData[key])
-          ) {
-            onlyViewsOrReports = false;
-            break;
-          }
-        }
-      }
-      if (onlyViewsOrReports) {
-        return;
-      }
+    const beforeStatus = beforeData.status;
+    const afterStatus = afterData.status;
+    const beforePrice = beforeData.price;
+    const afterPrice = afterData.price;
+
+    // B27: Seules les modifications affectant le catalogue actif déclenchent les agrégations
+    const statusChangedToOrFromActive =
+      (beforeStatus === "ACTIVE" && afterStatus !== "ACTIVE") ||
+      (beforeStatus !== "ACTIVE" && afterStatus === "ACTIVE");
+    const activePriceChanged =
+      (afterStatus === "ACTIVE" || beforeStatus === "ACTIVE") &&
+      beforePrice !== afterPrice;
+
+    if (!statusChangedToOrFromActive && !activePriceChanged) {
+      return;
     }
 
     const db = getFirestore();
@@ -518,7 +542,8 @@ export async function getSingPayConfig(): Promise<SingPayConfigData> {
   const webhookSecret = (firestoreDoc?.webhookSecret as string) || secWebhookSecret;
   const moovDisbursement = (firestoreDoc?.moovDisbursement as string) || secMoovDisbursement;
   const airtelDisbursement = (firestoreDoc?.airtelDisbursement as string) || secAirtelDisbursement;
-  const isLive = firestoreDoc?.isLive !== undefined ? Boolean(firestoreDoc.isLive) : true;
+  // B30: Échouer fermé si la configuration n'est pas explicite
+  const isLive = firestoreDoc?.isLive !== undefined ? Boolean(firestoreDoc.isLive) : false;
   const version = typeof firestoreDoc?.version === "number" ? firestoreDoc.version : 1;
   const updatedAt = (firestoreDoc?.updatedAt as string) || undefined;
   const updatedBy = (firestoreDoc?.updatedBy as string) || undefined;
@@ -950,14 +975,20 @@ export async function settlePayment(
     const currentStatus = String(payment.status || "INITIATING").toUpperCase();
     const outcome = { ...rawOutcome };
 
-    // 4.3 Contrôle strict du montant reçu
-    if (outcome.status === "SUCCESS" && outcome.amountReceived !== undefined) {
-      if (Number(outcome.amountReceived) !== Number(payment.amount)) {
+    // 4.3 Contrôle strict du montant reçu (Correction 3 : absent ou différent => NEEDS_REVIEW)
+    if (outcome.status === "SUCCESS") {
+      if (
+        outcome.amountReceived === undefined ||
+        outcome.amountReceived === null ||
+        Number(outcome.amountReceived) !== Number(payment.amount)
+      ) {
         console.warn(
-          `settlePayment: Montant altéré pour ${paymentRefOrId}: attendu ${payment.amount}, reçu ${outcome.amountReceived}`
+          `settlePayment: Montant altéré ou absent pour ${paymentRefOrId}: attendu ${payment.amount}, reçu ${outcome.amountReceived}`
         );
         outcome.status = "NEEDS_REVIEW";
-        outcome.errorReason = `Incohérence montant: attendu ${payment.amount} FCFA, reçu ${outcome.amountReceived} FCFA`;
+        outcome.errorReason = outcome.amountReceived === undefined
+          ? `Montant non retourné par SingPay (attendu ${payment.amount} FCFA)`
+          : `Incohérence montant: attendu ${payment.amount} FCFA, reçu ${outcome.amountReceived} FCFA`;
       }
     }
 
@@ -1073,6 +1104,31 @@ export async function settlePayment(
       userUpdates.freeBoosts = newBoosts;
       userUpdates.consumedFreeAdsCount = 0;
       hasUserUpdates = true;
+
+      // B23: Réactivation automatique des annonces suspendues pour fin de forfait lors d'un réabonnement
+      try {
+        const quota = SUBSCRIPTION_QUOTAS[tier] ?? 10;
+        const suspendedAdsSnap = await db
+          .collection("ads")
+          .where("userId", "==", userId)
+          .where("status", "==", "SUSPENDED")
+          .where("suspensionReason", "==", "FORFAIT_EXPIRE_QUOTA")
+          .get();
+        if (!suspendedAdsSnap.empty) {
+          const toReactivate = suspendedAdsSnap.docs.slice(0, quota);
+          for (const doc of toReactivate) {
+            tx.update(doc.ref, {
+              status: "ACTIVE",
+              ownerTier: tier,
+              suspensionReason: FieldValue.delete(),
+              suspendedAt: FieldValue.delete(),
+              updatedAt: nowIso,
+            });
+          }
+        }
+      } catch (reErr) {
+        console.warn("[settlePayment] Réactivation annonces suspendues:", reErr);
+      }
     } else if (productId === "BOOST_SINGLE" || productId === "SINGLE") {
       // BOOST_SINGLE : Annonce obligatoire mise en avant +7 jours
       if (adRef && adData && (adData.userId === userId || !adData.userId)) {
@@ -1116,15 +1172,19 @@ export async function settlePayment(
     } else if (productId === "AD_EXTEND") {
       // AD_EXTEND : jours des métadonnées assainies, max 365 jours
       const days = Number(metadata.days || 0);
-      if (adRef && adData && days > 0 && adData.status !== "deleted" && adData.status !== "rejected") {
+      const adStatus = String(adData?.status || "").toUpperCase();
+      if (adRef && adData && days > 0 && EXTENDABLE_AD_STATUSES.includes(adStatus as any)) {
         const currentExp = adData.expiresAt ? new Date(adData.expiresAt as string).getTime() : now.getTime();
         const baseTime = Math.max(currentExp, now.getTime());
         const maxAllowed = now.getTime() + 365 * 24 * 3600 * 1000;
         const targetTime = Math.min(maxAllowed, baseTime + days * 24 * 3600 * 1000);
 
         adUpdates.expiresAt = new Date(targetTime).toISOString();
-        adUpdates.status = "ACTIVE";
+        if (adStatus === "EXPIRED") {
+          adUpdates.status = "ACTIVE";
+        }
         hasAdUpdates = true;
+        paymentUpdates.consumedByAdId = adId || true;
       }
     } else if (productId === "AD_PUBLISH") {
       // AD_PUBLISH : Achat abonnement éventuel, consommation quota ou boost gratuit, marquage consumedByAdId
@@ -1463,7 +1523,14 @@ export const initiateSingPayPayment = onCall(
         );
       }
 
-      if (adData.status === "deleted" || adData.status === "rejected") {
+      const adStatus = String(adData.status || "").toUpperCase();
+      if (productId === "AD_EXTEND" && !EXTENDABLE_AD_STATUSES.includes(adStatus as any)) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Cette annonce ne peut pas être prolongée (statut non éligible)."
+        );
+      }
+      if (adStatus === "REJECTED" || adStatus === "DELETED") {
         throw new HttpsError(
           "failed-precondition",
           "Cette annonce ne peut plus être modifiée ou prolongée."
@@ -1689,12 +1756,19 @@ export const initiateSingPayPayment = onCall(
       const singpayTx = responseJson.transaction || {};
       const singpayTxId = singpayTx.id || singpayTx._id || "";
 
-      await paymentRef.update({
-        status: "PENDING",
-        singpayTransactionId: singpayTxId,
-        singpayStatus: singpayTx.status || "Start",
-        singpayResult: singpayTx.result || null,
-        updatedAt: new Date().toISOString(),
+      await db.runTransaction(async (transaction) => {
+        const pSnap = await transaction.get(paymentRef);
+        if (!pSnap.exists) return;
+        const currentSt = String(pSnap.data()?.status || "INITIATING").toUpperCase();
+        if (currentSt === "INITIATING") {
+          transaction.update(paymentRef, {
+            status: "PENDING",
+            singpayTransactionId: singpayTxId,
+            singpayStatus: singpayTx.status || "Start",
+            singpayResult: singpayTx.result || null,
+            updatedAt: new Date().toISOString(),
+          });
+        }
       });
 
       // 3.8 Réponse : { reference, amount, expiresAt, lines, operator }
@@ -1986,11 +2060,8 @@ export const singpayWebhook = onRequest(
       const cfg = await getSingPayConfig();
       const expectedSecret = cfg.webhookSecret;
 
-      // 5.4 Transport du secret : accepte x-webhook-secret ou ?secret=
-      const receivedSecret =
-        (req.headers["x-webhook-secret"] as string) ||
-        (req.query.secret as string) ||
-        "";
+      // 5.4 Transport du secret : en-tête x-webhook-secret uniquement (B21)
+      const receivedSecret = (req.headers["x-webhook-secret"] as string) || "";
 
       // 5.3 Comparaison avec crypto.timingSafeEqual et suppression du repli Client Secret
       if (!expectedSecret || !receivedSecret) {
@@ -2074,7 +2145,10 @@ export const singpayWebhook = onRequest(
               }
             }
           } catch (fetchErr) {
-            console.warn("singpayWebhook: validation statut côté serveur échouée:", fetchErr);
+            console.warn("singpayWebhook: validation statut côté serveur échouée (erreur réseau):", fetchErr);
+            // Répondre 500 pour que SingPay renvoie le webhook (B7, B21)
+            res.status(500).json({error: "Verification unavailable, retry requested"});
+            return;
           }
         }
 
@@ -2093,8 +2167,8 @@ export const singpayWebhook = onRequest(
       await settlePayment(reference, outcome);
       res.status(200).json({received: true});
     } catch (err: unknown) {
-      const e = err as Error;
-      res.status(500).json({error: e.message});
+      console.error("singpayWebhook error:", err);
+      res.status(500).json({error: "Internal Server Error"});
     }
   }
 );
@@ -2106,6 +2180,7 @@ export const singpayWebhook = onRequest(
 export const reconcilePayments = onSchedule(
   {
     schedule: "every 2 minutes",
+    timeoutSeconds: 300,
     secrets: [singpayClientId, singpayClientSecret, singpayWalletId],
   },
   async () => {
@@ -2220,23 +2295,53 @@ export const reconcilePayments = onSchedule(
         }
       }
     }
+
+    // 3. Traiter également les paiements en NEEDS_REVIEW suite à incident réseau webhook (B7)
+    const needsReviewSnap = await db
+      .collection("payments")
+      .where("status", "==", "NEEDS_REVIEW")
+      .where("createdAt", "<=", sixtySecAgo)
+      .limit(30)
+      .get();
+
+    for (const doc of needsReviewSnap.docs) {
+      if (cfg.clientId && cfg.clientSecret) {
+        try {
+          const data = doc.data() || {};
+          const txId = data.singpayTransactionId;
+          let queryUrl = "";
+          const headers: Record<string, string> = {
+            "x-client-id": cfg.clientId,
+            "x-client-secret": cfg.clientSecret,
+          };
+          if (txId) {
+            queryUrl = `https://gateway.singpay.ga/v1/transaction/api/status/${encodeURIComponent(String(txId))}`;
+          } else {
+            queryUrl = `https://gateway.singpay.ga/v1/transaction/api/search/by-reference/${encodeURIComponent(doc.id)}`;
+            headers["x-wallet"] = cfg.walletId;
+          }
+          const res = await singpayFetch(queryUrl, { method: "GET", headers }, 8000);
+          if (res.ok) {
+            const json = (await res.json()) as SingPayResponsePayload;
+            const mapped = mapSingPayResult(json.transaction || {});
+            if (mapped.status === "SUCCESS") {
+              await settlePayment(doc.id, {
+                status: "SUCCESS",
+                singpayStatus: mapped.singpayStatus,
+                singpayResult: mapped.result,
+                amountReceived: json.transaction?.amount !== undefined ? Number(json.transaction.amount) : undefined,
+              });
+            }
+          }
+        } catch (e) {
+          console.warn(`reconcilePayments: Erreur vérification SingPay NEEDS_REVIEW pour ${doc.id}:`, e);
+        }
+      }
+    }
   }
 );
 
-/**
- * Déclencheur Firestore sur écriture de paiement :
- * Phase 4.4 : Toute attribution passe exclusivement par settlePayment.
- * Cette fonction ne réalise aucune attribution directe pour garantir l'atomicité transactionnelle.
- */
-export const onPaymentStatusChange = onDocumentWritten(
-  "payments/{paymentId}",
-  async (event) => {
-    const after = event.data?.after;
-    if (!after || !after.exists) return;
-    // Les attributions passent exclusivement par settlePayment (Phase 4.4).
-    // Les éventuelles notifications push futures peuvent être déclenchées ici sans écriture Firestore.
-  }
-);
+// B27: onPaymentStatusChange supprimé (était un trigger vide facturé à chaque écriture de paiement)
 
 /**
  * Fonction appelable permettant au client de consulter l'état
@@ -2286,23 +2391,38 @@ export const recordSmsSent = onCall(
   {cors: true},
   async (request) => {
     const {phoneNumber} = request.data || {};
+    if (!phoneNumber || typeof phoneNumber !== "string") {
+      throw new HttpsError("invalid-argument", "Numéro de téléphone requis.");
+    }
     const {e164} = normalizeInternationalPhone(phoneNumber);
+    if (!e164) {
+      throw new HttpsError("invalid-argument", "Format de téléphone invalide.");
+    }
 
-    if (e164 && FIREBASE_TEST_PHONE_NUMBERS.includes(e164)) {
+    if (FIREBASE_TEST_PHONE_NUMBERS.includes(e164)) {
       return {success: true, test: true};
     }
 
     const db = getFirestore();
     const today = new Date().toISOString().split("T")[0];
-    await db.doc("system_counters/scalability_metrics").set(
-      {
-        todayDate: today,
-        smsSentToday: FieldValue.increment(1),
-        smsSentAllTime: FieldValue.increment(1),
-        lastSmsSentAt: new Date().toISOString(),
-      },
-      {merge: true}
-    );
+    const metricRef = db.doc("system_counters/scalability_metrics");
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(metricRef);
+      const data = snap.data() || {};
+      const isNewDay = data.todayDate !== today;
+
+      tx.set(
+        metricRef,
+        {
+          todayDate: today,
+          smsSentToday: isNewDay ? 1 : FieldValue.increment(1),
+          smsSentAllTime: FieldValue.increment(1),
+          lastSmsSentAt: new Date().toISOString(),
+        },
+        {merge: true}
+      );
+    });
 
     return {success: true};
   }
@@ -2392,73 +2512,77 @@ export async function resolveAdPayment(
   }
 
   const db = getFirestore();
-  const paySnap = await db.collection("payments").doc(paymentReference).get();
-  if (!paySnap.exists) {
-    return {
-      verified: false,
-      failureReason: "Document de paiement introuvable.",
-    };
-  }
+  const payDocRef = db.collection("payments").doc(paymentReference);
 
-  const payData = paySnap.data() || {};
-  if (payData.status !== "SUCCESS") {
-    return {
-      verified: false,
-      failureReason: `Statut paiement non validé (${payData.status}).`,
-    };
-  }
+  return await db.runTransaction(async (transaction) => {
+    const paySnap = await transaction.get(payDocRef);
+    if (!paySnap.exists) {
+      return {
+        verified: false,
+        failureReason: "Document de paiement introuvable.",
+      };
+    }
 
-  if (payData.userId !== userId) {
-    return {
-      verified: false,
-      failureReason: "Le paiement appartient à un autre compte.",
-    };
-  }
+    const payData = paySnap.data() || {};
+    if (payData.status !== "SUCCESS") {
+      return {
+        verified: false,
+        failureReason: `Statut paiement non validé (${payData.status}).`,
+      };
+    }
 
-  if (payData.productId !== "AD_PUBLISH") {
-    return {
-      verified: false,
-      failureReason: "Produit de paiement invalide pour la publication.",
-    };
-  }
+    if (payData.userId !== userId) {
+      return {
+        verified: false,
+        failureReason: "Le paiement appartient à un autre compte.",
+      };
+    }
 
-  const payMeta = (payData.metadata as Record<string, unknown>) || {};
-  if (payMeta.adId && payMeta.adId !== adId) {
-    return {
-      verified: false,
-      failureReason: "Le paiement cible une autre annonce.",
-    };
-  }
+    if (payData.productId !== "AD_PUBLISH") {
+      return {
+        verified: false,
+        failureReason: "Produit de paiement invalide pour la publication.",
+      };
+    }
 
-  if (payData.consumedByAdId && payData.consumedByAdId !== adId) {
-    return {
-      verified: false,
-      failureReason: "Ce paiement a déjà été consommé par une autre annonce.",
-    };
-  }
+    const payMeta = (payData.metadata as Record<string, unknown>) || {};
+    if (payMeta.adId && payMeta.adId !== adId) {
+      return {
+        verified: false,
+        failureReason: "Le paiement cible une autre annonce.",
+      };
+    }
 
-  // Marquer le paiement comme consommé par cette annonce
-  await paySnap.ref.update({
-    consumedByAdId: adId,
-    updatedAt: new Date().toISOString(),
+    if (payData.consumedByAdId && payData.consumedByAdId !== adId) {
+      return {
+        verified: false,
+        failureReason: "Ce paiement a déjà été consommé par une autre annonce.",
+      };
+    }
+
+    // Marquer le paiement comme consommé par cette annonce de manière transactionnelle
+    transaction.update(payDocRef, {
+      consumedByAdId: adId,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const durationDays = Number(payMeta.durationDays) || 30;
+    const now = Date.now();
+    const expiresAt = new Date(now + durationDays * 86400000).toISOString();
+    const maxPhotos = Number(payMeta.photoCount) || 3;
+    const boostRequested = Boolean(payMeta.withBoost);
+
+    return {
+      verified: true,
+      durationDays,
+      expiresAt,
+      paidAmount: payData.amount || 0,
+      paymentMethod: payData.operator || null,
+      transactionRef: payData.singpayTransactionId || paymentReference,
+      boostRequested,
+      maxPhotos,
+    };
   });
-
-  const durationDays = Number(payMeta.durationDays) || 30;
-  const now = Date.now();
-  const expiresAt = new Date(now + durationDays * 86400000).toISOString();
-  const maxPhotos = Number(payMeta.photoCount) || 3;
-  const boostRequested = Boolean(payMeta.withBoost);
-
-  return {
-    verified: true,
-    durationDays,
-    expiresAt,
-    paidAmount: payData.amount || 0,
-    paymentMethod: payData.operator || null,
-    transactionRef: payData.singpayTransactionId || paymentReference,
-    boostRequested,
-    maxPhotos,
-  };
 }
 
 /**
@@ -2494,7 +2618,7 @@ export const onAdCreated = onDocumentCreated(
     const consumed = Number(userData.consumedFreeAdsCount || 0);
     const isCoveredByQuota = !isExempt && quota > 0 && consumed < quota;
 
-    // Vérification annuaire professionnel
+    // B13: Vérification annuaire professionnel (égalité exacte sur le numéro Auth vérifié)
     let isRegistered = false;
     try {
       const sysConfigSnap = await db.doc("settings/system_config").get();
@@ -2504,17 +2628,14 @@ export const onAdCreated = onDocumentCreated(
           (sysConfig.registeredUserIds as string[]) || [];
         const registeredPhones =
           (sysConfig.registeredPhones as string[]) || [];
-        const rawPhone = (userData.contactPhone ||
-          userData.phoneNumber ||
-          adData.contactPhone ||
-          "") as string;
-        const cleanUserPhone = rawPhone.replace(/\D/g, "");
+        const authUserRecord = await getAuth().getUser(userId).catch(() => null);
+        const verifiedAuthPhone = authUserRecord?.phoneNumber || (userData.phoneNumber as string) || "";
+        const cleanAuthPhone = verifiedAuthPhone.replace(/\D/g, "");
+
         isRegistered =
           registeredUserIds.includes(userId) ||
-          (cleanUserPhone.length >= 6 &&
-            registeredPhones.some((p: string) =>
-              p.includes(cleanUserPhone) || cleanUserPhone.includes(p)
-            ));
+          (cleanAuthPhone.length >= 8 &&
+            registeredPhones.map((p: string) => p.replace(/\D/g, "")).includes(cleanAuthPhone));
       }
     } catch (cfgErr) {
       console.warn("onAdCreated: Erreur lecture system_config:", cfgErr);
@@ -2533,36 +2654,22 @@ export const onAdCreated = onDocumentCreated(
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
 
-    if (isExempt) {
-      // Utilisateur exempté : publication sans frais
-      updates.paymentVerified = true;
-      updates.paidAmount = 0;
-      const durationDays = Number(adData.durationDays) || 30;
-      updates.durationDays = durationDays;
-      updates.expiresAt = new Date(now + durationDays * 86400000).toISOString();
-    } else if (isCoveredByQuota) {
-      // Inclus dans le quota d'abonnement actif
-      updates.paymentVerified = true;
-      updates.paidAmount = 0;
-      const durationDays = Number(adData.durationDays) || 30;
-      updates.durationDays = durationDays;
-      updates.expiresAt = new Date(now + durationDays * 86400000).toISOString();
-      if (userDoc.exists) {
-        await userDoc.ref.update({
-          consumedFreeAdsCount: FieldValue.increment(1),
-          updatedAt: nowIso,
-        });
-      }
-    } else {
-      // 6.1 Exige un paiement validé SUCCESS
+    // B10: Validation stricte de durationDays contre PRICING_DURATIONS
+    const rawDuration = Number(adData.durationDays);
+    const durationDays =
+      PRICING_DURATIONS[rawDuration] !== undefined && rawDuration > 0 && rawDuration <= 365
+        ? rawDuration
+        : 30;
+
+    // B11: Si une référence de paiement est fournie, passer par resolveAdPayment
+    if (adData.paymentReference) {
       const resolved = await resolveAdPayment(
         adId,
         userId,
-        adData.paymentReference as string | undefined
+        adData.paymentReference as string
       );
 
       if (!resolved.verified) {
-        // Paiement absent ou faux : l'annonce n'est JAMAIS publiée
         updates.status = "PENDING_PAYMENT";
         updates.paymentVerified = false;
         updates.moderationReason = resolved.failureReason || "PAIEMENT_REQUIS";
@@ -2570,7 +2677,6 @@ export const onAdCreated = onDocumentCreated(
         updates.featuredAt = null;
         updates.featuredUntil = null;
       } else {
-        // Dérivation stricte depuis les métadonnées assainies du serveur
         updates.paymentVerified = true;
         updates.durationDays = resolved.durationDays;
         updates.expiresAt = resolved.expiresAt;
@@ -2578,10 +2684,9 @@ export const onAdCreated = onDocumentCreated(
         updates.paymentMethod = resolved.paymentMethod;
         updates.transactionRef = resolved.transactionRef;
 
+        // B18: Poser boostRequested, le décompte débutera à l'approbation
         if (resolved.boostRequested) {
-          updates.isFeatured = true;
-          updates.featuredAt = nowIso;
-          updates.featuredUntil = new Date(now + 7 * 86400000).toISOString();
+          updates.boostRequested = true;
         }
 
         if (
@@ -2592,6 +2697,35 @@ export const onAdCreated = onDocumentCreated(
           updates.images = adData.images.slice(0, resolved.maxPhotos);
         }
       }
+    } else if (isExempt) {
+      // Utilisateur exempté : publication sans frais
+      updates.paymentVerified = true;
+      updates.paidAmount = 0;
+      updates.durationDays = durationDays;
+      updates.expiresAt = new Date(now + durationDays * 86400000).toISOString();
+      if (adData.boostRequested || adData.withBoost) {
+        updates.boostRequested = true;
+      }
+    } else if (isCoveredByQuota) {
+      // Inclus dans le quota d'abonnement actif (sans extras payants)
+      updates.paymentVerified = true;
+      updates.paidAmount = 0;
+      updates.durationDays = durationDays;
+      updates.expiresAt = new Date(now + durationDays * 86400000).toISOString();
+      if (userDoc.exists) {
+        await userDoc.ref.update({
+          consumedFreeAdsCount: FieldValue.increment(1),
+          updatedAt: nowIso,
+        });
+      }
+    } else {
+      // Sans paiement et non couvert par un quota ou une exemption
+      updates.status = "PENDING_PAYMENT";
+      updates.paymentVerified = false;
+      updates.moderationReason = "PAIEMENT_REQUIS";
+      updates.isFeatured = false;
+      updates.featuredAt = null;
+      updates.featuredUntil = null;
     }
 
     await snap.ref.update(updates);
@@ -2647,97 +2781,130 @@ export const approveAd = onCall(
 
     const db = getFirestore();
     const adRef = db.collection("ads").doc(String(adId));
-    const adSnap = await adRef.get();
-    if (!adSnap.exists) {
-      throw new HttpsError("not-found", "Annonce introuvable.");
-    }
 
-    const ad = adSnap.data() || {};
-    const now = Date.now();
-    const nowIso = new Date(now).toISOString();
-
-    if (ad.pendingExtension) {
-      const base = Math.max(
-        ad.expiresAt ? new Date(ad.expiresAt).getTime() : now,
-        now
-      );
-      const maxExpiry = now + 365 * 86400000;
-      const requestedDays = Math.min(
-        Number(ad.pendingExtension.days) || 30,
-        365
-      );
-      const computedExpiry = base + requestedDays * 86400000;
-      const newExpiry = new Date(
-        Math.min(computedExpiry, maxExpiry)
-      ).toISOString();
-      const effectiveAddedDays = Math.max(
-        1,
-        Math.round((new Date(newExpiry).getTime() - base) / 86400000)
-      );
-
-      await adRef.update({
-        status: "ACTIVE",
-        expiresAt: newExpiry,
-        durationDays: Math.min(
-          365,
-          (Number(ad.durationDays) || 0) + effectiveAddedDays
-        ),
-        paymentMethod:
-          ad.pendingExtension.operator || ad.paymentMethod || null,
-        transactionRef:
-          ad.pendingExtension.transactionRef || ad.transactionRef || null,
-        pendingExtension: FieldValue.delete(),
-        moderatedAt: nowIso,
-        moderationReason: FieldValue.delete(),
-        updatedAt: nowIso,
-      });
-    } else {
-      const durationDays = Number(ad.durationDays) || 30;
-      const expiresAt = new Date(now + durationDays * 86400000).toISOString();
-      const updates: Record<string, unknown> = {
-        status: "ACTIVE",
-        publishedAt: ad.publishedAt || nowIso,
-        expiresAt,
-        moderatedAt: nowIso,
-        moderationReason: FieldValue.delete(),
-        updatedAt: nowIso,
-      };
-
-      // Si le boost était en pause pendant la re-modération, le prolonger
-      if (ad.featuredPausedAt && ad.featuredUntil) {
-        const pausedAtMs = new Date(ad.featuredPausedAt).getTime();
-        const pauseDuration = Math.max(0, now - pausedAtMs);
-        const newFeaturedUntil = new Date(
-          new Date(ad.featuredUntil).getTime() + pauseDuration
-        ).toISOString();
-        updates.isFeatured = true;
-        updates.featuredUntil = newFeaturedUntil;
-        updates.featuredPausedAt = FieldValue.delete();
-      } else if (ad.boostRequested || ad.withBoost) {
-        updates.isFeatured = true;
-        updates.featuredAt = nowIso;
-        updates.featuredUntil = new Date(now + 7 * 86400000).toISOString();
-        updates.boostRequested = FieldValue.delete();
-        updates.withBoost = FieldValue.delete();
+    return await db.runTransaction(async (transaction) => {
+      const adSnap = await transaction.get(adRef);
+      if (!adSnap.exists) {
+        throw new HttpsError("not-found", "Annonce introuvable.");
       }
 
-      await adRef.update(updates);
-    }
+      const ad = adSnap.data() || {};
 
-    // Journal d'audit serveur atomique pour la modération (B-13, S-10)
-    try {
+      // B14: Garde de statut strict - seul PENDING_REVIEW est approuvable
+      if (ad.status !== "PENDING_REVIEW") {
+        throw new HttpsError(
+          "failed-precondition",
+          `Impossible d'approuver une annonce au statut ${ad.status}. Seul PENDING_REVIEW est autorisé.`
+        );
+      }
+
+      // B14: Exiger paymentVerified === true
+      if (ad.paymentVerified !== true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Impossible d'approuver une annonce dont le paiement n'est pas vérifié."
+        );
+      }
+
+      const now = Date.now();
+      const nowIso = new Date(now).toISOString();
+
+      if (ad.pendingExtension) {
+        const base = Math.max(
+          ad.expiresAt ? new Date(ad.expiresAt).getTime() : now,
+          now
+        );
+        const maxExpiry = now + 365 * 86400000;
+        const requestedDays = Math.min(
+          Number(ad.pendingExtension.days) || 30,
+          365
+        );
+        const computedExpiry = base + requestedDays * 86400000;
+        const newExpiry = new Date(
+          Math.min(computedExpiry, maxExpiry)
+        ).toISOString();
+        const effectiveAddedDays = Math.max(
+          1,
+          Math.round((new Date(newExpiry).getTime() - base) / 86400000)
+        );
+
+        transaction.update(adRef, {
+          status: "ACTIVE",
+          expiresAt: newExpiry,
+          durationDays: Math.min(
+            365,
+            (Number(ad.durationDays) || 0) + effectiveAddedDays
+          ),
+          paymentMethod:
+            ad.pendingExtension.operator || ad.paymentMethod || null,
+          transactionRef:
+            ad.pendingExtension.transactionRef || ad.transactionRef || null,
+          pendingExtension: FieldValue.delete(),
+          moderatedAt: nowIso,
+          moderatedBy: request.auth!.uid,
+          moderationReason: FieldValue.delete(),
+          updatedAt: nowIso,
+        });
+      } else {
+        // B3: Conserver expiresAt si publishedAt existe et expiresAt est dans le futur
+        let expiresAt: string;
+        const publishedAt = ad.publishedAt || nowIso;
+        if (ad.publishedAt && ad.expiresAt && new Date(ad.expiresAt).getTime() > now) {
+          expiresAt = ad.expiresAt;
+        } else {
+          const rawDuration = Number(ad.durationDays);
+          const durationDays =
+            PRICING_DURATIONS[rawDuration] !== undefined && rawDuration > 0 && rawDuration <= 365
+              ? rawDuration
+              : 30;
+          expiresAt = new Date(now + durationDays * 86400000).toISOString();
+        }
+
+        const updates: Record<string, unknown> = {
+          status: "ACTIVE",
+          publishedAt,
+          expiresAt,
+          moderatedAt: nowIso,
+          moderatedBy: request.auth!.uid,
+          moderationReason: FieldValue.delete(),
+          updatedAt: nowIso,
+        };
+
+        // Si le boost était en pause pendant la re-modération, le prolonger
+        if (ad.featuredPausedAt && ad.featuredUntil) {
+          const pausedAtMs = new Date(ad.featuredPausedAt).getTime();
+          const pauseDuration = Math.max(0, now - pausedAtMs);
+          const newFeaturedUntil = new Date(
+            new Date(ad.featuredUntil).getTime() + pauseDuration
+          ).toISOString();
+          updates.isFeatured = true;
+          updates.featuredUntil = newFeaturedUntil;
+          updates.featuredPausedAt = FieldValue.delete();
+        } else if (ad.boostRequested || ad.withBoost) {
+          // B18: Démarre le décompte de boost de 7 jours à l'approbation
+          updates.isFeatured = true;
+          updates.featuredAt = nowIso;
+          updates.featuredUntil = new Date(now + 7 * 86400000).toISOString();
+          updates.boostRequested = FieldValue.delete();
+          updates.withBoost = FieldValue.delete();
+        }
+
+        transaction.update(adRef, updates);
+      }
+
+      // Journal d'audit serveur atomique pour la modération (B-13, S-10)
       const logRef = db.collection("moderation_logs").doc();
-      await logRef.set({
+      transaction.set(logRef, {
         action: "APPROVE_AD",
         targetId: adId,
-        adminId: request.auth.uid,
-        adminEmail: (request.auth.token as any)?.email || null,
+        adminId: request.auth!.uid,
+        adminEmail: (request.auth!.token as any)?.email || null,
         adTitle: ad.title || "Sans titre",
         timestamp: FieldValue.serverTimestamp(),
       });
-    } catch (logErr) {
-      console.warn("[approveAd] Erreur journal moderation_logs:", logErr);
-    }
+
+      return {success: true, adId};
+    });
 
     return {success: true, adId};
   }
@@ -2818,7 +2985,21 @@ export const boostAd = onCall(
       const existingUntil = ad.featuredUntil ?
         new Date(ad.featuredUntil).getTime() : 0;
       const baseUntil = Math.max(existingUntil, now);
-      const newFeaturedUntil = new Date(baseUntil + 7 * 86400000).toISOString();
+
+      // B29: Plafond de boost à 30 jours maximum à partir de maintenant ou expiration annonce
+      const maxBoostLimit = Math.min(
+        now + 30 * 86400000,
+        ad.expiresAt ? new Date(ad.expiresAt).getTime() : now + 30 * 86400000
+      );
+      if (baseUntil >= maxBoostLimit) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Le cumul maximal de boost (30 jours) est déjà atteint pour cette annonce."
+        );
+      }
+      const newFeaturedUntil = new Date(
+        Math.min(baseUntil + 7 * 86400000, maxBoostLimit)
+      ).toISOString();
 
       const adUpdates: Record<string, unknown> = {
         isFeatured: true,
@@ -2947,10 +3128,11 @@ export const extendAdVip = onCall(
       throw new HttpsError("permission-denied", "Accès non autorisé.");
     }
 
-    if (ad.status === "deleted" || ad.status === "rejected") {
+    const adStatus = String(ad.status || "").toUpperCase();
+    if (!EXTENDABLE_AD_STATUSES.includes(adStatus as any)) {
       throw new HttpsError(
         "failed-precondition",
-        "Cette annonce ne peut plus être prolongée."
+        "Cette annonce ne peut pas être prolongée (statut non éligible)."
       );
     }
 
@@ -2968,8 +3150,7 @@ export const extendAdVip = onCall(
       Math.round((computedExpiry - base) / 86400000)
     );
 
-    await adRef.update({
-      status: "ACTIVE",
+    const adUpdates: Record<string, unknown> = {
       expiresAt: newExpiresAt,
       durationDays: Math.min(
         365,
@@ -2977,14 +3158,18 @@ export const extendAdVip = onCall(
       ),
       lastExtendedAt: new Date(now).toISOString(),
       updatedAt: new Date(now).toISOString(),
-    });
+    };
+    if (adStatus === "EXPIRED") {
+      adUpdates.status = "ACTIVE";
+    }
 
+    await adRef.update(adUpdates);
     return {success: true, expiresAt: newExpiresAt};
   }
 );
 
 /**
- * Phase 6.2 requestExtension : Prolongation sécurisée par paiement validé.
+ * Phase 6.2 requestExtension : Prolongation sécurisée par paiement validé ou compte gratuit.
  */
 export const requestExtension = onCall(
   {cors: true},
@@ -3030,10 +3215,11 @@ export const requestExtension = onCall(
     if (ad.userId !== request.auth.uid) {
       throw new HttpsError("permission-denied", "Accès non autorisé.");
     }
-    if (ad.status === "deleted" || ad.status === "rejected") {
+    const adStatus = String(ad.status || "").toUpperCase();
+    if (!EXTENDABLE_AD_STATUSES.includes(adStatus as any)) {
       throw new HttpsError(
         "failed-precondition",
-        "Cette annonce ne peut plus être prolongée."
+        "Cette annonce ne peut pas être prolongée (statut non éligible)."
       );
     }
 
@@ -3049,12 +3235,16 @@ export const requestExtension = onCall(
       const computedExpiry = Math.min(base + requestedDays * 86400000, maxExpiry);
       const newExpiresAt = new Date(computedExpiry).toISOString();
 
-      await adRef.update({
-        status: "ACTIVE",
+      const adUpdates: Record<string, unknown> = {
         expiresAt: newExpiresAt,
         lastExtendedAt: new Date(now).toISOString(),
         updatedAt: new Date(now).toISOString(),
-      });
+      };
+      if (adStatus === "EXPIRED") {
+        adUpdates.status = "ACTIVE";
+      }
+
+      await adRef.update(adUpdates);
       return {success: true, expiresAt: newExpiresAt};
     }
 
@@ -3066,68 +3256,75 @@ export const requestExtension = onCall(
       );
     }
 
-    const paySnap = await db.collection("payments").doc(paymentReference).get();
-    if (!paySnap.exists) {
-      throw new HttpsError("not-found", "Paiement de prolongation introuvable.");
-    }
-    const payData = paySnap.data() || {};
-    if (
-      payData.status !== "SUCCESS" ||
-      payData.userId !== request.auth.uid ||
-      payData.productId !== "AD_EXTEND"
-    ) {
-      throw new HttpsError(
-        "failed-precondition",
-        "Paiement non vérifié ou non conforme pour la prolongation."
+    // Consommation transactionnelle stricte pour éviter tout double usage ou replay (Correction 1)
+    const payDocRef = db.collection("payments").doc(paymentReference);
+    return await db.runTransaction(async (transaction) => {
+      const paySnap = await transaction.get(payDocRef);
+      if (!paySnap.exists) {
+        throw new HttpsError("not-found", "Paiement de prolongation introuvable.");
+      }
+      const payData = paySnap.data() || {};
+      if (
+        payData.status !== "SUCCESS" ||
+        payData.userId !== request.auth!.uid ||
+        payData.productId !== "AD_EXTEND"
+      ) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Paiement non vérifié ou non conforme pour la prolongation."
+        );
+      }
+
+      const payMeta = (payData.metadata as Record<string, unknown>) || {};
+      if (payMeta.adId && payMeta.adId !== adId) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Ce paiement cible une autre annonce."
+        );
+      }
+
+      if (payData.consumedByAdId) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Ce paiement a déjà été consommé pour prolonger une annonce."
+        );
+      }
+
+      const extendDays = Number(payMeta.days || days || 30);
+      const now = Date.now();
+      const base = Math.max(
+        ad.expiresAt ? new Date(ad.expiresAt).getTime() : now,
+        now
       );
-    }
-
-    const payMeta = (payData.metadata as Record<string, unknown>) || {};
-    if (payMeta.adId && payMeta.adId !== adId) {
-      throw new HttpsError(
-        "failed-precondition",
-        "Ce paiement cible une autre annonce."
+      const maxExpiry = now + 365 * 86400000;
+      const computedExpiry = Math.min(base + extendDays * 86400000, maxExpiry);
+      const newExpiresAt = new Date(computedExpiry).toISOString();
+      const effectiveAddedDays = Math.max(
+        1,
+        Math.round((computedExpiry - base) / 86400000)
       );
-    }
 
-    if (payData.consumedByAdId && payData.consumedByAdId !== adId) {
-      throw new HttpsError(
-        "failed-precondition",
-        "Ce paiement a déjà été consommé."
-      );
-    }
+      const adUpdates: Record<string, unknown> = {
+        expiresAt: newExpiresAt,
+        durationDays: Math.min(
+          365,
+          (Number(ad.durationDays) || 0) + effectiveAddedDays
+        ),
+        lastExtendedAt: new Date(now).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      };
+      if (adStatus === "EXPIRED") {
+        adUpdates.status = "ACTIVE";
+      }
 
-    const extendDays = Number(payMeta.days || days || 30);
-    const now = Date.now();
-    const base = Math.max(
-      ad.expiresAt ? new Date(ad.expiresAt).getTime() : now,
-      now
-    );
-    const maxExpiry = now + 365 * 86400000;
-    const computedExpiry = Math.min(base + extendDays * 86400000, maxExpiry);
-    const newExpiresAt = new Date(computedExpiry).toISOString();
-    const effectiveAddedDays = Math.max(
-      1,
-      Math.round((computedExpiry - base) / 86400000)
-    );
+      transaction.update(adRef, adUpdates);
+      transaction.update(payDocRef, {
+        consumedByAdId: adId,
+        updatedAt: new Date(now).toISOString(),
+      });
 
-    await adRef.update({
-      status: "ACTIVE",
-      expiresAt: newExpiresAt,
-      durationDays: Math.min(
-        365,
-        (Number(ad.durationDays) || 0) + effectiveAddedDays
-      ),
-      lastExtendedAt: new Date(now).toISOString(),
-      updatedAt: new Date(now).toISOString(),
+      return {success: true, expiresAt: newExpiresAt};
     });
-
-    await paySnap.ref.update({
-      consumedByAdId: adId,
-      updatedAt: new Date(now).toISOString(),
-    });
-
-    return {success: true, expiresAt: newExpiresAt};
   }
 );
 
@@ -3160,7 +3357,12 @@ export const activateExemptSubscription = onCall(
     const now = new Date();
 
     if (type === "SUBSCRIPTION") {
-      const subTier = tier || "VIP";
+      const allowedTiers = ["PRO", "ELITE", "BUSINESS", "VIP"];
+      const subTier = tier && allowedTiers.includes(tier) ? tier : "VIP";
+      if (tier && !allowedTiers.includes(tier)) {
+        throw new HttpsError("invalid-argument", `Tier invalide. Valeurs acceptées: ${allowedTiers.join(", ")}`);
+      }
+
       await userRef.update({
         subscriptionTier: subTier,
         subscriptionStartedAt: now.toISOString(),
@@ -3171,25 +3373,34 @@ export const activateExemptSubscription = onCall(
         updatedAt: now.toISOString(),
       });
 
-      // Mettre à jour les annonces actives de l'utilisateur
+      // Mettre à jour les annonces actives de l'utilisateur par lots <= 450 (B26)
       const adsSnap = await db
         .collection("ads")
         .where("userId", "==", request.auth.uid)
         .where("status", "in", ["ACTIVE", "PENDING_REVIEW"])
         .get();
-      const batch = db.batch();
-      adsSnap.docs.forEach((d) => {
-        batch.update(d.ref, {
-          ownerTier: subTier,
-          isOwnerVip: subTier === "VIP",
-          isOwnerVerified: true,
-          updatedAt: now.toISOString(),
+      const CHUNK_SIZE = 450;
+      for (let i = 0; i < adsSnap.docs.length; i += CHUNK_SIZE) {
+        const chunk = adsSnap.docs.slice(i, i + CHUNK_SIZE);
+        const batch = db.batch();
+        chunk.forEach((d) => {
+          batch.update(d.ref, {
+            ownerTier: subTier,
+            isOwnerVip: subTier === "VIP",
+            isOwnerVerified: true,
+            updatedAt: now.toISOString(),
+          });
         });
-      });
-      await batch.commit();
+        await batch.commit();
+      }
     } else if (type === "BOOSTER_PACK") {
       const current = Number(userData.freeBoostsRemaining || 0);
-      const count = Math.min(Number(packCount) || 5, Math.max(0, 20 - current));
+      const requestedCount = Number(packCount);
+      // B26 & D7: Validation stricte de packCount (refuser packCount <= 0 ou non numérique)
+      if (isNaN(requestedCount) || requestedCount <= 0) {
+        throw new HttpsError("invalid-argument", "Nombre de packs de boost invalide (doit être supérieur à 0).");
+      }
+      const count = Math.min(Math.min(requestedCount, 10), Math.max(0, 20 - current));
       await userRef.update({
         freeBoostsRemaining: Math.min(20, current + count),
         activeBoosterPack: "BOOST_EXEMPT",

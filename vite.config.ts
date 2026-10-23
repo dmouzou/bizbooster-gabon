@@ -18,6 +18,17 @@ export default defineConfig(() => {
     build: {
       outDir: 'dist-frontend',
       emptyOutDir: true,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('firebase') || id.includes('@firebase')) {
+                return 'vendor-firebase';
+              }
+            }
+          },
+        },
+      },
     },
   };
 });

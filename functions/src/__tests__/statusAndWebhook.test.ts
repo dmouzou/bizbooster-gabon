@@ -75,6 +75,7 @@ describe("Statut, Webhook et Réconciliation (Phase 5)", () => {
           status: "SUCCESS",
           singpayResult: "Success",
           singpayStatus: "Terminate",
+          amountReceived: 29000,
         });
         expect(res.status).toBe("SUCCESS");
       }

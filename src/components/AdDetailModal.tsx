@@ -20,8 +20,19 @@ export function isTrustedMediaUrl(url?: string): boolean {
   if (isValidStorageUrl(url)) return true;
   try {
     const parsed = new URL(url);
-    if (parsed.protocol === 'https:' && (parsed.hostname === 'images.unsplash.com' || parsed.hostname.endsWith('.unsplash.com'))) {
-      return true;
+    if (parsed.protocol === 'https:') {
+      if (
+        [
+          'firebasestorage.googleapis.com',
+          'storage.googleapis.com',
+          'storage.cloud.google.com',
+        ].includes(parsed.hostname)
+      ) {
+        return true;
+      }
+      if (parsed.hostname === 'images.unsplash.com' || parsed.hostname.endsWith('.unsplash.com')) {
+        return true;
+      }
     }
   } catch {
     return false;

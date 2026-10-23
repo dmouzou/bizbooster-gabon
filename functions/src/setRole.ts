@@ -51,6 +51,13 @@ export const setRole = onCall(
   // 1. Poser le custom claim sur Firebase Auth
   await getAuth().setCustomUserClaims(targetUid, { role });
 
+  // B16: Révoquer immédiatement les jetons pour qu'une rétrogradation prenne effet sans attendre 1 heure
+  try {
+    await getAuth().revokeRefreshTokens(targetUid);
+  } catch (revErr) {
+    console.warn("[setRole] Erreur lors de revokeRefreshTokens:", revErr);
+  }
+
   // 2. Mettre à jour Firestore et journaliser dans la même transaction
   await db.runTransaction(async (tx) => {
     tx.update(userRef, {

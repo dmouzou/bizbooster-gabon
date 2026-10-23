@@ -85,6 +85,7 @@ import {
 import { calculateBill, formatFCFA, formatPriceDisplay, formatPriceUnit, getAdTransactionBadge } from '../utils/formatters';
 import { compressImageForUpload } from '../utils/imageCompressor';
 import { isAdVipCornerEligible, getVipThresholdDescription, VIP_CORNER_INFO } from '../utils/vipCorner';
+import { toE164 } from '../utils/phone';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
 import { CguModal } from './CguModal';
 
@@ -354,6 +355,19 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
 
   // Modal body scroll reference for Step navigation (Point 3)
   const modalBodyRef = useRef<HTMLDivElement>(null);
+  const hasHandledPaymentSuccessRef = useRef(false);
+  const createdObjectUrlsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    return () => {
+      createdObjectUrlsRef.current.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
+      });
+      createdObjectUrlsRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (modalBodyRef.current) {
@@ -559,7 +573,9 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
           price,
           priceUnit,
           description,
-          photos: photos.map((p) => ({ id: p.id, url: p.url, name: p.name, size: p.size })),
+          photos: photos
+            .filter((p) => p.url && !p.url.startsWith('blob:') && !p.url.startsWith('data:'))
+            .map((p) => ({ id: p.id, url: p.url, name: p.name, size: p.size })),
           hasVideo,
           videoPreviewUrl: videoPreviewUrl && !videoPreviewUrl.startsWith('blob:') ? videoPreviewUrl : null,
           videoDuration,
@@ -613,7 +629,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     DRAFT_STORAGE_KEY,
   ]);
 
-  // Active/Simultaneous ads count for the current user
+  // Active/Simultaneous ads count for the current user (P6)
   const userSimultaneousAds = useMemo(() => {
     if (!userAds || !currentUser) return [];
     const now = Date.now();
@@ -621,7 +637,8 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
       (a) =>
         (a.userId === currentUser.id || !a.userId) &&
         a.status !== 'REJECTED' &&
-        new Date(a.expiresAt).getTime() > now
+        a.status !== 'EXPIRED' &&
+        (!a.expiresAt || new Date(a.expiresAt).getTime() > now)
     );
   }, [userAds, currentUser]);
 
@@ -668,16 +685,21 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
   const consumedFreeAdsCount = currentUser?.consumedFreeAdsCount || 0;
   const hasFreeAdQuotaRemaining = Boolean(isExempt || consumedFreeAdsCount < maxQuota);
 
-  // Devis officiel calculé par le serveur (Phase 8.3)
+  // Devis officiel calculé par le serveur (Phase 8.3 & P1)
   const [serverQuote, setServerQuote] = useState<PreviewQuoteResult | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteTick, setQuoteTick] = useState(0);
+  const [isWaitingPayment, setIsWaitingPayment] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    // Remise à zéro immédiate du devis à chaque changement de paramètre (P1)
+    setServerQuote(null);
+    setQuoteLoading(true);
+    setQuoteError(null);
+
     const fetchQuote = async () => {
-      setQuoteLoading(true);
-      setQuoteError(null);
       try {
         const q = await previewQuote({
           productId: 'AD_PUBLISH',
@@ -704,15 +726,16 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [preGeneratedAdId, durationDays, photos.length, hasVideo, isBoostFeatured, requiresSubscription, selectedTierToBuy]);
+  }, [preGeneratedAdId, durationDays, photos.length, hasVideo, isBoostFeatured, requiresSubscription, selectedTierToBuy, quoteTick]);
 
+  const quoteReady = isExempt || (serverQuote !== null && !quoteLoading && !quoteError);
   const bill = useMemo(() => {
     return calculateBill(durationDays, photos.length, hasVideo, currentUser?.subscriptionTier);
   }, [durationDays, photos.length, hasVideo, currentUser?.subscriptionTier]);
 
   const totalBillCalculated = isExempt ? 0 : (serverQuote?.amount ?? 0);
 
-  // File selection for photos (limit: max 5 photos total, max 10 Mo/image)
+  // File selection for photos (limit: max 10 photos total, max 10 Mo/image) - (P5, P16)
   const handlePhotoFilesSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -745,36 +768,18 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     }
 
     filesToAdd.forEach((file, idx) => {
-      const reader = new FileReader();
-      reader.onload = (loadEvt) => {
-        const dataUrl = (loadEvt.target?.result as string) || '';
-        if (dataUrl) {
-          setPhotos((prev) => [
-            ...prev,
-            {
-              id: `file-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
-              url: dataUrl,
-              file,
-              name: file.name,
-              size: file.size,
-            },
-          ]);
-        }
-      };
-      reader.onerror = () => {
-        const objUrl = URL.createObjectURL(file);
-        setPhotos((prev) => [
-          ...prev,
-          {
-            id: `file-${Date.now()}-${idx}`,
-            url: objUrl,
-            file,
-            name: file.name,
-            size: file.size,
-          },
-        ]);
-      };
-      reader.readAsDataURL(file);
+      const objUrl = URL.createObjectURL(file);
+      createdObjectUrlsRef.current.add(objUrl);
+      setPhotos((prev) => [
+        ...prev,
+        {
+          id: `file-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+          url: objUrl,
+          file,
+          name: file.name,
+          size: file.size,
+        },
+      ]);
     });
   };
 
@@ -804,17 +809,19 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     }
   };
 
+  // (P11) Allow removing photos even down to 0 so preset photo isn't mandatory
   const handleRemovePhoto = (index: number) => {
-    if (photos.length > 1) {
-      const removed = photos[index];
-      if (removed.url && removed.url.startsWith('blob:')) {
-        URL.revokeObjectURL(removed.url);
+    const removed = photos[index];
+    if (removed?.url && (removed.url.startsWith('blob:') || removed.url.startsWith('data:'))) {
+      if (removed.url.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(removed.url);
+          createdObjectUrlsRef.current.delete(removed.url);
+        } catch {}
       }
-      setPhotos((prev) => prev.filter((_, idx) => idx !== index));
-      setMediaError(null);
-    } else {
-      setMediaError('Votre annonce doit comporter au moins 1 photo.');
     }
+    setPhotos((prev) => prev.filter((_, idx) => idx !== index));
+    setMediaError(null);
   };
 
   // Video file selection (limit: max 30s, ≤ 50 Mo)
@@ -834,6 +841,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     setMediaError(null);
     setVideoFile(file);
     const blobUrl = URL.createObjectURL(file);
+    createdObjectUrlsRef.current.add(blobUrl);
     // Point 10 fix: Immediately set preview URL so video displays inside container
     setVideoPreviewUrl(blobUrl);
     setHasVideo(true);
@@ -911,12 +919,14 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     }
   };
 
-  // Payment completed handler: Uploads all media to Firebase Storage before publishing
+  // Payment completed handler: Uploads all media to Firebase Storage before publishing (P9)
   const handlePaymentSuccess = async (paymentInfo: {
     operator: PaymentOperator;
     contactPhone: string;
     transactionRef: string;
   }) => {
+    if (hasHandledPaymentSuccessRef.current) return;
+    hasHandledPaymentSuccessRef.current = true;
     setIsSubmitting(true);
     setMediaError(null);
 
@@ -1059,10 +1069,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
         description: description || 'Annonce vérifiée et publiée sur BIZBOOSTER Gabon.',
         images: finalImageUrls.length > 0 ? finalImageUrls : [SAMPLE_IMAGE_PRESETS[mainCategory][0]],
         videoUrl: finalVideoUrl,
-        contactPhone: (() => {
-          const rawClean = (contactPhone || '').replace(/[^0-9]/g, '').replace(/^241/, '').replace(/^0+/, '');
-          return rawClean ? `+241${rawClean}` : contactPhone;
-        })(),
+        contactPhone: toE164(contactPhone.trim()),
         hasWhatsapp: true,
         contactName: contactName || 'Annonceur BIZBOOSTER',
         durationDays,
@@ -1098,6 +1105,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
         console.warn('Could not remove draft:', err);
       }
     } catch (e: any) {
+      hasHandledPaymentSuccessRef.current = false;
       console.error(e);
       setAlertModalConfig({
         isOpen: true,
@@ -1137,9 +1145,13 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
           </div>
 
           <button
-            onClick={onClose}
-            disabled={isSubmitting}
+            onClick={() => {
+              if (isWaitingPayment) return;
+              onClose();
+            }}
+            disabled={isSubmitting || isWaitingPayment}
             className="text-emerald-400 hover:text-white p-1 rounded-lg hover:bg-emerald-900 disabled:opacity-30 cursor-pointer"
+            title={isWaitingPayment ? "Paiement en cours... Ne fermez pas la fenêtre" : "Fermer"}
           >
             <X className="w-5 h-5" />
           </button>
@@ -2589,18 +2601,21 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                           Fichier
                         </span>
                       )}
-                      {photos.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemovePhoto(idx)}
-                          className="absolute inset-0 bg-red-600/80 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer"
-                          title="Supprimer la photo"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleRemovePhoto(idx)}
+                        className="absolute inset-0 bg-red-600/80 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer"
+                        title="Supprimer la photo"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   ))}
+                  {photos.length === 0 && (
+                    <div className="text-xs text-slate-400 italic py-2 text-center w-full bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                      Aucune photo ajoutée. Vous pouvez téléverser vos photos ci-dessous.
+                    </div>
+                  )}
                 </div>
 
                 {/* Local photo file upload button */}
@@ -3244,8 +3259,28 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                 </div>
               </div>
 
-              {/* Payment or direct free validation */}
-              {isExempt || totalBillCalculated === 0 ? (
+              {/* Payment or quote loading or error (P1, P2) */}
+              {!quoteReady ? (
+                quoteLoading ? (
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-8 text-center space-y-3">
+                    <Loader2 className="w-8 h-8 text-emerald-600 animate-spin mx-auto" />
+                    <p className="text-sm font-bold text-slate-700">Calcul du devis officiel en cours...</p>
+                  </div>
+                ) : (
+                  <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center space-y-3">
+                    <p className="text-sm font-bold text-rose-700">
+                      {quoteError || 'Erreur lors du calcul du devis officiel.'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setQuoteTick((t) => t + 1)}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer"
+                    >
+                      Réessayer le calcul du devis
+                    </button>
+                  </div>
+                )
+              ) : isExempt || totalBillCalculated === 0 ? (
                 <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 text-center space-y-3">
                   <div className="w-12 h-12 bg-amber-400 text-slate-950 rounded-2xl flex items-center justify-center mx-auto shadow-md">
                     <Star className="w-6 h-6 fill-slate-950" />
@@ -3281,7 +3316,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <span className="bg-emerald-600 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-sm">
-                      Étape e
+                      Étape 3
                     </span>
                     <h4 className="font-extrabold text-sm text-slate-900">
                       Choisissez votre moyen de paiement Mobile Gabon
@@ -3318,6 +3353,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                       itemDescription={`Publication ${title || mainCategory} (${durationDays} jours)`}
                       onSuccess={handlePaymentSuccess}
                       onCancel={() => setStep(2)}
+                      onPaymentPendingChange={setIsWaitingPayment}
                       initialPhone=""
                     />
                   </div>
@@ -3478,9 +3514,15 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                   }
 
                   // Point 2: CV obligatoire pour Demandeur d'emploi à l'étape 2
-                  const isDemandeurEmploi = mainCategory === 'AUTRES_EMPLOIS' && (autresEmploisSubCategory === 'DEMANDE_EMPLOI' || autresEmploisSubCategory === "Demandeur d'emploi");
+                  const isDemandeurEmploi = mainCategory === 'AUTRES_EMPLOIS' && autresEmploisSubCategory === "Demandeur d'emploi";
                   if (isDemandeurEmploi && !cvFile && !cvDataUrl) {
                     setMediaError("L'attachement d'un CV (.pdf, .docx ou .md) est obligatoire pour les demandeurs d'emploi à l'étape 2.");
+                    return;
+                  }
+
+                  // Video check (P7): Cannot proceed if option is checked but no video file selected
+                  if (hasVideo && !videoFile) {
+                    setMediaError("Vous avez sélectionné l'option vidéo descriptive. Veuillez choisir un fichier vidéo (≤ 30s) ou désactiver l'option.");
                     return;
                   }
 

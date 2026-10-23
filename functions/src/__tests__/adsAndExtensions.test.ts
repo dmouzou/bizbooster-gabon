@@ -119,5 +119,28 @@ describe("Annonces et Prolongations (Phase 6)", () => {
       const payDoc = (await db.collection("payments").doc(payRef).get()).data();
       expect(payDoc?.consumedByAdId).toBe(adId);
     });
+
+    it("B8: refuse les consommations concurrentes d'un même paiement par deux annonces différentes", async () => {
+      const payRef = "PAY_TEST_CONCURRENT_CONSUME";
+      const ad1 = "ad_concurrent_1";
+      const ad2 = "ad_concurrent_2";
+      await db.collection("payments").doc(payRef).set({
+        reference: payRef,
+        userId: testUid,
+        productId: "AD_PUBLISH",
+        status: "SUCCESS",
+        amount: 9500,
+        metadata: { durationDays: 30 },
+      });
+
+      const [r1, r2] = await Promise.all([
+        resolveAdPayment(ad1, testUid, payRef),
+        resolveAdPayment(ad2, testUid, payRef),
+      ]);
+
+      // Exactement un des deux doit réussir, l'autre doit être refusé
+      const verifiedCount = [r1, r2].filter((r) => r.verified).length;
+      expect(verifiedCount).toBe(1);
+    });
   });
 });

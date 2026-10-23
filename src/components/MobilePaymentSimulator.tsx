@@ -34,6 +34,7 @@ interface MobilePaymentSimulatorProps {
   }) => void;
   onCancel: () => void;
   initialPhone?: string;
+  onPaymentPendingChange?: (isPending: boolean) => void;
 }
 
 export type PaymentStep =
@@ -61,6 +62,7 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
   onSuccess,
   onCancel,
   initialPhone,
+  onPaymentPendingChange,
 }) => {
   const [operator, setOperator] = useState<PaymentOperator>('MOOV_MONEY');
   const [mobileNumber, setMobileNumber] = useState(to8Digits(initialPhone) || '');
@@ -87,6 +89,7 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
   const unsubscribeSnapshotRef = useRef<(() => void) | null>(null);
   const transactionRefRef = useRef<string>('');
   const stepRef = useRef<PaymentStep>('FORM');
+  const isSuccessTriggeredRef = useRef<boolean>(false);
 
   useEffect(() => {
     transactionRefRef.current = transactionRef;
@@ -94,7 +97,8 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
 
   useEffect(() => {
     stepRef.current = step;
-  }, [step]);
+    onPaymentPendingChange?.(step === 'WAITING' || step === 'SENDING');
+  }, [step, onPaymentPendingChange]);
 
   // Nettoyage au démontage
   useEffect(() => {
@@ -148,6 +152,9 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
   }, []);
 
   const handleFinalSuccess = (ref: string, paidAmt?: number) => {
+    if (isSuccessTriggeredRef.current) return;
+    isSuccessTriggeredRef.current = true;
+
     if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
     if (unsubscribeSnapshotRef.current) unsubscribeSnapshotRef.current();
 
@@ -728,3 +735,5 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
     </div>
   );
 };
+
+export const MobilePaymentFlow = MobilePaymentSimulator;

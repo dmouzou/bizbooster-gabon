@@ -1,27 +1,33 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Annonces : images uniquement
+    // Annonces : images uniquement (B5: get public mais list interdit)
     match /ads/{userId}/{allPaths=**} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if false;
       allow write: if request.auth != null
                    && request.auth.uid == userId
                    && request.resource.contentType.matches('image/.*')
                    && request.resource.size < 10 * 1024 * 1024;
     }
 
-    // Vidéos descriptives d'annonces
+    // Vidéos descriptives d'annonces (B5: get public mais list interdit)
     match /videos/{userId}/{allPaths=**} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if false;
       allow write: if request.auth != null
                    && request.auth.uid == userId
                    && request.resource.contentType.matches('video/.*')
                    && request.resource.size < 50 * 1024 * 1024;
     }
 
-    // CVs et documents professionnels (PDF, DOCX, TXT)
+    // CVs et documents professionnels (B5: accès restreint au propriétaire et aux admins, list interdit)
     match /cvs/{userId}/{allPaths=**} {
-      allow read: if true;
+      allow get: if request.auth != null && (
+        request.auth.uid == userId ||
+        ('role' in request.auth.token && (request.auth.token.role == 'ADMIN' || request.auth.token.role == 'SUPER_ADMIN'))
+      );
+      allow list: if false;
       allow write: if request.auth != null
                    && request.auth.uid == userId
                    && (request.resource.contentType == 'application/pdf'
@@ -32,12 +38,13 @@ service firebase.storage {
                    && request.resource.size < 15 * 1024 * 1024;
     }
 
-    // Documents KYC d'identité
+    // Documents KYC d'identité (accès restreint au propriétaire et aux admins, list interdit)
     match /kyc/{userId}/{allPaths=**} {
-      allow read: if request.auth != null && (
+      allow get: if request.auth != null && (
         request.auth.uid == userId ||
         ('role' in request.auth.token && (request.auth.token.role == 'ADMIN' || request.auth.token.role == 'SUPER_ADMIN'))
       );
+      allow list: if false;
       allow write: if request.auth != null
                    && request.auth.uid == userId
                    && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf')

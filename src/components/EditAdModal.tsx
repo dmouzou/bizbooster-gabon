@@ -54,18 +54,19 @@ import { auth, storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { compressImageForUpload } from '../utils/imageCompressor';
 import { trackDownloadRequest } from '../services/platformMetrics';
+import { toE164 } from '../utils/phone';
 
 interface EditAdModalProps {
   isOpen: boolean;
   onClose: () => void;
   ad: Ad | null;
-  onSave: (adId: string, updatedFields: Partial<Ad>, wasActive: boolean) => Promise<void>;
+  onSave: (adId: string, updatedFields: Partial<Ad>, wasActive: boolean, deletedKeys?: string[]) => Promise<void>;
 }
 
 interface EditAdModalContentProps {
   onClose: () => void;
   ad: Ad;
-  onSave: (adId: string, updatedFields: Partial<Ad>, wasActive: boolean) => Promise<void>;
+  onSave: (adId: string, updatedFields: Partial<Ad>, wasActive: boolean, deletedKeys?: string[]) => Promise<void>;
 }
 
 const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
@@ -75,6 +76,7 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
 }) => {
   const wasActive = ad.status === 'ACTIVE';
   const isRejected = ad.status === 'REJECTED';
+  const isEditable = ad.status === 'ACTIVE' || ad.status === 'PENDING_REVIEW' || ad.status === 'REJECTED';
 
   // Form states
   const [title, setTitle] = useState(ad.title || '');
@@ -210,7 +212,7 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
       setAvisLastSeenDate(ad.avisRechercheData?.lastSeenDate || '');
       setAvisLastSeenLocation(ad.avisRechercheData?.lastSeenLocation || '');
       setAvisHasReward(Boolean(ad.avisRechercheData?.hasReward || (ad.avisRechercheData?.rewardAmount && ad.avisRechercheData.rewardAmount > 0)));
-      setAvisRewardAmount(ad.avisRechercheData?.rewardAmount ? String(ad.avisRechercheData.rewardAmount) : '');
+      setAvisRewardAmount(ad.avisRechercheData?.rewardAmount ? Number(ad.avisRechercheData.rewardAmount) : '');
       setAvisEmergencyContact(ad.avisRechercheData?.contactEmergency || '');
       const resetSub: AutresEmploisSubCategory =
         (ad.autresEmploisData?.subCategory as any) === 'DEMANDE_EMPLOI'
@@ -262,6 +264,10 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
 
   const handleAddImageUrl = () => {
     if (!newImageUrl.trim()) return;
+    if (images.length >= 10) {
+      setErrorMsg('Plafond atteint : 10 photos maximum autorisées.');
+      return;
+    }
     setImages((prev) => [...prev, newImageUrl.trim()]);
     setNewImageUrl('');
   };
@@ -269,6 +275,11 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (images.length >= 10) {
+      setErrorMsg('Plafond atteint : 10 photos maximum autorisées.');
+      return;
+    }
 
     if (!auth.currentUser) {
       setErrorMsg('Veuillez vous connecter pour téléverser une image.');
@@ -305,40 +316,41 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
       setErrorMsg('Format de CV non supporté. Veuillez choisir un fichier .pdf, .docx ou .md');
       return;
     }
+    if (file.size > 10 * 1024 * 1024) {
+      setErrorMsg('Le fichier CV ne doit pas dépasser 10 Mo.');
+      return;
+    }
+    if (!auth.currentUser) {
+      setErrorMsg('Vous devez être connecté pour téléverser un CV.');
+      return;
+    }
     try {
       setErrorMsg(null);
-      if (auth.currentUser) {
-        const storagePath = `cvs/${auth.currentUser.uid}/${Date.now()}_${file.name}`;
-        const storageRef = ref(storage, storagePath);
-        await uploadBytes(storageRef, file);
-        const downloadUrl = await getDownloadURL(storageRef);
-        setCvUrl(downloadUrl);
-      } else {
-        const reader = new FileReader();
-        reader.onload = (loadEvt) => {
-          setCvUrl(loadEvt.target?.result as string);
-        };
-        reader.readAsDataURL(file);
-      }
-      setCvFileName(file.name);
+      const sanitizedFilename = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `cvs/${auth.currentUser.uid}/${Date.now()}_${sanitizedFilename}`;
+      const storageRef = ref(storage, storagePath);
+      await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(storageRef);
+      setCvUrl(downloadUrl);
+      setCvFileName(sanitizedFilename);
       setCvFileType(ext);
       setCvFileSize(file.size);
     } catch (err) {
       console.error('CV upload error:', err);
-      const reader = new FileReader();
-      reader.onload = (loadEvt) => {
-        setCvUrl(loadEvt.target?.result as string);
-        setCvFileName(file.name);
-        setCvFileType(ext);
-        setCvFileSize(file.size);
-      };
-      reader.readAsDataURL(file);
+      setErrorMsg('Échec du téléversement du document CV. Veuillez vérifier votre connexion et réessayer.');
+    } finally {
+      e.target.value = '';
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+
+    if (!isEditable) {
+      setErrorMsg("Cette annonce ne peut pas être modifiée dans son état actuel.");
+      return;
+    }
 
     // Form validations
     if (!title.trim()) {
@@ -404,17 +416,18 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
       transactionType:
         mainCategory === 'IMMOBILIER' || mainCategory === 'MATERIEL_ROULANT'
           ? transactionType
-          : undefined,
+          : mainCategory === 'EMPLOI'
+          ? (jobKind === 'DEMANDE_EMPLOI' ? 'CHERCHE_EMPLOI' : 'EMPLOYER')
+          : mainCategory === 'AUTRES_EMPLOIS'
+          ? (autresEmploisSubCategory === "Demandeur d'emploi" ? 'CHERCHE_EMPLOI' : 'EMPLOYER')
+          : 'VENTE',
       location: {
         province: selectedProvinceName,
         city: selectedCityName,
         neighborhood: selectedNeighborhood,
       },
       contactName: contactName.trim() || 'Annonceur BizBooster',
-      contactPhone: (() => {
-        const rawClean = (contactPhone || '').replace(/[^0-9]/g, '').replace(/^241/, '').replace(/^0+/, '');
-        return rawClean ? `+241${rawClean}` : contactPhone.trim();
-      })(),
+      contactPhone: toE164(contactPhone.trim()),
       images,
       videoUrl: videoUrl.trim() || undefined,
     };
@@ -490,9 +503,15 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
       }
     }
 
+    const deletedKeys: string[] = [];
+    if (ad.videoUrl && !videoUrl.trim()) deletedKeys.push('videoUrl');
+    if (ad.priceMax && !priceMax) deletedKeys.push('priceMax');
+    if (ad.cvUrl && !cvUrl) deletedKeys.push('cvUrl', 'cvFileName', 'cvFileType', 'cvFileSize');
+    if (ad.jobDocUrl && !cvUrl) deletedKeys.push('jobDocUrl', 'jobDocFileName', 'jobDocFileType', 'jobDocFileSize');
+
     try {
       setIsSubmitting(true);
-      await onSave(ad.id, updatedData, wasActive);
+      await onSave(ad.id, updatedData, wasActive, deletedKeys);
       onClose();
     } catch (err: any) {
       console.error('Save ad edit error:', err);
@@ -547,8 +566,32 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
           </button>
         </div>
 
-        {/* Scrollable Form Content */}
-        <form onSubmit={handleSubmit} className="overflow-y-auto p-5 sm:p-6 space-y-6 flex-1">
+        {/* Non-editable State Guard (E9) */}
+        {!isEditable ? (
+          <div className="p-8 text-center space-y-4">
+            <div className="w-14 h-14 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-8 h-8" />
+            </div>
+            <div>
+              <h4 className="text-base font-black text-slate-900">Modification non autorisée</h4>
+              <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto">
+                {ad.status === 'EXPIRED'
+                  ? 'Cette annonce a expiré. Vous devez la prolonger ou souscrire un abonnement pour la réactiver avant de pouvoir la modifier.'
+                  : ad.status === 'SUSPENDED'
+                  ? 'Cette annonce a été suspendue par la modération et ne peut pas être éditée directement.'
+                  : 'Cette annonce est en attente de paiement et ne peut pas être modifiée.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2.5 bg-slate-900 text-white text-xs font-bold rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              Fermer
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="overflow-y-auto p-5 sm:p-6 space-y-6 flex-1">
           {/* Status Alert Banner */}
           {isRejected ? (
             <div className="p-4 bg-rose-50 border border-rose-300 rounded-2xl flex items-start gap-3 text-rose-950 text-xs">
@@ -1086,10 +1129,10 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
                       </label>
                       <select
                         value={autresEmploisContractType}
-                        onChange={(e) => setAutresEmploisContractType(e.target.value)}
+                        onChange={(e) => setAutresEmploisContractType(e.target.value as any)}
                         className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2"
                       >
-                        {['CDI', 'CDD', 'Stage', 'Freelance', 'Temps partiel', 'Autre'].map((t) => (
+                        {['CDI', 'CDD', 'Stage', 'Prestation / Freelance', 'Intérim', 'Autre'].map((t) => (
                           <option key={t} value={t}>{t}</option>
                         ))}
                       </select>
@@ -1553,6 +1596,12 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
                   type="url"
                   value={newImageUrl}
                   onChange={(e) => setNewImageUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddImageUrl();
+                    }
+                  }}
                   placeholder="Ou coller une URL d'image (https://...)"
                   className="flex-1 text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-emerald-500"
                 />
@@ -1667,6 +1716,7 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

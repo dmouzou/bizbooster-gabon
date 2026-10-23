@@ -48,6 +48,7 @@ service cloud.firestore {
         'subscriptionExpiresAt',
         'subscriptionStartedAt',
         'freeBoostsRemaining',
+        'freeBoosts',
         'consumedFreeAdsCount',
         'activeBoosterPack',
         'activePack',
@@ -55,12 +56,15 @@ service cloud.firestore {
       ];
     }
 
-    // Clés de classement, de paiement, de quota et de modération (Phase 1)
+    // Clés de classement, de paiement, de quota et de modération (Phase 1 & Lot 1)
     function rankingKeys() {
       return [
         'isFeatured',
         'featuredUntil',
         'featuredAt',
+        'featuredPausedAt',
+        'boostRequested',
+        'withBoost',
         'ownerTier',
         'isOwnerVip',
         'isOwnerVerified',
@@ -78,11 +82,13 @@ service cloud.firestore {
       ];
     }
 
-    // Clés verrouillées pour le propriétaire d'une annonce (Phase 7.1)
+    // Clés verrouillées pour le propriétaire d'une annonce (Phase 7.1 & Lot 1)
     function ownerLockedKeys() {
       return [
         'durationDays',
         'boostRequested',
+        'withBoost',
+        'featuredPausedAt',
         'paymentReference',
         'paidAmount',
         'isFeatured',
@@ -107,7 +113,7 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // ADS (Phase 7 : protection stricte des annonces contre tout contournement)
+    // ADS (Phase 7 & Lot 1 : protection stricte des annonces contre tout contournement)
     // ---------------------------------------------------------------
     match /ads/{adId} {
 
@@ -117,21 +123,27 @@ service cloud.firestore {
                   || isAdmin();
 
       // Création : utilisateur connecté, propriétaire légitime,
-      // statut initial en attente uniquement, pas de mise en avant, pas d'échéance fournie
+      // statut initial en attente uniquement, pas de mise en avant, pas d'échéance ni de publication fournies,
+      // limites de taille sur les champs et prix >= 0
       allow create: if isSignedIn()
                     && request.resource.data.userId == request.auth.uid
                     && (request.resource.data.status == 'PENDING_REVIEW' || request.resource.data.status == 'PENDING_PAYMENT')
-                    && !('expiresAt' in request.resource.data)
-                    && !request.resource.data.keys().hasAny(rankingKeys());
+                    && !request.resource.data.keys().hasAny(['publishedAt', 'expiresAt', 'moderatedAt', 'moderationReason'])
+                    && !request.resource.data.keys().hasAny(rankingKeys())
+                    && request.resource.data.title is string && request.resource.data.title.size() <= 120
+                    && request.resource.data.get('description', '').size() <= 4000
+                    && request.resource.data.get('price', 0) is number && request.resource.data.get('price', 0) >= 0;
 
       // Mise à jour :
       // - Admin complet
-      // - Propriétaire : userId inchangé, aucune modification sur ownerLockedKeys(), rankingKeys() ou champs protégés
-      // - Signalement de fraude : incrément atomique unitaire de reportsCount (limité)
+      // - Propriétaire : userId inchangé, annonce obligatoirement en attente (une annonce ACTIVE ne peut être modifiée directement sans resubmitAd),
+      //   aucune modification sur ownerLockedKeys(), rankingKeys() ou champs protégés
       allow update: if isAdmin()
                     || (isSignedIn()
                         && resource.data.userId == request.auth.uid
                         && request.resource.data.userId == request.auth.uid
+                        && resource.data.status in ['PENDING_REVIEW', 'PENDING_PAYMENT']
+                        && request.resource.data.status in ['PENDING_REVIEW', 'PENDING_PAYMENT']
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(ownerLockedKeys())
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(rankingKeys())
                         && !touchesProtectedAdFields());
@@ -174,6 +186,8 @@ service cloud.firestore {
                             .hasAny(['isKycVerified', 'isVerified', 'isAdmin', 'isSuperAdmin', 'password', 'lastPasswordChangeDate'])
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['idVerificationStatus'])
                             || request.resource.data.idVerificationStatus in ['NOT_SUBMITTED', 'PENDING'])
+                        && (resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') != 'VERIFIED'
+                            || request.resource.data.diff(resource.data).affectedKeys().hasAny(['idDocumentUrl']))
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['idDocumentUrl'])
                             || request.resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') == 'PENDING')
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['phone'])
@@ -214,11 +228,12 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // SETTINGS (liste blanche stricte : public_config lisible par tous, system_config lisible par admins)
+    // SETTINGS (liste blanche stricte : public_config lisible par tous, system_config super-admin only en écriture)
     // ---------------------------------------------------------------
     match /settings/{settingId} {
       allow read: if settingId == 'public_config' || (settingId == 'system_config' && isAdmin());
-      allow write: if settingId != 'payment_gateway' && isAdmin();
+      allow write: if (settingId == 'public_config' && isAdmin())
+                   || (settingId == 'system_config' && isSuperAdmin());
     }
 
     // ---------------------------------------------------------------
@@ -234,15 +249,19 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // USER NOTIFICATIONS (Restreint à l'utilisateur ciblé ou admin)
+    // USER NOTIFICATIONS (Système/admin en écriture, lu et acquitté par le propriétaire)
     // ---------------------------------------------------------------
     match /user_notifications/{notifId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
       allow create: if (isAdmin() && request.resource.data.userId is string)
                     || (isSignedIn()
                         && request.resource.data.userId == request.auth.uid
-                        && notifId == request.auth.uid + '_' + request.resource.data.notifId);
-      allow update, delete: if isAdmin();
+                        && notifId == request.auth.uid + '_' + request.resource.data.get('notifId', ''));
+      allow update: if isAdmin()
+                    || (isSignedIn()
+                        && resource.data.userId == request.auth.uid
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']));
+      allow delete: if isAdmin();
     }
 
     // ---------------------------------------------------------------

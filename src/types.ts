@@ -146,6 +146,19 @@ export interface VehicleHierarchy {
   subType?: string;
 }
 
+export const AD_STATUSES = [
+  'ACTIVE',
+  'EXPIRED',
+  'PENDING_PAYMENT',
+  'PENDING_REVIEW',
+  'REJECTED',
+  'SUSPENDED',
+] as const;
+export type AdStatus = (typeof AD_STATUSES)[number];
+
+export const EXTENDABLE_AD_STATUSES = ['ACTIVE', 'EXPIRED'] as const;
+export type ExtendableAdStatus = (typeof EXTENDABLE_AD_STATUSES)[number];
+
 export interface Ad {
   id: string;
   title: string;
@@ -205,7 +218,7 @@ export interface Ad {
   publishedAt: string; // ISO string
   updatedAt?: string; // ISO string
   expiresAt?: string; // ISO string
-  status: 'ACTIVE' | 'EXPIRED' | 'PENDING_PAYMENT' | 'PENDING_REVIEW' | 'REJECTED' | 'SUSPENDED';
+  status: AdStatus;
   moderationReason?: string;
   rejectionReason?: string; // Alias de moderationReason
   moderatedAt?: string;
@@ -269,6 +282,7 @@ export interface UserProfile {
   subscriptionTier?: SubscriptionTier;
   subscriptionExpiresAt?: string;
   subscriptionStartedAt?: string;
+  scheduledDowngradeTier?: SubscriptionTier;
   freeBoostsRemaining?: number; // max 20 per user
   consumedFreeAdsCount?: number; // Count of free ads consumed under subscription/plan
   activePack?: AdPackType;

@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 
 /**
  * Garde d'authentification et de rôle pour la modération côté serveur (Phase 3 - Étape 3.1)
@@ -183,7 +184,8 @@ export const rejectExtension = onCall(CALLABLE_OPTIONS, async (request) => {
 });
 
 /**
- * 2. deleteAd : Suppression d'annonce côté serveur avec résolution des signalements et audit
+ * 2. deleteAd : Suppression d'annonce côté serveur avec résolution des signalements,
+ * nettoyage Storage (B22) et audit (B28)
  */
 export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
@@ -196,12 +198,15 @@ export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
   const db = getFirestore();
   const adRef = db.collection("ads").doc(adId);
 
+  let deletedAdData: Record<string, unknown> | null = null;
+
   await db.runTransaction(async (tx) => {
     const adDoc = await tx.get(adRef);
     if (!adDoc.exists) {
       return; // Idempotent
     }
     const ad = adDoc.data() || {};
+    deletedAdData = ad;
     tx.delete(adRef);
 
     // Journal d'audit atomique
@@ -217,36 +222,87 @@ export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
     });
   });
 
-  // Résoudre les signalements associés en tâche de fond
+  // B28: Résoudre les signalements associés en tâche de fond par lots <= 450
   try {
     const reportsSnap = await db.collection("reports").where("adId", "==", adId).get();
-    const batch = db.batch();
-    reportsSnap.docs.forEach((rep) => {
-      batch.update(rep.ref, {
-        status: "RESOLVED",
-        resolutionNote: "Annonce supprimée par la modération.",
-        resolvedAt: FieldValue.serverTimestamp(),
-        resolvedBy: admin.uid,
+    const docs = reportsSnap.docs;
+    const CHUNK_SIZE = 450;
+    for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+      const chunk = docs.slice(i, i + CHUNK_SIZE);
+      const batch = db.batch();
+      chunk.forEach((rep) => {
+        batch.update(rep.ref, {
+          status: "RESOLVED",
+          resolutionNote: "Annonce supprimée par la modération.",
+          resolvedAt: FieldValue.serverTimestamp(),
+          resolvedBy: admin.uid,
+        });
       });
-    });
-    if (reportsSnap.size > 0) {
       await batch.commit();
     }
   } catch (err) {
     console.warn("[deleteAd] Résolution des rapports associée:", err);
   }
 
+  // B22: Nettoyage Storage des fichiers associés (photos, vidéo, CV)
+  if (deletedAdData) {
+    try {
+      const bucket = getStorage().bucket();
+      const filesToDelete: string[] = [];
+      const ad = deletedAdData as Record<string, unknown>;
+      if (Array.isArray(ad.images)) {
+        for (const imgUrl of ad.images) {
+          if (typeof imgUrl === "string") filesToDelete.push(imgUrl);
+        }
+      }
+      if (ad.videoUrl && typeof ad.videoUrl === "string") {
+        filesToDelete.push(ad.videoUrl);
+      }
+      if (ad.cvUrl && typeof ad.cvUrl === "string") {
+        filesToDelete.push(ad.cvUrl);
+      }
+
+      for (const fileUrl of filesToDelete) {
+        try {
+          const decoded = decodeURIComponent(fileUrl);
+          const match = decoded.match(/\/o\/([^?]+)/) || decoded.match(/storage\.googleapis\.com\/[^/]+\/(.+)/);
+          if (match && match[1]) {
+            await bucket.file(match[1]).delete({ ignoreNotFound: true });
+          }
+        } catch (e) {
+          console.warn("[deleteAd] Échec suppression fichier storage:", fileUrl, e);
+        }
+      }
+    } catch (storageErr) {
+      console.warn("[deleteAd] Erreur nettoyage storage:", storageErr);
+    }
+  }
+
   return { success: true, adId };
 });
 
 /**
- * 3. approveKyc : Approbation KYC côté serveur avec contrôle d'intégrité de l'image (S-06)
+ * 3. approveKyc : Approbation KYC côté serveur avec contrôle d'intégrité de l'image (S-06, B20)
  */
 export const approveKyc = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
   const { uid, idDocumentUrl } = request.data || {};
   if (!uid || typeof uid !== "string") {
     throw new HttpsError("invalid-argument", "Identifiant utilisateur requis.");
+  }
+  // B20: idDocumentUrl obligatoire
+  if (!idDocumentUrl || typeof idDocumentUrl !== "string") {
+    throw new HttpsError("invalid-argument", "idDocumentUrl est obligatoire pour approuver un KYC.");
+  }
+
+  // B20: Valider que le chemin cible kyc/{uid}/
+  const expectedPath = `kyc/${uid}/`;
+  const encodedExpectedPath = `kyc%2F${uid}%2F`;
+  if (!idDocumentUrl.includes(expectedPath) && !idDocumentUrl.includes(encodedExpectedPath)) {
+    throw new HttpsError(
+      "invalid-argument",
+      "L'URL du document KYC doit appartenir au sous-dossier kyc/{uid}/ de l'utilisateur."
+    );
   }
 
   const db = getFirestore();
@@ -267,9 +323,9 @@ export const approveKyc = onCall(CALLABLE_OPTIONS, async (request) => {
 
     // Vérifier que le statut était PENDING et que idDocumentUrl correspond
     if (data.idVerificationStatus !== "PENDING") {
-      throw new HttpsError("failed-precondition", "Le KYC de cet utilisateur n est pas en attente (PENDING).");
+      throw new HttpsError("failed-precondition", "Le KYC de cet utilisateur n'est pas en attente (PENDING).");
     }
-    if (idDocumentUrl && data.idDocumentUrl !== idDocumentUrl) {
+    if (data.idDocumentUrl !== idDocumentUrl) {
       throw new HttpsError("invalid-argument", "Le document affiché ne correspond plus à la soumission en cours.");
     }
 
@@ -586,6 +642,27 @@ export const logKycView = onCall(CALLABLE_OPTIONS, async (request) => {
   }
 
   const db = getFirestore();
+
+  // R2: Déduplication côté serveur (ignorer si déjà consulté par le même admin il y a moins de 15 minutes)
+  const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+  try {
+    const recentSnap = await db
+      .collection("moderation_logs")
+      .where("action", "==", "KYC_VIEWED")
+      .where("targetId", "==", targetUserId)
+      .where("adminId", "==", admin.uid)
+      .where("timestamp", ">=", fifteenMinutesAgo)
+      .limit(1)
+      .get();
+
+    if (!recentSnap.empty) {
+      return { success: true, deduplicated: true };
+    }
+  } catch (dedupErr) {
+    // Si l'index composite manque pour la requête de dédup, continuer sans bloquer
+    console.warn("[logKycView] Déduplication ignorée:", dedupErr);
+  }
+
   const logRef = db.collection("moderation_logs").doc();
   await logRef.set({
     action: "KYC_VIEWED",

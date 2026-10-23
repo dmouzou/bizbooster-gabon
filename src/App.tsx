@@ -34,16 +34,18 @@ import { NecrologieFilterBar } from './components/NecrologieFilterBar';
 import { EmploiFilterBar } from './components/EmploiFilterBar';
 import { CguModal } from './components/CguModal';
 import { AdCard } from './components/AdCard';
-import { AdDetailModal } from './components/AdDetailModal';
-import { PublishAdModal } from './components/PublishAdModal';
 import { ExtendAdModal } from './components/ExtendAdModal';
-import { EditAdModal } from './components/EditAdModal';
 import { ConfirmEditOnlineModal } from './components/ConfirmEditOnlineModal';
-import { UserDashboard } from './components/UserDashboard';
-import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { LogoutConfirmModal } from './components/LogoutConfirmModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+
+// Lazy-loaded heavy modal components for bundle optimization (F3)
+const AdDetailModal = React.lazy(() => import('./components/AdDetailModal').then((m) => ({ default: m.AdDetailModal })));
+const PublishAdModal = React.lazy(() => import('./components/PublishAdModal').then((m) => ({ default: m.PublishAdModal })));
+const EditAdModal = React.lazy(() => import('./components/EditAdModal').then((m) => ({ default: m.EditAdModal })));
+const UserDashboard = React.lazy(() => import('./components/UserDashboard').then((m) => ({ default: m.UserDashboard })));
+const PhoneAuthModal = React.lazy(() => import('./components/PhoneAuthModal').then((m) => ({ default: m.PhoneAuthModal })));
 import { isAdOwner } from './utils/formatters';
 import { sortAdsPersonalized, sortAdsRecent, sortAdsByPriceAsc, recordCategoryInterest } from './utils/personalization';
 import { isAdVipCornerEligible, VIP_CORNER_INFO } from './utils/vipCorner';
@@ -68,7 +70,6 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment, writeBatch, deleteField, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from './services/firebase';
-import { INITIAL_ADS } from './data/initialAds';
 import { isTestAd } from './utils/ads';
 import { markNotificationAsSeenLocally, rejectionNotifId } from './services/notificationService';
 // S-11 : Lazy-loading d'AdminApp pour ne pas livrer le bundle d'administration à tous les visiteurs
@@ -438,6 +439,16 @@ function PublicApp({
 
   // Local views overrides for instant UI updates & non-duplicated views tracking
   const [localViewOverrides, setLocalViewOverrides] = useState<Record<string, number>>({});
+  const [testAds, setTestAds] = useState<Ad[]>([]);
+
+  // Dynamically load initial demonstration ads ONLY when showTestAds is active (F2)
+  useEffect(() => {
+    if (showTestAds) {
+      import('./data/initialAds').then((mod) => setTestAds(mod.INITIAL_ADS));
+    } else {
+      setTestAds([]);
+    }
+  }, [showTestAds]);
 
   // Merge initial demonstration ads with live Firestore publicAds and myAds
   const ads = useMemo(() => {
@@ -445,8 +456,8 @@ function PublicApp({
     const now = Date.now();
 
     // 1. Initial test ads (Point 3: strictly active, non-expired, and ONLY if showTestAds is ON)
-    if (showTestAds) {
-      INITIAL_ADS
+    if (showTestAds && testAds.length > 0) {
+      testAds
         .filter((a) => a.status === 'ACTIVE' && new Date(a.expiresAt).getTime() > now)
         .forEach((a) => map.set(a.id, a));
     }
@@ -484,7 +495,7 @@ function PublicApp({
       }
       return currentAd;
     });
-  }, [publicAds, myAds, localViewOverrides, currentUser, showTestAds, registeredUserIds, registeredPhones]);
+  }, [publicAds, myAds, localViewOverrides, currentUser, showTestAds, testAds, registeredUserIds, registeredPhones]);
 
   // Frontend Tab State: 'catalog' | 'user-dashboard'
   const [frontendTab, setFrontendTab] = useState<'catalog' | 'user-dashboard'>('catalog');
@@ -705,9 +716,11 @@ function PublicApp({
     }
   };
 
-  // Deep-linking for shared ad (Requirement 5: ?ad=... or #ad-...)
+  const hasProcessedUrlAdRef = useRef(false);
+
+  // Deep-linking for shared ad (Requirement 5: ?ad=... or #ad-...) - (D3)
   useEffect(() => {
-    if (ads.length === 0) return;
+    if (ads.length === 0 || hasProcessedUrlAdRef.current) return;
 
     const checkUrlForAd = () => {
       try {
@@ -720,6 +733,7 @@ function PublicApp({
         if (targetAdId) {
           const matchedAd = ads.find((a) => a.id === targetAdId);
           if (matchedAd) {
+            hasProcessedUrlAdRef.current = true;
             setSelectedAdForDetail(matchedAd);
             setFrontendTab('catalog');
           }
@@ -1177,14 +1191,14 @@ function PublicApp({
     window.location.reload();
   };
 
-  // Handle adding new ad (received from PublishAdModal). Errors propagate to the modal.
+  // Handle adding new ad (received from PublishAdModal). Errors propagate to the modal. (P4)
   const handleAdPublished = async (newAd: Ad) => {
     if (!auth.currentUser) {
       showToast("Session expirée. Veuillez vous reconnecter pour publier votre annonce.");
       setPostLoginIntent('PUBLISH');
       setAuthTriggerPurpose('PUBLISH');
       setIsPhoneAuthOpen(true);
-      return;
+      throw new Error("Session expirée. Veuillez vous reconnecter avant de publier votre annonce.");
     }
     const {
       isFeatured,
@@ -1315,15 +1329,16 @@ function PublicApp({
     }
   };
 
-function cleanUndefined(obj: any): any {
-  if (obj === null || obj === undefined) return undefined;
+function cleanUndefined(obj: any, mapNullToDelete = false): any {
+  if (obj === undefined) return undefined;
+  if (obj === null) return mapNullToDelete ? deleteField() : null;
   if (obj instanceof Date || obj instanceof RegExp) return obj;
-  if (Array.isArray(obj)) return obj.map(cleanUndefined).filter((v) => v !== undefined);
+  if (Array.isArray(obj)) return obj.map((x) => cleanUndefined(x, mapNullToDelete)).filter((v) => v !== undefined);
   if (typeof obj === 'object') {
     const cleaned: Record<string, any> = {};
     for (const [k, v] of Object.entries(obj)) {
       if (v !== undefined) {
-        const val = cleanUndefined(v);
+        const val = cleanUndefined(v, mapNullToDelete);
         if (val !== undefined) {
           cleaned[k] = val;
         }
@@ -1338,7 +1353,8 @@ function cleanUndefined(obj: any): any {
   const handleSaveEditedAd = async (
     adId: string,
     updatedFields: Partial<Ad>,
-    wasActive: boolean
+    wasActive: boolean,
+    deletedKeys?: string[]
   ) => {
     const targetAd = ads.find((a) => a.id === adId);
     if (!targetAd || !isAdOwner(targetAd, currentUser)) {
@@ -1350,7 +1366,7 @@ function cleanUndefined(obj: any): any {
     const needsModeration = wasActive || wasRejected;
     const nowIso = new Date().toISOString();
 
-    const cleanedFields = cleanUndefined(updatedFields);
+    const cleanedFields = cleanUndefined(updatedFields, !needsModeration);
 
     const CATEGORY_SPECIFIC_KEYS = [
       'propertyType',
@@ -1405,13 +1421,14 @@ function cleanUndefined(obj: any): any {
       if (needsModeration) {
         // Étape 3.4 (B-02) : Transition sécurisée ACTIVE/REJECTED -> PENDING_REVIEW via callable
         const resubmitAdCallable = httpsCallable<
-          { adId: string; updates: Record<string, any> },
+          { adId: string; updates: Record<string, any>; deletedKeys?: string[] },
           { success: boolean; adId: string }
         >(functions, 'resubmitAd');
 
         await resubmitAdCallable({
           adId,
           updates: cleanedFields,
+          deletedKeys,
         });
       } else {
         const adDocRef = doc(db, 'ads', adId);
@@ -1420,6 +1437,12 @@ function cleanUndefined(obj: any): any {
           ...deletes,
           updatedAt: nowIso,
         };
+
+        if (deletedKeys) {
+          for (const k of deletedKeys) {
+            payload[k] = deleteField();
+          }
+        }
 
         for (const rk of RANKING_KEYS) {
           delete payload[rk];
@@ -1533,22 +1556,8 @@ function cleanUndefined(obj: any): any {
         await extendVipCallable({ adId, days: effectiveDays });
         showToast(`Prolongation de +${effectiveDays} jours appliquée avec succès !`);
       } else {
-        // Standard user: Filed securely for administrative verification via Cloud Function
-        const reqExtCallable = httpsCallable<{
-          adId: string;
-          days: number;
-          operator?: PaymentOperator;
-          transactionRef?: string;
-          paymentReference?: string;
-        }, { success: boolean }>(functions, 'requestExtension');
-        await reqExtCallable({
-          adId,
-          days: effectiveDays,
-          operator: paymentInfo.operator,
-          transactionRef: paymentInfo.transactionRef,
-          paymentReference: paymentInfo.transactionRef,
-        });
-        showToast(`Prolongation de +${effectiveDays} jours demandée. Elle sera validée après vérification du paiement.`);
+        // Prolongation payante : déjà prolongée automatiquement par settlePayment lors de la confirmation du paiement (Correction 1)
+        showToast(`Prolongation de +${effectiveDays} jours validée et appliquée avec succès !`);
       }
     } catch (e: any) {
       console.error(e);
@@ -2253,20 +2262,22 @@ function cleanUndefined(obj: any): any {
         {/* TAB 2: USER DEDICATED DASHBOARD ("MON ESPACE ANNONCEUR") */}
         {frontendTab === 'user-dashboard' && (
           currentUser ? (
-            <UserDashboard
-              currentUser={currentUser}
-              ads={ads}
-              onOpenPublishModal={handleTriggerPublish}
-              onOpenExtendModal={(ad) => handleTriggerExtend(ad)}
-              onEditAd={(ad) => handleTriggerEdit(ad)}
-              onSelectAdDetail={(ad) => handleSelectAdDetail(ad)}
-              onDeleteAd={handleDeleteAd}
-              onLogout={handleLogout}
-              onBoostAd={handleBoostAd}
-              onUpdateUser={handleUpdateUserProfile}
-              onSwitchToAdmin={onSwitchToAdmin}
-              onToggleFavorite={handleToggleFavorite}
-            />
+            <React.Suspense fallback={<div className="p-12 text-center text-slate-400 font-bold">Chargement de votre espace...</div>}>
+              <UserDashboard
+                currentUser={currentUser}
+                ads={ads}
+                onOpenPublishModal={handleTriggerPublish}
+                onOpenExtendModal={(ad) => handleTriggerExtend(ad)}
+                onEditAd={(ad) => handleTriggerEdit(ad)}
+                onSelectAdDetail={(ad) => handleSelectAdDetail(ad)}
+                onDeleteAd={handleDeleteAd}
+                onLogout={handleLogout}
+                onBoostAd={handleBoostAd}
+                onUpdateUser={handleUpdateUserProfile}
+                onSwitchToAdmin={onSwitchToAdmin}
+                onToggleFavorite={handleToggleFavorite}
+              />
+            </React.Suspense>
           ) : (
             <div className="bg-white rounded-3xl p-8 sm:p-12 text-center border border-slate-200 shadow-sm max-w-lg mx-auto space-y-4">
               <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto">
@@ -2329,66 +2340,68 @@ function cleanUndefined(obj: any): any {
       </footer>
 
       {/* MODALS */}
-      {/* 1. Phone SMS Login & Terms Acceptance Modal */}
-      <PhoneAuthModal
-        isOpen={isPhoneAuthOpen}
-        onClose={() => setIsPhoneAuthOpen(false)}
-        onSuccessLogin={handleLoginSuccess}
-        initialMode={authTriggerPurpose === 'PUBLISH' ? 'PUBLISH_TRIGGER' : 'LOGIN'}
-      />
+      <React.Suspense fallback={null}>
+        {/* 1. Phone SMS Login & Terms Acceptance Modal */}
+        <PhoneAuthModal
+          isOpen={isPhoneAuthOpen}
+          onClose={() => setIsPhoneAuthOpen(false)}
+          onSuccessLogin={handleLoginSuccess}
+          initialMode={authTriggerPurpose === 'PUBLISH' ? 'PUBLISH_TRIGGER' : 'LOGIN'}
+        />
 
-      {/* 2. Detail Modal */}
-      <AdDetailModal
-        ad={activeSelectedAd}
-        onClose={handleCloseAdDetail}
-        onOpenExtendModal={(ad) => handleTriggerExtend(ad)}
-        onEditAd={(ad) => handleTriggerEdit(ad)}
-        currentUser={currentUser}
-        isFavorite={activeSelectedAd ? activeFavoriteIds.includes(activeSelectedAd.id) : false}
-        onToggleFavorite={handleToggleFavorite}
-      />
+        {/* 2. Detail Modal */}
+        <AdDetailModal
+          ad={activeSelectedAd}
+          onClose={handleCloseAdDetail}
+          onOpenExtendModal={(ad) => handleTriggerExtend(ad)}
+          onEditAd={(ad) => handleTriggerEdit(ad)}
+          currentUser={currentUser}
+          isFavorite={activeSelectedAd ? activeFavoriteIds.includes(activeSelectedAd.id) : false}
+          onToggleFavorite={handleToggleFavorite}
+        />
 
-      {/* 3. Full Publishing & Mobile Payment Wizard */}
-      <PublishAdModal
-        isOpen={isPublishModalOpen}
-        onClose={() => setIsPublishModalOpen(false)}
-        onAdPublished={handleAdPublished}
-        currentUser={currentUser}
-        userAds={myAds}
-        onUpdateUser={handleUpdateUserProfile}
-        onSwitchToUserDashboard={() => {
-          setFrontendTab('user-dashboard');
-        }}
-      />
+        {/* 3. Full Publishing & Mobile Payment Wizard */}
+        <PublishAdModal
+          isOpen={isPublishModalOpen}
+          onClose={() => setIsPublishModalOpen(false)}
+          onAdPublished={handleAdPublished}
+          currentUser={currentUser}
+          userAds={myAds}
+          onUpdateUser={handleUpdateUserProfile}
+          onSwitchToUserDashboard={() => {
+            setFrontendTab('user-dashboard');
+          }}
+        />
 
-      {/* 4. Extend Ad Validity Modal */}
-      <ExtendAdModal
-        ad={selectedAdForExtend}
-        currentUser={currentUser}
-        onClose={() => setSelectedAdForExtend(null)}
-        onExtendSuccess={handleExtendSuccess}
-      />
+        {/* 4. Extend Ad Validity Modal */}
+        <ExtendAdModal
+          ad={selectedAdForExtend}
+          currentUser={currentUser}
+          onClose={() => setSelectedAdForExtend(null)}
+          onExtendSuccess={handleExtendSuccess}
+        />
 
-      {/* 5. Warning confirmation modal for editing an already online ad */}
-      <ConfirmEditOnlineModal
-        isOpen={!!adPendingEditConfirm}
-        ad={adPendingEditConfirm}
-        onClose={() => setAdPendingEditConfirm(null)}
-        onConfirm={() => {
-          if (adPendingEditConfirm) {
-            setAdToEdit(adPendingEditConfirm);
-            setAdPendingEditConfirm(null);
-          }
-        }}
-      />
+        {/* 5. Warning confirmation modal for editing an already online ad */}
+        <ConfirmEditOnlineModal
+          isOpen={!!adPendingEditConfirm}
+          ad={adPendingEditConfirm}
+          onClose={() => setAdPendingEditConfirm(null)}
+          onConfirm={() => {
+            if (adPendingEditConfirm) {
+              setAdToEdit(adPendingEditConfirm);
+              setAdPendingEditConfirm(null);
+            }
+          }}
+        />
 
-      {/* 6. Edit Ad Modal */}
-      <EditAdModal
-        isOpen={!!adToEdit}
-        ad={adToEdit}
-        onClose={() => setAdToEdit(null)}
-        onSave={handleSaveEditedAd}
-      />
+        {/* 6. Edit Ad Modal */}
+        <EditAdModal
+          isOpen={!!adToEdit}
+          ad={adToEdit}
+          onClose={() => setAdToEdit(null)}
+          onSave={handleSaveEditedAd}
+        />
+      </React.Suspense>
 
       {/* 5. Logout Confirmation Modal */}
       <LogoutConfirmModal

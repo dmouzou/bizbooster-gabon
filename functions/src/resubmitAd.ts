@@ -14,27 +14,53 @@ const ALLOWED_RESUBMIT_FIELDS = [
   "title",
   "description",
   "price",
+  "priceMax",
   "priceUnit",
   "location",
   "contactName",
   "contactPhone",
+  "hasWhatsapp",
   "images",
   "mainCategory",
+  "transactionType",
   "propertyType",
-  "bedrooms",
-  "vehicleMake",
-  "vehicleModel",
-  "vehicleYear",
-  "mileage",
-  "condition",
-  "jobTitle",
-  "salary",
-  "experience",
-  "availability",
-  "company",
-  "subCategory",
-  "tutoringSubjects",
-  "tutoringLevels",
+  "vehicleData",
+  "bricCategory",
+  "domesticJobType",
+  "jobKind",
+  "tutoringData",
+  "necrologieData",
+  "avisRechercheData",
+  "autresEmploisData",
+  "cvUrl",
+  "cvFileName",
+  "cvFileType",
+  "cvFileSize",
+  "jobDocUrl",
+  "jobDocFileName",
+  "jobDocFileType",
+  "jobDocFileSize",
+  "videoUrl",
+];
+
+const CATEGORY_SPECIFIC_KEYS = [
+  "propertyType",
+  "vehicleData",
+  "tutoringData",
+  "necrologieData",
+  "avisRechercheData",
+  "autresEmploisData",
+  "domesticJobType",
+  "bricCategory",
+  "jobKind",
+  "cvUrl",
+  "cvFileName",
+  "cvFileType",
+  "cvFileSize",
+  "jobDocUrl",
+  "jobDocFileName",
+  "jobDocFileType",
+  "jobDocFileSize",
 ];
 
 /**
@@ -46,7 +72,7 @@ export const resubmitAd = onCall(CALLABLE_OPTIONS, async (request) => {
     throw new HttpsError("unauthenticated", "Authentification requise pour modifier une annonce.");
   }
 
-  const { adId, updates } = request.data || {};
+  const { adId, updates, deletedKeys } = request.data || {};
   if (!adId || typeof adId !== "string") {
     throw new HttpsError("invalid-argument", "Identifiant d'annonce requis.");
   }
@@ -59,8 +85,17 @@ export const resubmitAd = onCall(CALLABLE_OPTIONS, async (request) => {
   const filteredUpdates: Record<string, any> = {};
   for (const field of ALLOWED_RESUBMIT_FIELDS) {
     if (updates[field] !== undefined) {
-      filteredUpdates[field] = updates[field];
+      if (updates[field] === null) {
+        filteredUpdates[field] = FieldValue.delete();
+      } else {
+        filteredUpdates[field] = updates[field];
+      }
     }
+  }
+
+  // Cap photos à 10 max (E1)
+  if (Array.isArray(filteredUpdates.images)) {
+    filteredUpdates.images = filteredUpdates.images.slice(0, 10);
   }
 
   const db = getFirestore();
@@ -76,12 +111,17 @@ export const resubmitAd = onCall(CALLABLE_OPTIONS, async (request) => {
 
     // Contrôle d'appartenance : seul le propriétaire authentifié peut réémettre son annonce
     if (ad.userId && ad.userId !== request.auth!.uid) {
-      throw new HttpsError("permission-denied", "Vous n êtes pas le propriétaire de cette annonce.");
+      throw new HttpsError("permission-denied", "Vous n'êtes pas le propriétaire de cette annonce.");
     }
 
     const currentStatus = ad.status;
     if (currentStatus !== "ACTIVE" && currentStatus !== "REJECTED" && currentStatus !== "PENDING_REVIEW") {
       throw new HttpsError("failed-precondition", `Une annonce au statut ${currentStatus} ne peut pas être réémise.`);
+    }
+
+    // Sécurité vidéo (E1) : interdire l'ajout d'une vidéo payante lors de l'édition si non payée à l'origine
+    if (filteredUpdates.videoUrl && !ad.videoUrl && !ad.hasVideo) {
+      delete filteredUpdates.videoUrl;
     }
 
     const nextPayload: Record<string, any> = {
@@ -92,6 +132,24 @@ export const resubmitAd = onCall(CALLABLE_OPTIONS, async (request) => {
       updatedAt: nowIso,
       resubmittedAt: FieldValue.serverTimestamp(),
     };
+
+    // Gestion de la suppression explicite de champs (E2, D10)
+    if (Array.isArray(deletedKeys)) {
+      for (const k of deletedKeys) {
+        if (ALLOWED_RESUBMIT_FIELDS.includes(k)) {
+          nextPayload[k] = FieldValue.delete();
+        }
+      }
+    }
+
+    // Si la catégorie a changé, supprimer les anciens champs spécifiques (D9)
+    if (filteredUpdates.mainCategory && ad.mainCategory && ad.mainCategory !== filteredUpdates.mainCategory) {
+      for (const catKey of CATEGORY_SPECIFIC_KEYS) {
+        if (!(catKey in filteredUpdates)) {
+          nextPayload[catKey] = FieldValue.delete();
+        }
+      }
+    }
 
     // Si l'annonce était active avec un boost en cours, geler le boost pendant la modération
     if (currentStatus === "ACTIVE" && ad.isFeatured && ad.featuredUntil) {

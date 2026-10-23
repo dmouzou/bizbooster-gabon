@@ -38,7 +38,7 @@ describe("Attribution transactionnelle (Phase 4)", () => {
     expect(r2.status).toBe("PENDING");
 
     // PENDING -> SUCCESS
-    const r3 = await settlePayment(payRef, { status: "SUCCESS" });
+    const r3 = await settlePayment(payRef, { status: "SUCCESS", amountReceived: 29000 });
     expect(r3.status).toBe("SUCCESS");
     expect(r3.attributed).toBe(true);
 
@@ -59,7 +59,7 @@ describe("Attribution transactionnelle (Phase 4)", () => {
       createdAt: new Date().toISOString(),
     });
 
-    const res = await settlePayment(payRef, { status: "SUCCESS" });
+    const res = await settlePayment(payRef, { status: "SUCCESS", amountReceived: 29000 });
     expect(res.status).toBe("SUCCESS");
     expect(res.attributed).toBe(true);
 
@@ -81,11 +81,11 @@ describe("Attribution transactionnelle (Phase 4)", () => {
 
     // 5 appels simultanés
     const results = await Promise.all([
-      settlePayment(payRef, { status: "SUCCESS" }),
-      settlePayment(payRef, { status: "SUCCESS" }),
-      settlePayment(payRef, { status: "SUCCESS" }),
-      settlePayment(payRef, { status: "SUCCESS" }),
-      settlePayment(payRef, { status: "SUCCESS" }),
+      settlePayment(payRef, { status: "SUCCESS", amountReceived: 29000 }),
+      settlePayment(payRef, { status: "SUCCESS", amountReceived: 29000 }),
+      settlePayment(payRef, { status: "SUCCESS", amountReceived: 29000 }),
+      settlePayment(payRef, { status: "SUCCESS", amountReceived: 29000 }),
+      settlePayment(payRef, { status: "SUCCESS", amountReceived: 29000 }),
     ]);
 
     expect(results.every((r) => r.status === "SUCCESS")).toBe(true);
@@ -108,7 +108,7 @@ describe("Attribution transactionnelle (Phase 4)", () => {
       createdAt: new Date().toISOString(),
     });
 
-    await settlePayment(payRef, { status: "SUCCESS" });
+    await settlePayment(payRef, { status: "SUCCESS", amountReceived: 29000 });
 
     const userDoc = (await db.collection("users").doc(testUid).get()).data();
     expect(userDoc?.subscriptionTier).toBe("PRO");
@@ -138,13 +138,38 @@ describe("Attribution transactionnelle (Phase 4)", () => {
       createdAt: new Date().toISOString(),
     });
 
-    await settlePayment(payRef, { status: "SUCCESS" });
+    await settlePayment(payRef, { status: "SUCCESS", amountReceived: 9500 });
 
     const adDoc = (await db.collection("ads").doc(adId).get()).data();
     const newExp = new Date(adDoc?.expiresAt).getTime();
     const expectedExp = new Date(futureDate).getTime() + 30 * 86400000;
     // La nouvelle date doit être à environ 35 jours (5 + 30)
     expect(Math.abs(newExp - expectedExp)).toBeLessThan(5000);
+  });
+
+  it("4.3 passe en NEEDS_REVIEW si le montant est absent", async () => {
+    const payRef = "PAY_TEST_AMOUNT_ABSENT";
+    await db.collection("payments").doc(payRef).set({
+      reference: payRef,
+      userId: testUid,
+      productId: "SUB_PRO",
+      amount: 29000,
+      status: "PENDING",
+      attributed: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    // SingPay renvoie SUCCESS sans amountReceived
+    const res = await settlePayment(payRef, {
+      status: "SUCCESS",
+    });
+
+    expect(res.status).toBe("NEEDS_REVIEW");
+    expect(res.attributed).toBe(false);
+
+    const payDoc = (await db.collection("payments").doc(payRef).get()).data();
+    expect(payDoc?.status).toBe("NEEDS_REVIEW");
+    expect(payDoc?.attributed).toBe(false);
   });
 
   it("4.3 passe en NEEDS_REVIEW et n'attribue rien si le montant reçu diffère", async () => {
@@ -176,5 +201,33 @@ describe("Attribution transactionnelle (Phase 4)", () => {
     // L'utilisateur n'a pas reçu le forfait PRO
     const userDoc = (await db.collection("users").doc(testUid).get()).data();
     expect(userDoc?.subscriptionTier).toBe("STANDARD");
+  });
+
+  it("Lot 2 acceptance: annonce PENDING_REVIEW non réactivable par settlePayment AD_EXTEND", async () => {
+    const adId = "ad_test_pending_review_extend";
+    await db.collection("ads").doc(adId).set({
+      id: adId,
+      userId: testUid,
+      status: "PENDING_REVIEW",
+      createdAt: new Date().toISOString(),
+    });
+
+    const payRef = "PAY_TEST_PENDING_REVIEW_AD";
+    await db.collection("payments").doc(payRef).set({
+      reference: payRef,
+      userId: testUid,
+      productId: "AD_EXTEND",
+      amount: 9500,
+      metadata: { adId, days: 30 },
+      status: "PENDING",
+      attributed: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    await settlePayment(payRef, { status: "SUCCESS", amountReceived: 9500 });
+
+    const adDoc = (await db.collection("ads").doc(adId).get()).data();
+    // Le statut doit impérativement rester PENDING_REVIEW et non passer à ACTIVE
+    expect(adDoc?.status).toBe("PENDING_REVIEW");
   });
 });

@@ -1,6 +1,8 @@
 {
   "projects": {
-    "default": "bizbooster-gabon"
+    "default": "bizbooster-gabon",
+    "global-af-dev": "global-af-dev",
+    "global-af-live": "global-af-live"
   },
   "targets": {
     "bizbooster-gabon": {

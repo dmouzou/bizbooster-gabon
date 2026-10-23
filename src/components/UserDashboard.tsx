@@ -39,6 +39,7 @@ import {
   Heart,
   ArrowUpDown,
   Smartphone,
+  CreditCard,
 } from 'lucide-react';
 import {
   EmailAuthProvider,
@@ -187,7 +188,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 }) => {
   const [dashboardTab, setDashboardTab] = useState<'ADS' | 'FAVORITES' | 'SUBSCRIPTIONS' | 'PROFILE'>('ADS');
   // Point 5: Inclus la case 'Expirées' et la fonction 'Trier par'
-  type UserDashboardFilterStatus = 'ALL' | 'ACTIVE' | 'PENDING' | 'EXPIRED' | 'REJECTED' | 'SUSPENDED';
+  type UserDashboardFilterStatus = 'ALL' | 'ACTIVE' | 'PENDING' | 'PENDING_PAYMENT' | 'EXPIRED' | 'REJECTED' | 'SUSPENDED';
   const [filterStatus, setFilterStatus] = useState<UserDashboardFilterStatus>('ALL');
   type UserAdsSortOption = 'DATE_DESC' | 'DATE_ASC' | 'EXPIRY_ASC' | 'VIEWS_DESC' | 'PRICE_DESC' | 'PRICE_ASC';
   const [adsSortBy, setAdsSortBy] = useState<UserAdsSortOption>('DATE_DESC');
@@ -201,6 +202,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [boostOption, setBoostOption] = useState<'SINGLE' | 'PACK'>('SINGLE');
   const [selectedPackForBoost, setSelectedPackForBoost] = useState<(typeof BOOSTER_PACKS)[number] | null>(null);
   const [showBoosterPacksModal, setShowBoosterPacksModal] = useState(false);
+  const [isActivatingBoosterPack, setIsActivatingBoosterPack] = useState(false);
+  const [isWaitingPayment, setIsWaitingPayment] = useState(false);
 
   // Profile update state (Requirement 3c)
   const [profileName, setProfileName] = useState(currentUser.name || '');
@@ -209,6 +212,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [profileNeighborhood, setProfileNeighborhood] = useState(currentUser.location?.neighborhood || '');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileSuccessMsg, setProfileSuccessMsg] = useState<string | null>(null);
+
+  // Resync profile fields when currentUser updates (D2)
+  useEffect(() => {
+    setProfileName(currentUser.name || '');
+    setProfileProvince(currentUser.location?.province || 'Estuaire');
+    setProfileCity(currentUser.location?.city || 'Libreville');
+    setProfileNeighborhood(currentUser.location?.neighborhood || '');
+  }, [currentUser]);
 
   // App Alert Modal State (Point 1: replaces native alert/confirm)
   const [alertModalConfig, setAlertModalConfig] = useState<AlertModalConfig | null>(null);
@@ -274,13 +285,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   const activeCount = myAds.filter((a) => a.status === 'ACTIVE').length;
   const pendingCount = myAds.filter((a) => a.status === 'PENDING_REVIEW').length;
+  const pendingPaymentCount = myAds.filter((a) => a.status === 'PENDING_PAYMENT').length;
   const rejectedCount = myAds.filter((a) => a.status === 'REJECTED').length;
   const totalViews = myAds.reduce((sum, a) => sum + (a.viewsCount || 0), 0);
 
-  // Count simultaneous active/pending ads
+  // Count simultaneous active/pending ads (P6, D11)
   const now = Date.now();
   const userSimultaneousAds = myAds.filter(
-    (a) => a.status !== 'REJECTED' && new Date(a.expiresAt).getTime() > now
+    (a) => a.status !== 'REJECTED' && a.status !== 'EXPIRED' && (!a.expiresAt || new Date(a.expiresAt).getTime() > now)
   );
   const simultaneousCount = userSimultaneousAds.length;
 
@@ -389,10 +401,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
   const displayedAds = myAds
     .filter((ad) => {
-      const isExp = ad.status === 'EXPIRED' || new Date(ad.expiresAt).getTime() <= Date.now();
+      const isExp = ad.status === 'EXPIRED' || (ad.expiresAt && new Date(ad.expiresAt).getTime() <= Date.now());
       if (filterStatus === 'EXPIRED') return isExp;
       if (filterStatus === 'ACTIVE') return ad.status === 'ACTIVE' && !isExp;
       if (filterStatus === 'PENDING') return ad.status === 'PENDING_REVIEW';
+      if (filterStatus === 'PENDING_PAYMENT') return ad.status === 'PENDING_PAYMENT';
       if (filterStatus === 'REJECTED') return ad.status === 'REJECTED';
       if (filterStatus === 'SUSPENDED') return ad.status === 'SUSPENDED';
       return true;
@@ -583,6 +596,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const handleConfirmDowngrade = async (targetTier: (typeof SUBSCRIPTION_TIERS)[number]) => {
     setIsDowngrading(true);
     try {
+      await onUpdateUser?.({
+        scheduledDowngradeTier: targetTier.tier,
+      });
       setDowngradeConfirmationTier(null);
       const expiryDate = currentUser?.subscriptionExpiresAt
         ? new Date(currentUser.subscriptionExpiresAt).toLocaleDateString('fr-FR')
@@ -601,14 +617,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   };
 
   const handleSelectBoosterPack = async (pack: (typeof BOOSTER_PACKS)[number]) => {
+    if (isActivatingBoosterPack) return;
     if (isExempt) {
       try {
+        setIsActivatingBoosterPack(true);
         const activateCallable = httpsCallable<{ type: string; packCount?: number }, { success: boolean }>(functions, 'activateExemptSubscription');
         await activateCallable({ type: 'BOOSTER_PACK', packCount: pack.boostsCount });
         showAlert(`${pack.name} activé avec succès pour votre compte partenaire VIP (max 20) !`, 'success', "Pack Boosters Activé !");
       } catch (err: any) {
         console.error('Error adding booster pack for VIP:', err);
         showAlert(`Erreur lors de l'activation des boosters : ${err?.message || 'Vérifiez votre connexion et réessayez.'}`, 'error');
+      } finally {
+        setIsActivatingBoosterPack(false);
       }
       return;
     }
@@ -995,6 +1015,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <span className="text-[10px] text-amber-700">Modération</span>
             </div>
 
+            {pendingPaymentCount > 0 && (
+              <div
+                onClick={() => setFilterStatus('PENDING_PAYMENT')}
+                className={`bg-white p-4 rounded-2xl border cursor-pointer transition-all ${
+                  filterStatus === 'PENDING_PAYMENT' ? 'border-amber-500 ring-2 ring-amber-500/20 shadow-xs' : 'border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-amber-800">Paiement en attente</span>
+                  <CreditCard className="w-3.5 h-3.5 text-amber-600" />
+                </div>
+                <div className="text-2xl font-black text-amber-700">{pendingPaymentCount}</div>
+                <span className="text-[10px] text-amber-600">À régulariser</span>
+              </div>
+            )}
+
             <div
               onClick={() => setFilterStatus('ACTIVE')}
               className={`bg-white p-4 rounded-2xl border cursor-pointer transition-all ${
@@ -1110,6 +1146,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 {filterStatus === 'ALL' && 'Toutes les annonces'}
                 {filterStatus === 'ACTIVE' && 'En ligne publiques'}
                 {filterStatus === 'PENDING' && 'En attente de modération'}
+                {filterStatus === 'PENDING_PAYMENT' && 'Paiement en attente'}
                 {filterStatus === 'EXPIRED' && 'Expirées'}
                 {filterStatus === 'SUSPENDED' && 'En pause (Forfait)'}
                 {filterStatus === 'REJECTED' && 'Rejetées'}
@@ -1191,7 +1228,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
                         <span
                           className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${
-                            ad.status === 'SUSPENDED'
+                            ad.status === 'PENDING_PAYMENT'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              : ad.status === 'SUSPENDED'
                               ? 'bg-amber-100 text-amber-900 border border-amber-300'
                               : isPending
                               ? 'bg-amber-100 text-amber-800 border border-amber-300'
@@ -1202,7 +1241,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               : 'bg-slate-100 text-slate-700'
                           }`}
                         >
-                          {ad.status === 'SUSPENDED'
+                          {ad.status === 'PENDING_PAYMENT'
+                            ? '💳 Paiement en attente'
+                            : ad.status === 'SUSPENDED'
                             ? '⏸️ En pause (Forfait)'
                             : isPending
                             ? 'En attente'
@@ -1280,7 +1321,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
                         <button
                           onClick={() => {
-                            if (isExpired) {
+                            if (!isRejected && isExpired) {
                               showAlert("Cette annonce est expirée. Vous devez d'abord la prolonger pour pouvoir la modifier.", 'info', "Prolongation requise");
                               onOpenExtendModal(ad);
                               return;
@@ -1292,7 +1333,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               ? 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-300'
                               : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
                           }`}
-                          title={isExpired ? "Prolonger l'annonce avant de la modifier" : isRejected ? "Corriger l'annonce pour la soumettre à nouveau" : "Modifier cette annonce"}
+                          title={isRejected ? "Corriger l'annonce pour la soumettre à nouveau" : isExpired ? "Prolonger l'annonce avant de la modifier" : "Modifier cette annonce"}
                         >
                           <Edit3 className="w-3.5 h-3.5 text-current" />
                           <span>{isRejected ? 'Corriger' : 'Modifier'}</span>
@@ -1327,7 +1368,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                           </button>
                         )}
 
-                        {(isActive || isExpired) && (
+                        {Boolean(ad.expiresAt && (ad.status === 'ACTIVE' || ad.status === 'EXPIRED')) && (
                           <button
                             onClick={() => onOpenExtendModal(ad)}
                             className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
@@ -1922,11 +1963,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
               <button
                 onClick={() => {
+                  if (isWaitingPayment) return;
                   setAdToBoost(null);
                   setShowBoostPayment(false);
                   setSelectedPackForBoost(null);
                 }}
-                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400"
+                disabled={isWaitingPayment}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 disabled:opacity-30 cursor-pointer"
+                title={isWaitingPayment ? "Paiement en cours... Ne fermez pas la fenêtre" : "Fermer"}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1939,8 +1983,36 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </span>
             </div>
 
-            {/* Condition: if user has free boosts or VIP */}
-            {(currentUser.freeBoostsRemaining || 0) > 0 || isExempt ? (
+            {/* Condition: Evaluate payment first so simulator doesn't unmount on purchase (D6) */}
+            {showBoostPayment ? (
+              <div className="pt-2">
+                <MobilePaymentSimulator
+                  productId={boostOption === 'SINGLE' || !selectedPackForBoost ? 'BOOST_SINGLE' : selectedPackForBoost.type}
+                  metadata={{
+                    adId: adToBoost.id,
+                    boostOption,
+                    packType: selectedPackForBoost?.type,
+                  }}
+                  amount={boostOption === 'SINGLE' || !selectedPackForBoost ? 5000 : selectedPackForBoost.price}
+                  itemDescription={
+                    boostOption === 'SINGLE' || !selectedPackForBoost
+                      ? `Mise en tête de liste 7 jours - ${adToBoost.title}`
+                      : `${selectedPackForBoost.name} (${selectedPackForBoost.boostsCount} Boosts) - ${adToBoost.title}`
+                  }
+                  onSuccess={(info) => {
+                    setIsWaitingPayment(false);
+                    handleBoostPurchaseSuccess(info);
+                  }}
+                  onCancel={() => {
+                    setIsWaitingPayment(false);
+                    setShowBoostPayment(false);
+                    setSelectedPackForBoost(null);
+                  }}
+                  onPaymentPendingChange={setIsWaitingPayment}
+                  initialPhone=""
+                />
+              </div>
+            ) : ((currentUser.freeBoostsRemaining || 0) > 0 || isExempt) ? (
               <div className="space-y-3">
                 <div className="bg-emerald-50 border border-emerald-300 p-3 rounded-xl text-xs text-emerald-900 font-bold flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -1960,29 +2032,6 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   <Sparkles className="w-4 h-4" />
                   <span>Activer la mise en tête (0 FCFA)</span>
                 </button>
-              </div>
-            ) : showBoostPayment ? (
-              <div className="pt-2">
-                <MobilePaymentSimulator
-                  productId={boostOption === 'SINGLE' || !selectedPackForBoost ? 'BOOST_SINGLE' : selectedPackForBoost.type}
-                  metadata={{
-                    adId: adToBoost.id,
-                    boostOption,
-                    packType: selectedPackForBoost?.type,
-                  }}
-                  amount={boostOption === 'SINGLE' || !selectedPackForBoost ? 5000 : selectedPackForBoost.price}
-                  itemDescription={
-                    boostOption === 'SINGLE' || !selectedPackForBoost
-                      ? `Mise en tête de liste 7 jours - ${adToBoost.title}`
-                      : `${selectedPackForBoost.name} (${selectedPackForBoost.boostsCount} Boosts) - ${adToBoost.title}`
-                  }
-                  onSuccess={handleBoostPurchaseSuccess}
-                  onCancel={() => {
-                    setShowBoostPayment(false);
-                    setSelectedPackForBoost(null);
-                  }}
-                  initialPhone=""
-                />
               </div>
             ) : (
               <div className="space-y-4">
@@ -2203,7 +2252,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 <h4 className="font-black text-sm text-slate-900">{itemToPurchase.title}</h4>
                 <p className="text-[11px] text-slate-500">Paiement sécurisé Mobile Money Gabon</p>
               </div>
-              <button onClick={() => setItemToPurchase(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400">
+              <button
+                onClick={() => {
+                  if (isWaitingPayment) return;
+                  setItemToPurchase(null);
+                }}
+                disabled={isWaitingPayment}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 disabled:opacity-30 cursor-pointer"
+                title={isWaitingPayment ? "Paiement en cours... Ne fermez pas la fenêtre" : "Fermer"}
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -2218,8 +2275,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               }}
               amount={itemToPurchase.price}
               itemDescription={itemToPurchase.title}
-              onSuccess={handlePurchaseSuccess}
-              onCancel={() => setItemToPurchase(null)}
+              onSuccess={(info) => {
+                setIsWaitingPayment(false);
+                handlePurchaseSuccess(info);
+              }}
+              onCancel={() => {
+                setIsWaitingPayment(false);
+                setItemToPurchase(null);
+              }}
+              onPaymentPendingChange={setIsWaitingPayment}
               initialPhone=""
             />
           </div>

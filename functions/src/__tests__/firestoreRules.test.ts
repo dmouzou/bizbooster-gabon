@@ -201,10 +201,32 @@ describe('Règles de sécurité Firestore (Phase 7)', () => {
       );
     });
 
-    it('7.1 autorise la modification légitime des informations (titre, description, prix)', async () => {
+    it('7.1 refuse la modification directe d\'une annonce ACTIVE sans repasser par modération (B4)', async () => {
+      const db = testEnv.authenticatedContext(ownerUid).firestore();
+      await assertFails(
+        updateDoc(doc(db, 'ads', 'ad_test_1'), {
+          title: 'Table en chêne massif rénovée',
+          price: 28000,
+          description: 'Description mise à jour sans passer par modération.',
+        })
+      );
+    });
+
+    it('7.1 autorise la modification légitime des informations d\'une annonce en attente', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, 'ads', 'ad_test_pending_edit'), {
+          userId: ownerUid,
+          title: 'Table en bois massif',
+          description: 'Très bon état',
+          price: 25000,
+          status: 'PENDING_REVIEW',
+          durationDays: 30,
+        });
+      });
       const db = testEnv.authenticatedContext(ownerUid).firestore();
       await assertSucceeds(
-        updateDoc(doc(db, 'ads', 'ad_test_1'), {
+        updateDoc(doc(db, 'ads', 'ad_test_pending_edit'), {
           title: 'Table en chêne massif rénovée',
           price: 28000,
           description: 'Description mise à jour sans toucher aux métadonnées sensibles.',

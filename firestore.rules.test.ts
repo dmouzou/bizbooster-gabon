@@ -522,6 +522,214 @@ describe('Firestore Security Rules (Phase 1)', () => {
       })
     );
   });
+
+  // 14. Priorité R1 : Inscription PhoneAuthModal (isVerified interdit au client)
+  it('R1: refuse la création de compte avec isVerified mais accepte le payload conforme PhoneAuthModal', async () => {
+    const userDb = testEnv.authenticatedContext('user_r1').firestore();
+    const userRef = doc(userDb, 'users', 'user_r1');
+
+    // Tentative avec isVerified: true (défaut initial de PhoneAuthModal) -> doit échouer
+    await assertFails(
+      setDoc(userRef, {
+        name: 'Jean Paul',
+        country: 'GA',
+        operator: 'AIRTEL',
+        role: 'USER',
+        isVerified: true,
+        termsAccepted: true,
+        termsAcceptedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        contactPhone: '+24177000000',
+        phoneNumber: '+24177000000',
+      })
+    );
+
+    // Payload conforme corrigé sans isVerified -> doit réussir
+    await assertSucceeds(
+      setDoc(userRef, {
+        name: 'Jean Paul',
+        country: 'GA',
+        operator: 'AIRTEL',
+        role: 'USER',
+        termsAccepted: true,
+        termsAcceptedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        contactPhone: '+24177000000',
+        phoneNumber: '+24177000000',
+        location: {
+          province: 'Estuaire',
+          city: 'Libreville',
+        },
+      })
+    );
+  });
+
+  // 15. B1 & B17 : Verrouillage strict boostRequested, withBoost, featuredPausedAt, publishedAt, moderatedAt
+  it('B1 & B17: refuse la création avec boostRequested, withBoost, featuredPausedAt, publishedAt ou moderatedAt', async () => {
+    const userDb = testEnv.authenticatedContext('user_b1').firestore();
+    const adRef = doc(userDb, 'ads', 'ad_b1');
+
+    // Création avec withBoost -> refusée
+    await assertFails(
+      setDoc(adRef, {
+        userId: 'user_b1',
+        title: 'Appartement vue mer',
+        status: 'PENDING_REVIEW',
+        price: 250000,
+        withBoost: true,
+      })
+    );
+
+    // Création avec boostRequested -> refusée
+    await assertFails(
+      setDoc(adRef, {
+        userId: 'user_b1',
+        title: 'Appartement vue mer',
+        status: 'PENDING_REVIEW',
+        price: 250000,
+        boostRequested: true,
+      })
+    );
+
+    // Création avec featuredPausedAt -> refusée
+    await assertFails(
+      setDoc(adRef, {
+        userId: 'user_b1',
+        title: 'Appartement vue mer',
+        status: 'PENDING_REVIEW',
+        price: 250000,
+        featuredPausedAt: new Date().toISOString(),
+      })
+    );
+
+    // Création avec publishedAt -> refusée (B17)
+    await assertFails(
+      setDoc(adRef, {
+        userId: 'user_b1',
+        title: 'Appartement vue mer',
+        status: 'PENDING_REVIEW',
+        price: 250000,
+        publishedAt: new Date().toISOString(),
+      })
+    );
+
+    // Création avec moderatedAt -> refusée (B17)
+    await assertFails(
+      setDoc(adRef, {
+        userId: 'user_b1',
+        title: 'Appartement vue mer',
+        status: 'PENDING_REVIEW',
+        price: 250000,
+        moderatedAt: new Date().toISOString(),
+      })
+    );
+  });
+
+  // 16. B2 : freeBoosts (champ historique) verrouillé dans privilegedKeys
+  it('B2: interdit l auto-attribution de freeBoosts sur le profil utilisateur', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users', 'user_b2'), {
+        role: 'USER',
+        name: 'Test B2',
+        freeBoostsRemaining: 0,
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext('user_b2').firestore();
+    const userRef = doc(userDb, 'users', 'user_b2');
+
+    // Tentative de modification de freeBoosts -> refusée
+    await assertFails(
+      updateDoc(userRef, {
+        freeBoosts: 20,
+      })
+    );
+  });
+
+  // 17. B4 : Le contenu d une annonce ACTIVE est verrouillé en mise à jour directe (doit passer par resubmitAd)
+  it('B4: interdit au propriétaire de modifier directement le contenu d une annonce ACTIVE', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'ads', 'ad_active_b4'), {
+        userId: 'user_b4',
+        title: 'Titre Original Approuve',
+        description: 'Description initiale',
+        status: 'ACTIVE',
+        price: 100000,
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext('user_b4').firestore();
+    const adRef = doc(userDb, 'ads', 'ad_active_b4');
+
+    // Tentative de mise à jour directe du titre sur annonce ACTIVE -> refusée
+    await assertFails(
+      updateDoc(adRef, {
+        title: 'Titre Frauduleux Modifie Sans Moderation',
+      })
+    );
+
+    // Tentative de mise à jour du prix sur annonce ACTIVE -> refusée
+    await assertFails(
+      updateDoc(adRef, {
+        price: 500,
+      })
+    );
+  });
+
+  // 18. B31 : idVerificationStatus ne peut pas être repassé à PENDING si déjà VERIFIED
+  it('B31: interdit de repasser idVerificationStatus à PENDING si le statut est déjà VERIFIED', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users', 'user_b31_kyc'), {
+        role: 'USER',
+        name: 'Verified User',
+        idVerificationStatus: 'VERIFIED',
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext('user_b31_kyc').firestore();
+    const userRef = doc(userDb, 'users', 'user_b31_kyc');
+
+    // Tentative de réinitialisation vers PENDING -> refusée
+    await assertFails(
+      updateDoc(userRef, {
+        idVerificationStatus: 'PENDING',
+      })
+    );
+  });
+
+  // 19. B31 : settings/system_config protégé pour super admin uniquement, notifications auto-créables interdites
+  it('B31: seul un SUPER_ADMIN peut écrire settings/system_config, les clients ne créent pas de notifications', async () => {
+    const adminDb = testEnv.authenticatedContext('admin_simple', { role: 'ADMIN' }).firestore();
+    const superAdminDb = testEnv.authenticatedContext('super_admin', { role: 'SUPER_ADMIN' }).firestore();
+    const userDb = testEnv.authenticatedContext('user_notif').firestore();
+
+    const sysConfigAdmin = doc(adminDb, 'settings', 'system_config');
+    const sysConfigSuper = doc(superAdminDb, 'settings', 'system_config');
+
+    // Admin simple tente d'écrire system_config -> refusé
+    await assertFails(
+      setDoc(sysConfigAdmin, {
+        registeredPhones: ['+24177112233'],
+      })
+    );
+
+    // Super Admin écrit system_config -> autorisé
+    await assertSucceeds(
+      setDoc(sysConfigSuper, {
+        registeredPhones: ['+24177112233'],
+      })
+    );
+
+    // Client tente de s'auto-créer une notification -> refusé
+    const notifRef = doc(userDb, 'user_notifications', 'user_notif_n1');
+    await assertFails(
+      setDoc(notifRef, {
+        userId: 'user_notif',
+        title: 'Fausse notification',
+        createdAt: new Date().toISOString(),
+      })
+    );
+  });
 });
 
 

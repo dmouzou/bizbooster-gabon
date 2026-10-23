@@ -281,11 +281,11 @@ describe('Recette Officielle : 19 Scénarios de Validation (Phase 9)', () => {
     });
 
     const results = await Promise.all([
-      settlePayment('BZB_SCEN_7', { status: 'SUCCESS' }),
-      settlePayment('BZB_SCEN_7', { status: 'SUCCESS' }),
-      settlePayment('BZB_SCEN_7', { status: 'SUCCESS' }),
-      settlePayment('BZB_SCEN_7', { status: 'SUCCESS' }),
-      settlePayment('BZB_SCEN_7', { status: 'SUCCESS' }),
+      settlePayment('BZB_SCEN_7', { status: 'SUCCESS', amountReceived: 15000 }),
+      settlePayment('BZB_SCEN_7', { status: 'SUCCESS', amountReceived: 15000 }),
+      settlePayment('BZB_SCEN_7', { status: 'SUCCESS', amountReceived: 15000 }),
+      settlePayment('BZB_SCEN_7', { status: 'SUCCESS', amountReceived: 15000 }),
+      settlePayment('BZB_SCEN_7', { status: 'SUCCESS', amountReceived: 15000 }),
     ]);
 
     for (const r of results) {

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -43,7 +43,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { signOut, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, writeBatch } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../services/firebase';
 import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAdmin } from '../types';
@@ -139,15 +139,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [alertModalConfig, setAlertModalConfig] = useState<AlertModalConfig | null>(null);
 
   const handleToggleTestAds = async () => {
+    if (!isSuper) {
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'error',
+        title: 'Action non autorisée',
+        message: 'Seul un Super Admin peut modifier la visibilité des annonces de test.',
+      });
+      return;
+    }
     const nextVal = !showTestAds;
-    setShowTestAds(nextVal);
     try {
-      localStorage.setItem('bizbooster_show_test_ads', String(nextVal));
-      window.dispatchEvent(new CustomEvent('bizbooster_test_ads_toggled', { detail: { showTestAds: nextVal } }));
-      await setDoc(doc(db, 'settings', 'public_config'), { showTestAds: nextVal, updatedAt: new Date().toISOString() }, { merge: true });
-      await setDoc(doc(db, 'settings', 'system_config'), { showTestAds: nextVal, updatedAt: new Date().toISOString() }, { merge: true });
-    } catch (e) {
-      console.warn('Could not persist test ads toggle to Firestore:', e);
+      const batch = writeBatch(db);
+      const iso = new Date().toISOString();
+      batch.set(doc(db, 'settings', 'public_config'), { showTestAds: nextVal, updatedAt: iso }, { merge: true });
+      batch.set(doc(db, 'settings', 'system_config'), { showTestAds: nextVal, updatedAt: iso }, { merge: true });
+      await batch.commit();
+
+      setShowTestAds(nextVal);
+      try {
+        localStorage.setItem('bizbooster_show_test_ads', String(nextVal));
+        window.dispatchEvent(new CustomEvent('bizbooster_test_ads_toggled', { detail: { showTestAds: nextVal } }));
+      } catch (storageErr) {
+        // ignore storage errors
+      }
+    } catch (e: any) {
+      console.error('Could not persist test ads toggle to Firestore:', e);
+      setAlertModalConfig({
+        isOpen: true,
+        type: 'error',
+        title: "Erreur de configuration",
+        message: e?.message || "Impossible d'enregistrer la modification.",
+      });
     }
   };
 
@@ -371,7 +394,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  const handleRotateWebhookSecret = async () => {
+  const executeRotateWebhookSecret = async () => {
     if (!isSuper) return;
     setIsRotatingSecret(true);
     try {
@@ -382,16 +405,47 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       }
       await loadGatewayConfig();
     } catch (err: any) {
-      setAlertModalConfig({
-        isOpen: true,
-        type: 'error',
-        title: 'Erreur',
-        message: 'Impossible de régénérer le secret de webhook : ' + (err?.message || ''),
-      });
+      if (err?.message?.includes('reauthentification') || err?.code === 'unauthenticated' || err?.code === 'failed-precondition') {
+        setReauthModal((prev) => ({
+          isOpen: true,
+          password: '',
+          error: 'Re-authentification requise pour effectuer la rotation du secret.',
+          loading: false,
+          pendingPayload: { rotateWebhookSecret: true },
+        }));
+      } else {
+        setAlertModalConfig({
+          isOpen: true,
+          type: 'error',
+          title: 'Erreur',
+          message: 'Impossible de régénérer le secret de webhook : ' + (err?.message || ''),
+        });
+      }
     } finally {
       setIsRotatingSecret(false);
     }
   };
+
+  const handleRotateWebhookSecret = () => {
+    if (!isSuper) return;
+    setAlertModalConfig({
+      isOpen: true,
+      type: 'confirm',
+      title: 'Régénérer le secret de Webhook ?',
+      message: 'Attention : cette action invalidera immédiatement le secret actuel. Tant que la nouvelle URL générée n’est pas mise à jour dans le tableau de bord SingPay, les paiements ne seront pas notifiés automatiquement. Confirmez-vous la rotation ?',
+      confirmLabel: 'Régénérer',
+      cancelLabel: 'Annuler',
+      onConfirm: () => {
+        executeRotateWebhookSecret();
+      },
+    });
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'PAYMENTS') {
+      setRotatedWebhookUrl(null);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     const handleMetricUpdate = () => setMetricsTick((prev) => prev + 1);
@@ -498,21 +552,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [rejectingKycUser, setRejectingKycUser] = useState<UserProfile | null>(null);
   const [kycRejectionReason, setKycRejectionReason] = useState(KYC_PRESET_REASONS[0]);
 
-  // S-14 : Réinitialisation et journalisation de la consultation de pièce d'identité
+  const onLogKycViewRef = useRef(onLogKycView);
+  useEffect(() => {
+    onLogKycViewRef.current = onLogKycView;
+  }, [onLogKycView]);
+
+  const loggedKycViewUidRef = useRef<string | null>(null);
+
+  // S-14 : Réinitialisation et journalisation de la consultation de pièce d'identité (R2, R4)
   useEffect(() => {
     if (previewKycUser) {
-      setKycImageLoaded(false);
-      setKycImageError(false);
-      if (!isValidStorageUrl(previewKycUser.idDocumentUrl)) {
-        setKycImageError(true);
+      if (loggedKycViewUidRef.current !== previewKycUser.id) {
+        loggedKycViewUidRef.current = previewKycUser.id;
+        setKycImageLoaded(false);
+        setKycImageError(false);
+        if (!isValidStorageUrl(previewKycUser.idDocumentUrl)) {
+          setKycImageError(true);
+        }
+        if (onLogKycViewRef.current) {
+          Promise.resolve(onLogKycViewRef.current(previewKycUser.id)).catch((err) => {
+            console.warn('Erreur logKycView:', err);
+          });
+        }
       }
-      if (onLogKycView) {
-        Promise.resolve(onLogKycView(previewKycUser.id)).catch((err) => {
-          console.warn('Erreur logKycView:', err);
-        });
-      }
+    } else {
+      loggedKycViewUidRef.current = null;
     }
-  }, [previewKycUser?.id, onLogKycView]);
+  }, [previewKycUser?.id]);
 
   // I-08 : Constantes déplacées au niveau module dans utils/ads.ts
   const PRESET_REASONS = MODERATION_PRESET_REASONS;
@@ -792,7 +858,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       console.error('Erreur approbation:', err);
       setAlertModalConfig({
         isOpen: true,
-        type: 'alert',
+        type: 'error',
         title: "Échec de l'approbation",
         message: err.message || "Impossible d'approuver cette annonce.",
       });
@@ -816,7 +882,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       console.error('Erreur rejet annonce:', err);
       setAlertModalConfig({
         isOpen: true,
-        type: 'alert',
+        type: 'error',
         title: 'Échec du rejet',
         message: err.message || "Impossible de rejeter cette annonce.",
       });
@@ -839,7 +905,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       console.error('Erreur rejet extension:', err);
       setAlertModalConfig({
         isOpen: true,
-        type: 'alert',
+        type: 'error',
         title: "Échec du refus de prolongation",
         message: err.message || "Impossible de refuser cette prolongation.",
       });
@@ -863,7 +929,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           console.error('Erreur approbation KYC:', err);
           setAlertModalConfig({
             isOpen: true,
-            type: 'alert',
+            type: 'error',
             title: 'Échec de validation KYC',
             message: err.message || "Impossible de valider la pièce.",
           });
@@ -882,7 +948,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (!finalReason || finalReason.length < 5) {
       setAlertModalConfig({
         isOpen: true,
-        type: 'alert',
+        type: 'error',
         title: 'Motif insuffisant',
         message: 'Veuillez sélectionner ou renseigner un motif de rejet explicite (minimum 5 caractères).',
       });
@@ -897,7 +963,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       console.error('Erreur rejet KYC:', err);
       setAlertModalConfig({
         isOpen: true,
-        type: 'alert',
+        type: 'error',
         title: 'Échec du rejet KYC',
         message: err.message || "Impossible de rejeter ce document KYC.",
       });
@@ -922,7 +988,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         } catch (err: any) {
           setAlertModalConfig({
             isOpen: true,
-            type: 'alert',
+            type: 'error',
             title: 'Erreur exonération',
             message: err.message || "Impossible de modifier l'exonération.",
           });
@@ -947,7 +1013,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         } catch (err: any) {
           setAlertModalConfig({
             isOpen: true,
-            type: 'alert',
+            type: 'error',
             title: 'Erreur abonnement',
             message: err.message || "Impossible de modifier l'abonnement.",
           });
@@ -966,7 +1032,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     } catch (err: any) {
       setAlertModalConfig({
         isOpen: true,
-        type: 'alert',
+        type: 'error',
         title: 'Erreur boosters',
         message: err.message || 'Impossible de modifier le solde de boosters.',
       });
@@ -986,7 +1052,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     } catch (err: any) {
       setAlertModalConfig({
         isOpen: true,
-        type: 'alert',
+        type: 'error',
         title: 'Erreur résolution',
         message: err.message || 'Impossible de marquer ce signalement comme résolu.',
       });
@@ -1003,7 +1069,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     } catch (err: any) {
       setAlertModalConfig({
         isOpen: true,
-        type: 'alert',
+        type: 'error',
         title: 'Erreur classement',
         message: err.message || 'Impossible de classer ce signalement.',
       });
@@ -1236,11 +1302,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <Smartphone className="w-4 h-4" />
               <span>Passerelle SingPay</span>
               <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
-                gatewayConfig.singpayClientId && gatewayConfig.singpayClientSecret
+                gatewayConfig.clientId && (gatewayConfig.hasClientSecret || gatewayConfig.clientSecret)
                   ? 'bg-emerald-400 text-slate-950'
                   : 'bg-amber-400 text-slate-950 animate-pulse'
               }`}>
-                {gatewayConfig.singpayClientId && gatewayConfig.singpayClientSecret ? 'Moov Actif' : 'À configurer'}
+                {gatewayConfig.clientId && (gatewayConfig.hasClientSecret || gatewayConfig.clientSecret) ? 'Moov Actif' : 'À configurer'}
               </span>
             </button>
           )}
@@ -1935,7 +2001,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
                     // O-05 & S-16: Statistiques O(1) précalculées par userId
                     const userStats = userStatsMap.get(u.id) || { totalAds: 0, activeAds: 0, totalSpent: 0 };
-                    const isStaff = u.role === 'ADMIN' || u.role === 'SUPER_ADMIN' || u.role === 'SUPER ADMIN';
+                    const isStaff = u.role === 'ADMIN' || u.role === 'SUPER_ADMIN';
 
                     return (
                       <tr key={u.id} className="hover:bg-slate-50/70 transition-colors">
@@ -1948,7 +2014,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             <div>
                               <span className="font-extrabold text-slate-900 block">{u.name}</span>
                               <span className="text-[10px] text-slate-400">
-                                {u.role === 'ADMIN' ? '👑 Modérateur' : u.role === 'SUPER_ADMIN' || u.role === 'SUPER ADMIN' ? '👑 Super Admin' : 'Annonceur'}
+                                {u.role === 'ADMIN' ? '👑 Modérateur' : u.role === 'SUPER_ADMIN' ? '👑 Super Admin' : 'Annonceur'}
                                 {u.createdAt ? ` • Inscrit le ${new Date(u.createdAt).toLocaleDateString('fr-FR')}` : ''}
                               </span>
                             </div>
@@ -2150,7 +2216,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         {isSuper && (
                           <td className="p-3">
                             <div className="space-y-1.5">
-                              {u.role === 'SUPER_ADMIN' || u.role === 'SUPER ADMIN' ? (
+                              {u.role === 'SUPER_ADMIN' ? (
                                 <div className="space-y-0.5">
                                   <span className="bg-amber-100 text-amber-950 border border-amber-300 font-black text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1 shadow-2xs">
                                     <Crown className="w-3 h-3 text-amber-600 fill-amber-500" />
@@ -2673,6 +2739,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           type="button"
                           onClick={() => {
                             setAlertModalConfig({
+                              isOpen: true,
                               type: 'confirm',
                               title: 'Réinitialiser le compteur SMS',
                               message: 'Voulez-vous réinitialiser le compteur de SMS journalier et global à 0 ?',
@@ -2838,6 +2905,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           type="button"
                           onClick={() => {
                             setAlertModalConfig({
+                              isOpen: true,
                               type: 'confirm',
                               title: 'Réinitialiser les téléchargements',
                               message: 'Voulez-vous réinitialiser le compteur de téléchargements et de bande passante à 0 ?',
@@ -3382,9 +3450,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   type="button"
                   onClick={() => {
                     if (gatewayConfig.webhookUrl) {
-                      navigator.clipboard.writeText(gatewayConfig.webhookUrl);
-                      setCopiedWebhook(true);
-                      setTimeout(() => setCopiedWebhook(false), 2000);
+                      navigator.clipboard.writeText(gatewayConfig.webhookUrl)
+                        .then(() => {
+                          setCopiedWebhook(true);
+                          setTimeout(() => setCopiedWebhook(false), 2000);
+                        })
+                        .catch((err) => console.warn('Erreur écriture presse-papier:', err));
                     }
                   }}
                   className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold shrink-0 cursor-pointer"
@@ -3407,9 +3478,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        navigator.clipboard.writeText(rotatedWebhookUrl);
-                        setCopiedWebhook(true);
-                        setTimeout(() => setCopiedWebhook(false), 2000);
+                        navigator.clipboard.writeText(rotatedWebhookUrl)
+                          .then(() => {
+                            setCopiedWebhook(true);
+                            setTimeout(() => setCopiedWebhook(false), 2000);
+                          })
+                          .catch((err) => console.warn('Erreur écriture presse-papier:', err));
                       }}
                       className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shrink-0 cursor-pointer"
                     >
@@ -3836,13 +3910,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </div>
                       )}
                       <img
+                        key={previewKycUser.idDocumentUrl}
                         src={previewKycUser.idDocumentUrl}
                         alt="Pièce d'identité"
                         referrerPolicy="no-referrer"
-                        loading="lazy"
                         onLoad={() => setKycImageLoaded(true)}
                         onError={() => setKycImageError(true)}
-                        className={`max-h-[60vh] max-w-full object-contain rounded-xl shadow-sm ${!kycImageLoaded ? 'hidden' : 'block'}`}
+                        className={`max-h-[60vh] max-w-full object-contain rounded-xl shadow-sm transition-opacity duration-200 ${!kycImageLoaded ? 'opacity-0 absolute pointer-events-none' : 'opacity-100'}`}
                       />
                     </>
                   )}
