@@ -14,6 +14,9 @@ interface State {
 }
 
 export class ErrorBoundary extends Component<Props, State> {
+  // @types/react n'est pas installe : tsc lit react/index.js (allowJs) qui ne declare pas props
+  declare readonly props: Readonly<Props>;
+
   public state: State = {
     hasError: false,
     error: null,
