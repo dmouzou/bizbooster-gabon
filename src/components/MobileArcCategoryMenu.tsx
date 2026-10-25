@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { X, Building2, Car, Package, Briefcase, GraduationCap, Heart, Search, UserCheck } from 'lucide-react';
+import { X, Building2, Car, Package, Briefcase, GraduationCap, Heart, Search, UserCheck, PartyPopper } from 'lucide-react';
 import { MainCategory } from '../types';
 
 interface MobileArcCategoryMenuProps {
@@ -75,6 +75,13 @@ const CATEGORIES: CategoryItem[] = [
     icon: <UserCheck className="w-4 h-4" />,
     color: 'teal',
   },
+  {
+    id: 'EVENEMENTS',
+    label: '9. ÉVÉNEMENTS',
+    subtitle: 'Mariages, Soirées, Anniversaires, Galas',
+    icon: <PartyPopper className="w-4 h-4" />,
+    color: 'fuchsia',
+  },
 ];
 
 export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
@@ -112,7 +119,7 @@ export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
       />
 
       {/* 2. Container avec menu catégorie et bouton de fermeture en croix placé en bas */}
-      <div className="relative z-20 w-full max-w-sm mx-auto px-3.5 flex flex-col items-center gap-2.5 max-h-[92vh]">
+      <div className="relative z-20 w-full max-w-sm mx-auto px-3.5 flex flex-col items-center gap-2.5 max-h-[calc(100dvh-1.5rem)] pb-[env(safe-area-inset-bottom)]">
         {/* Header : Texte d'indication positionné au-dessus sans aucun chevauchement */}
         <div className="shrink-0 text-center pb-0.5 pointer-events-none">
           <span className="inline-flex items-center gap-1.5 bg-white text-emerald-800 text-[11px] font-bold px-4 py-1.5 rounded-full border border-emerald-200/80 shadow-md">
@@ -122,7 +129,7 @@ export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
         </div>
 
         {/* Colonne verticale des catégories dans un conteneur blanc élégant */}
-        <div className="w-full max-h-[73vh] overflow-y-auto space-y-2 py-2.5 px-2.5 overscroll-contain bg-white/95 backdrop-blur-xl rounded-3xl border border-slate-200 shadow-2xl [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full">
+        <div className="w-full min-h-0 overflow-y-auto space-y-2 [@media(max-height:700px)]:space-y-1.5 py-2.5 px-2.5 overscroll-contain bg-white/95 backdrop-blur-xl rounded-3xl border border-slate-200 shadow-2xl [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full">
           {CATEGORIES.map((cat) => {
             const isSelected = activeCategory === cat.id;
             const count = categoryCounts[cat.id] || 0;
@@ -135,7 +142,7 @@ export const MobileArcCategoryMenu: React.FC<MobileArcCategoryMenuProps> = ({
                   onSelectCategory(cat.id);
                   onClose();
                 }}
-                className={`w-full flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl border text-left transition-all active:scale-[0.98] cursor-pointer ${
+                className={`w-full flex items-center justify-between gap-2.5 px-3.5 py-2.5 [@media(max-height:700px)]:py-2 rounded-2xl border text-left transition-all active:scale-[0.98] cursor-pointer ${
                   isSelected
                     ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-500 ring-2 ring-emerald-300 shadow-lg shadow-emerald-600/20'
                     : 'bg-white text-slate-800 border-slate-200/90 hover:bg-slate-50 hover:border-slate-300 shadow-xs'

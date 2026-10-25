@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw, Edit3, Sparkles, CheckCircle2, ShieldCheck, Heart, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Ad } from '../types';
-import { formatFCFA, formatRemainingTime, getWhatsAppUrl, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, getWhatsAppUrl, formatPriceDisplay, formatAdPrice, formatEventDate, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
 import { isAdBoostFeatured, recordAdInteraction } from '../utils/personalization';
 import { isAdVipCornerEligible } from '../utils/vipCorner';
 import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
@@ -75,6 +75,7 @@ export const AdCard: React.FC<AdCardProps> = ({
 
   const isNecrologie = ad.mainCategory === 'NECROLOGIE';
   const isAvisRecherche = ad.mainCategory === 'AVIS_DE_RECHERCHE';
+  const isEvenement = ad.mainCategory === 'EVENEMENTS' && !!ad.eventData;
 
   // Point 4: Description limitée au maximum à 300 caractères avec césure propre
   const displayDescription = React.useMemo(() => {
@@ -408,6 +409,28 @@ export const AdCard: React.FC<AdCardProps> = ({
             </div>
           )}
 
+          {isEvenement && ad.eventData && (
+            <div className="bg-fuchsia-50 text-slate-900 rounded-xl p-3 border border-fuchsia-200 space-y-1 text-[11px] mb-3 shadow-xs">
+              <div className="font-black text-fuchsia-900 text-xs flex items-center gap-1.5">
+                <span>🎉</span>
+                <span className="line-clamp-1">{ad.eventData.eventType}</span>
+              </div>
+              <div className="text-slate-700 flex items-start gap-1">
+                <span className="shrink-0">📅</span>
+                <span className="capitalize-first">
+                  {formatEventDate(ad.eventData.eventDate)}
+                  {ad.eventData.eventTime ? ` à ${ad.eventData.eventTime}` : ''}
+                </span>
+              </div>
+              {ad.eventData.venue && (
+                <div className="text-slate-700 flex items-start gap-1">
+                  <span className="shrink-0">📍</span>
+                  <span className="line-clamp-1">{ad.eventData.venue}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Point 3: Informations Avis de recherche visibles sur l'annonce en ligne */}
           {isAvisRecherche && (
             <div className="bg-red-50 text-slate-900 rounded-xl p-3 border border-red-200 space-y-1.5 text-xs mb-3 shadow-xs">
@@ -469,7 +492,7 @@ export const AdCard: React.FC<AdCardProps> = ({
                 </span>
                 <div className="flex items-baseline gap-1">
                   <span className="text-base sm:text-lg font-black tracking-tight text-emerald-700">
-                    {formatPriceDisplay(ad.price, ad.priceMax)}
+                    {formatAdPrice(ad)}
                   </span>
                   {ad.priceUnit && ad.priceUnit !== 'total' && (
                     <span className="text-xs font-semibold text-slate-500">

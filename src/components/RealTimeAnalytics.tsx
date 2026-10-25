@@ -48,6 +48,7 @@ export const OFFICIAL_CATEGORIES: { key: MainCategory; label: string; color: str
   { key: 'NECROLOGIE', label: 'Nécrologie', color: '#64748b' },
   { key: 'AVIS_DE_RECHERCHE', label: 'Avis de Recherche', color: '#dc2626' },
   { key: 'AUTRES_EMPLOIS', label: 'Autres Emplois', color: '#0d9488' },
+  { key: 'EVENEMENTS', label: 'Événements', color: '#c026d3' },
 ];
 
 export const RealTimeAnalytics: React.FC<RealTimeAnalyticsProps> = ({ ads, users = [] }) => {
@@ -141,7 +142,7 @@ export const RealTimeAnalytics: React.FC<RealTimeAnalyticsProps> = ({ ads, users
     ];
   }, [realAds]);
 
-  // 4. Répartition complète sur les 8 catégories officielles (I-01)
+  // 4. Répartition complète sur les catégories officielles (I-01)
   const categoryChartData = useMemo(() => {
     const counts: Record<MainCategory, number> = {
       IMMOBILIER: 0,
@@ -152,6 +153,7 @@ export const RealTimeAnalytics: React.FC<RealTimeAnalyticsProps> = ({ ads, users
       NECROLOGIE: 0,
       AVIS_DE_RECHERCHE: 0,
       AUTRES_EMPLOIS: 0,
+      EVENEMENTS: 0,
     };
 
     realAds.forEach((ad) => {

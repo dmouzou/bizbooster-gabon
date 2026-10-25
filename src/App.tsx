@@ -21,6 +21,7 @@ import {
   ArrowUpDown,
   ArrowUp,
   AlertCircle,
+  PartyPopper,
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CategoryBar } from './components/CategoryBar';
@@ -49,7 +50,7 @@ const PhoneAuthModal = React.lazy(() => import('./components/PhoneAuthModal').th
 import { isAdOwner } from './utils/formatters';
 import { sortAdsPersonalized, sortAdsRecent, sortAdsByPriceAsc, recordCategoryInterest } from './utils/personalization';
 import { isAdVipCornerEligible, VIP_CORNER_INFO } from './utils/vipCorner';
-import { AVIS_RECHERCHE_CATEGORIES, AUTRES_EMPLOIS_SUBCATEGORIES } from './data/categoriesData';
+import { AVIS_RECHERCHE_CATEGORIES, AUTRES_EMPLOIS_SUBCATEGORIES, EVENT_TYPES } from './data/categoriesData';
 import {
   Ad,
   JobAdKind,
@@ -70,7 +71,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment, writeBatch, deleteField, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from './services/firebase';
-import { isTestAd } from './utils/ads';
+import { isTestAd, isEventPast } from './utils/ads';
 import { markNotificationAsSeenLocally, rejectionNotifId } from './services/notificationService';
 // S-11 : Lazy-loading d'AdminApp pour ne pas livrer le bundle d'administration à tous les visiteurs
 const AdminApp = React.lazy(() => import('./AdminApp'));
@@ -90,7 +91,8 @@ const CATEGORY_NAMES_MAP: Record<string, string> = {
   COURS_A_DOMICILE: 'cours a domicile soutien scolaire repetiteur tuteur enseignant mathematiques physique chimie francais anglais philosophie informatique',
   NECROLOGIE: 'necrologie avis d obseques deces hommage disparition veillee mortuaire enterrement inhumation funerailles eglise cimetiere',
   AVIS_DE_RECHERCHE: 'avis de recherche alerte disparition personne disparue objet egare animal perdu document officiel titre foncier temoin recherche recompense signalement urgence',
-  AUTRES_EMPLOIS: 'autres emplois offre d emploi demandeur d emploi stage alternance freelance prestations interim travail recrutement cv curriculum vitae'
+  AUTRES_EMPLOIS: 'autres emplois offre d emploi demandeur d emploi stage alternance freelance prestations interim travail recrutement cv curriculum vitae',
+  EVENEMENTS: 'evenements evenement mariage soiree anniversaire gala ceremonie concert spectacle bapteme communion conference seminaire fete reception salle billet entree'
 };
 
 function doesAdMatchSearchQuery(ad: Ad, rawQuery: string): boolean {
@@ -131,6 +133,10 @@ function doesAdMatchSearchQuery(ad: Ad, rawQuery: string): boolean {
     ad.autresEmploisData?.subCategory || '',
     ad.autresEmploisData?.profession || '',
     ad.autresEmploisData?.contractType || '',
+    ad.eventData?.eventType || '',
+    ad.eventData?.venue || '',
+    ad.eventData?.organizer || '',
+    ad.eventData?.eventDate || '',
     ad.cvFileName || '',
     ad.cvFileType || ''
   ];
@@ -547,6 +553,9 @@ function PublicApp({
   // Autres Emplois specific filters (Point 2)
   const [autresEmploisFilterSub, setAutresEmploisFilterSub] = useState<string>('ALL');
 
+  // Événements specific filters
+  const [eventFilterType, setEventFilterType] = useState<string>('ALL');
+
   // Modals state
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [isCguModalOpen, setIsCguModalOpen] = useState(false);
@@ -857,6 +866,7 @@ function PublicApp({
       (ad) =>
         ad.status === 'ACTIVE' &&
         new Date(ad.expiresAt).getTime() > now &&
+        !isEventPast(ad, now) &&
         (showTestAds || isAdFromRegisteredAdvertiser(ad))
     ).length;
   }, [ads, showTestAds, registeredUserIds, registeredPhones]);
@@ -874,11 +884,13 @@ function PublicApp({
       NECROLOGIE: 0,
       AVIS_DE_RECHERCHE: 0,
       AUTRES_EMPLOIS: 0,
+      EVENEMENTS: 0,
     };
     ads.forEach((ad) => {
       if (
         ad.status === 'ACTIVE' &&
         new Date(ad.expiresAt).getTime() > now &&
+        !isEventPast(ad, now) &&
         (showTestAds || isAdFromRegisteredAdvertiser(ad))
       ) {
         counts.ALL++;
@@ -911,6 +923,9 @@ function PublicApp({
   const filteredAds = useMemo(() => {
     const now = Date.now();
     const list = ads.filter((ad) => {
+      // Événements dont la date est passée : retirés du catalogue public
+      if (isEventPast(ad, now)) return false;
+
       // Point 3: When test ads are OFF (showTestAds === false), strictly hide any ad whose advertiser is not in the directory
       if (!showTestAds && !isAdFromRegisteredAdvertiser(ad)) {
         return false;
@@ -1089,6 +1104,16 @@ function PublicApp({
         }
       }
 
+      // 11. Specific Événements filters
+      if (activeCategory === 'EVENEMENTS') {
+        if (eventFilterType !== 'ALL') {
+          const adEventType = ad.eventData?.eventType;
+          if (!adEventType || adEventType !== eventFilterType) {
+            return false;
+          }
+        }
+      }
+
       return true;
     });
 
@@ -1112,6 +1137,7 @@ function PublicApp({
     isVipCornerActive,
     avisFilterCategory,
     autresEmploisFilterSub,
+    eventFilterType,
     searchQuery,
     globalTransaction,
     immoTransaction,
@@ -1375,6 +1401,7 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
       'necrologieData',
       'avisRechercheData',
       'autresEmploisData',
+      'eventData',
       'domesticJobType',
       'bricCategory',
       'jobKind',
@@ -1614,6 +1641,9 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
     handleResetEmploiFilters();
     handleResetTutoringFilters();
     handleResetNecroFilters();
+    setAvisFilterCategory('ALL');
+    setAutresEmploisFilterSub('ALL');
+    setEventFilterType('ALL');
   };
 
   // Update user profile in Firestore (for subscriptions, ad packs, free boosts)
@@ -2135,6 +2165,63 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
               </div>
             )}
 
+            {/* Specialized Filters: ÉVÉNEMENTS */}
+            {activeCategory === 'EVENEMENTS' && (
+              <div className="bg-fuchsia-950/90 text-white rounded-2xl p-4 border border-fuchsia-800 shadow-md space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-fuchsia-800/80 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 bg-fuchsia-600 rounded-lg text-white shrink-0">
+                      <PartyPopper className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h4 className="font-black text-sm text-white">
+                        Événements au Gabon
+                      </h4>
+                      <p className="text-[11px] text-fuchsia-200">
+                        Mariages, soirées, anniversaires, galas, concerts et cérémonies à venir. Les événements passés sont retirés automatiquement.
+                      </p>
+                    </div>
+                  </div>
+                  {eventFilterType !== 'ALL' && (
+                    <button
+                      type="button"
+                      onClick={() => setEventFilterType('ALL')}
+                      className="text-xs font-bold text-fuchsia-300 hover:text-white cursor-pointer self-start sm:self-auto"
+                    >
+                      Réinitialiser le filtre ✕
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setEventFilterType('ALL')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      eventFilterType === 'ALL'
+                        ? 'bg-fuchsia-600 text-white shadow-xs'
+                        : 'bg-fuchsia-900/50 hover:bg-fuchsia-900 text-fuchsia-200 border border-fuchsia-800'
+                    }`}
+                  >
+                    Tous les événements
+                  </button>
+                  {EVENT_TYPES.map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setEventFilterType(type)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        eventFilterType === type
+                          ? 'bg-fuchsia-600 text-white shadow-xs'
+                          : 'bg-fuchsia-900/50 hover:bg-fuchsia-900 text-fuchsia-200 border border-fuchsia-800'
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Ads Grid Section Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
               <div>
@@ -2158,6 +2245,8 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
                       ? 'Avis de Recherche & Signalements'
                       : activeCategory === 'AUTRES_EMPLOIS'
                       ? 'Autres Emplois & Recrutement'
+                      : activeCategory === 'EVENEMENTS'
+                      ? 'Événements : Mariages, Soirées & Galas'
                       : 'Offres & Demandes d\'Emploi'}
                   </span>
                   <span className={`${isVipCornerActive ? 'bg-amber-100 text-amber-950 border border-amber-300' : 'bg-emerald-100 text-emerald-800'} text-xs font-bold px-2 py-0.5 rounded-full`}>

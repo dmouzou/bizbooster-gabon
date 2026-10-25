@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Check, X, Building2, Car, Package, Briefcase, GraduationCap, Heart, Search, UserCheck, MapPin } from 'lucide-react';
+import { Sparkles, Check, X, Building2, Car, Package, Briefcase, GraduationCap, Heart, Search, UserCheck, MapPin, PartyPopper } from 'lucide-react';
 import { MainCategory } from '../types';
 import { GABON_PROVINCES } from '../data/gabonLocations';
 
@@ -24,6 +24,7 @@ const CATEGORY_CHOICES: { id: MainCategory; label: string; icon: React.ReactNode
   { id: 'COURS_A_DOMICILE', label: 'Cours à Domicile', icon: <GraduationCap className="w-4 h-4" /> },
   { id: 'NECROLOGIE', label: 'Avis d’Obsèques & Nécrologie', icon: <Heart className="w-4 h-4" /> },
   { id: 'AVIS_DE_RECHERCHE', label: 'Avis de Recherche & Vigilance', icon: <Search className="w-4 h-4" /> },
+  { id: 'EVENEMENTS', label: 'Événements (Mariages, Soirées, Galas)', icon: <PartyPopper className="w-4 h-4" /> },
 ];
 
 export const UserPreferencesModal: React.FC<UserPreferencesModalProps> = ({

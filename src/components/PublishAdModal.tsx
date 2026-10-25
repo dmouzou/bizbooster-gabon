@@ -36,6 +36,7 @@ import {
   UserCheck,
   Crown,
   Download,
+  PartyPopper,
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, collection } from 'firebase/firestore';
@@ -45,6 +46,7 @@ import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
 import {
   Ad,
   AvisRechercheCategory,
+  EventType,
   AvisRechercheData,
   AutresEmploisSubCategory,
   AutresEmploisData,
@@ -77,6 +79,7 @@ import {
   DOMESTIC_JOB_TYPES,
   NECROLOGIE_MINISTRIES,
   AVIS_RECHERCHE_CATEGORIES,
+  EVENT_TYPES,
   AUTRES_EMPLOIS_SUBCATEGORIES,
   PRICING_CONFIG,
   TUTORING_LEVELS,
@@ -142,6 +145,11 @@ const SAMPLE_IMAGE_PRESETS: Record<MainCategory, string[]> = {
   AUTRES_EMPLOIS: [
     'https://images.unsplash.com/photo-1521791136064-7986c2920216?auto=format&fit=crop&w=1000&q=80',
     'https://images.unsplash.com/photo-1586281380349-632531db7ed4?auto=format&fit=crop&w=1000&q=80',
+  ],
+  EVENEMENTS: [
+    'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1000&q=80',
+    'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=1000&q=80',
+    'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?auto=format&fit=crop&w=1000&q=80',
   ],
 };
 
@@ -252,6 +260,14 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
   const [avisRewardAmount, setAvisRewardAmount] = useState<number | ''>('');
   const [avisEmergencyContact, setAvisEmergencyContact] = useState<string>('');
 
+  // Événements specifics
+  const [eventType, setEventType] = useState<EventType>('Mariage');
+  const [eventDate, setEventDate] = useState<string>('');
+  const [eventTime, setEventTime] = useState<string>('');
+  const [eventVenue, setEventVenue] = useState<string>('');
+  const [eventOrganizer, setEventOrganizer] = useState<string>('');
+  const [eventDressCode, setEventDressCode] = useState<string>('');
+
   // Autres Emplois specifics (Point 2)
   const [autresEmploisSubCategory, setAutresEmploisSubCategory] = useState<AutresEmploisSubCategory>("Demandeur d'emploi");
   const [autresEmploisProfession, setAutresEmploisProfession] = useState<string>('');
@@ -309,6 +325,9 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
         return autresEmploisSubCategory
           ? `Autres Emplois - ${autresEmploisSubCategory}${autresEmploisProfession ? ` (${autresEmploisProfession})` : ''}`
           : 'Autres Emplois';
+      }
+      case 'EVENEMENTS': {
+        return eventType ? `Événements - ${eventType}` : 'Événements';
       }
       default:
         return 'Détails de votre annonce';
@@ -477,6 +496,12 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     if (existingDraft.necroCeremonyLocation) setNecroCeremonyLocation(existingDraft.necroCeremonyLocation);
     if (existingDraft.necroFuneralProgram) setNecroFuneralProgram(existingDraft.necroFuneralProgram);
     if (existingDraft.necroFamilyContact) setNecroFamilyContact(existingDraft.necroFamilyContact);
+    if (existingDraft.eventType) setEventType(existingDraft.eventType);
+    if (existingDraft.eventDate) setEventDate(existingDraft.eventDate);
+    if (existingDraft.eventTime) setEventTime(existingDraft.eventTime);
+    if (existingDraft.eventVenue) setEventVenue(existingDraft.eventVenue);
+    if (existingDraft.eventOrganizer) setEventOrganizer(existingDraft.eventOrganizer);
+    if (existingDraft.eventDressCode) setEventDressCode(existingDraft.eventDressCode);
     if (existingDraft.title !== undefined) setTitle(existingDraft.title);
     if (existingDraft.price !== undefined) setPrice(existingDraft.price);
     if (existingDraft.priceUnit) setPriceUnit(existingDraft.priceUnit);
@@ -569,6 +594,12 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
           necroCeremonyLocation,
           necroFuneralProgram,
           necroFamilyContact,
+          eventType,
+          eventDate,
+          eventTime,
+          eventVenue,
+          eventOrganizer,
+          eventDressCode,
           title,
           price,
           priceUnit,
@@ -614,6 +645,12 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     necroCeremonyLocation,
     necroFuneralProgram,
     necroFamilyContact,
+    eventType,
+    eventDate,
+    eventTime,
+    eventVenue,
+    eventOrganizer,
+    eventDressCode,
     title,
     price,
     priceUnit,
@@ -906,6 +943,11 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
       setPriceUnit('total');
       setPrice(0);
       setTransactionType('VENTE');
+    } else if (cat === 'EVENEMENTS') {
+      // Prix d'entrée : 0 = entrée libre
+      setPriceUnit('total');
+      setPrice(0);
+      setTransactionType('VENTE');
     } else if (cat === 'AUTRES_EMPLOIS') {
       setPriceUnit('mois');
       if (price === 0 || price === '') setPrice(250000);
@@ -1036,6 +1078,17 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                 lastSeenLocation: avisLastSeenLocation,
                 contactEmergency: avisEmergencyContact,
                 rewardAmount: Number(avisRewardAmount) || undefined,
+              }
+            : undefined,
+        eventData:
+          mainCategory === 'EVENEMENTS'
+            ? {
+                eventType,
+                eventDate,
+                eventTime: eventTime || undefined,
+                venue: eventVenue.trim() || undefined,
+                organizer: eventOrganizer.trim() || undefined,
+                dressCode: eventDressCode.trim() || undefined,
               }
             : undefined,
         autresEmploisData:
@@ -1259,7 +1312,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
                   Choisissez la catégorie principale (Section B)
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                   <button
                     type="button"
                     onClick={() => handleMainCategoryChange('IMMOBILIER')}
@@ -1362,6 +1415,19 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                   >
                     <UserCheck className="w-5 h-5 mx-auto mb-1 text-teal-600" />
                     <span className="text-xs block">AUTRES EMPLOIS</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMainCategoryChange('EVENEMENTS')}
+                    className={`p-3 rounded-2xl border text-center transition-all col-span-2 sm:col-span-1 ${
+                      mainCategory === 'EVENEMENTS'
+                        ? 'bg-fuchsia-50 border-fuchsia-600 ring-2 ring-fuchsia-400 text-fuchsia-950 font-black'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-bold'
+                    }`}
+                  >
+                    <PartyPopper className="w-5 h-5 mx-auto mb-1 text-fuchsia-600" />
+                    <span className="text-xs block">ÉVÉNEMENTS</span>
                   </button>
                 </div>
               </div>
@@ -1929,6 +1995,109 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                 </div>
               )}
 
+              {/* SPECIFIC FIELDS: ÉVÉNEMENTS */}
+              {mainCategory === 'EVENEMENTS' && (
+                <div className="bg-fuchsia-50/70 border border-fuchsia-300 rounded-2xl p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <PartyPopper className="w-5 h-5 text-fuchsia-700 shrink-0" />
+                    <span className="font-black text-xs text-fuchsia-950 uppercase tracking-wide">
+                      Événement : Mariage, Soirée, Anniversaire, Gala...
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Type d'événement *
+                    </label>
+                    <select
+                      value={eventType}
+                      onChange={(e) => setEventType(e.target.value as EventType)}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-fuchsia-600"
+                      id="publish-event-type-select"
+                    >
+                      {EVENT_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {type}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Date de l'événement *
+                      </label>
+                      <input
+                        type="date"
+                        value={eventDate}
+                        min={new Date().toISOString().slice(0, 10)}
+                        onChange={(e) => setEventDate(e.target.value)}
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-fuchsia-600"
+                        id="publish-event-date-input"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Heure de début (facultatif)
+                      </label>
+                      <input
+                        type="time"
+                        value={eventTime}
+                        onChange={(e) => setEventTime(e.target.value)}
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-fuchsia-600"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Lieu : salle, établissement ou adresse *
+                    </label>
+                    <input
+                      type="text"
+                      value={eventVenue}
+                      onChange={(e) => setEventVenue(e.target.value)}
+                      maxLength={120}
+                      placeholder="Ex: Salle des fêtes de la Sablière, Libreville"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-fuchsia-600"
+                      id="publish-event-venue-input"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Organisateur ou famille (facultatif)
+                      </label>
+                      <input
+                        type="text"
+                        value={eventOrganizer}
+                        onChange={(e) => setEventOrganizer(e.target.value)}
+                        maxLength={80}
+                        placeholder="Ex: Famille Mba, Agence Prestige Events"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-fuchsia-600"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Tenue exigée (facultatif)
+                      </label>
+                      <input
+                        type="text"
+                        value={eventDressCode}
+                        onChange={(e) => setEventDressCode(e.target.value)}
+                        maxLength={60}
+                        placeholder="Ex: Tenue de soirée, Pagne traditionnel"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-fuchsia-600"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* SPECIFIC FIELDS: AUTRES EMPLOIS (Point 2) */}
               {mainCategory === 'AUTRES_EMPLOIS' && (
                 <div className="bg-teal-50/70 border border-teal-300 rounded-2xl p-4 space-y-4">
@@ -2246,6 +2415,8 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                             ? 'Salaire désiré (en FCFA) *'
                             : isEmployerOffer
                             ? 'Salaire proposé (en FCFA) *'
+                            : mainCategory === 'EVENEMENTS'
+                            ? "Prix d'entrée / billet (en FCFA, 0 = entrée libre)"
                             : 'Prix (en FCFA) *'}
                         </label>
                         <input
@@ -2260,7 +2431,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                               setPrice(isNaN(parsed) ? '' : parsed);
                             }
                           }}
-                          placeholder={isJob ? 'Ex: 150000' : 'Ex: 250000'}
+                          placeholder={isJob ? 'Ex: 150000' : mainCategory === 'EVENEMENTS' ? 'Ex: 5000 (0 si entrée libre)' : 'Ex: 250000'}
                           className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
                           id="publish-price-input"
                         />
@@ -2976,6 +3147,12 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                           {avisCategory}
                         </span>
                       )}
+                      {mainCategory === 'EVENEMENTS' && (
+                        <span className="text-[10px] font-bold bg-fuchsia-900/80 text-fuchsia-100 px-2 py-0.5 rounded-md">
+                          {eventType}
+                          {eventDate ? ` • ${eventDate.split('-').reverse().join('/')}` : ''}
+                        </span>
+                      )}
                       {mainCategory === 'AUTRES_EMPLOIS' && (
                         <span className="text-[10px] font-bold bg-teal-800 text-teal-100 px-2 py-0.5 rounded-md">
                           {(autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') ? "Demandeur d'emploi" : "Offre d'emploi"}
@@ -3014,7 +3191,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
 
                         return (
                           <div className="flex items-center gap-1 text-emerald-400 font-black">
-                            <span>{formatPriceDisplay(Number(price) || 0, isEmployer && priceMax ? Number(priceMax) : undefined)}</span>
+                            <span>{mainCategory === 'EVENEMENTS' && !(Number(price) > 0) ? 'Entrée libre' : formatPriceDisplay(Number(price) || 0, isEmployer && priceMax ? Number(priceMax) : undefined)}</span>
                             {priceUnit && (
                               <span className="text-[11px] font-normal text-emerald-200">/ {formatPriceUnit(priceUnit, isJobCategory)}</span>
                             )}
@@ -3472,8 +3649,30 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                   setMediaError(null);
                   setStep(2);
                 } else if (step === 2) {
-                  // Price validation (Point 4: cannot be empty or 0, except for NECROLOGIE & AVIS_DE_RECHERCHE)
-                    if (mainCategory !== 'NECROLOGIE' && mainCategory !== 'AVIS_DE_RECHERCHE') {
+                  // Événements : date et lieu obligatoires, prix d'entrée facultatif (0 = entrée libre)
+                  if (mainCategory === 'EVENEMENTS') {
+                    const todayIso = new Date().toISOString().slice(0, 10);
+                    if (!eventDate) {
+                      setMediaError("Veuillez indiquer la date de l'événement.");
+                      document.getElementById('publish-event-date-input')?.focus();
+                      return;
+                    }
+                    if (eventDate < todayIso) {
+                      setMediaError("La date de l'événement ne peut pas être dans le passé.");
+                      document.getElementById('publish-event-date-input')?.focus();
+                      return;
+                    }
+                    if (!eventVenue.trim()) {
+                      setMediaError("Veuillez indiquer le lieu de l'événement (salle, établissement ou adresse).");
+                      document.getElementById('publish-event-venue-input')?.focus();
+                      return;
+                    }
+                    if (price === '' || Number.isNaN(Number(price)) || Number(price) < 0) {
+                      setPrice(0);
+                    }
+                  }
+                  // Price validation (Point 4: cannot be empty or 0, except for NECROLOGIE, AVIS_DE_RECHERCHE & ÉVÉNEMENTS)
+                    if (mainCategory !== 'NECROLOGIE' && mainCategory !== 'AVIS_DE_RECHERCHE' && mainCategory !== 'EVENEMENTS') {
                     if (price === '' || price === null || price === undefined || String(price).trim() === '') {
                       setMediaError(
                         mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS'
@@ -3559,6 +3758,8 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                       genTitle = `Nécrologie - ${necroDeceasedName || 'Avis de décès'} (${necroMinistry})`;
                     } else if (mainCategory === 'AVIS_DE_RECHERCHE') {
                       genTitle = `Avis de Recherche - ${avisCategory}: ${avisTargetName || 'Signalement'}`;
+                    } else if (mainCategory === 'EVENEMENTS') {
+                      genTitle = `${eventType} - ${eventVenue.trim() || 'Événement'}`;
                     } else if (mainCategory === 'AUTRES_EMPLOIS') {
                       genTitle = `${(autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI') ? "Demandeur d'emploi" : "Offre d'emploi"} - ${autresEmploisProfession || 'Poste à pourvoir'}`;
                     }

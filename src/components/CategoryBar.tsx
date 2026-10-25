@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Building2, Car, Package, Briefcase, Layers, ChevronLeft, ChevronRight, GraduationCap, Heart, Search, UserCheck, Grid } from 'lucide-react';
+import { Building2, Car, Package, Briefcase, Layers, ChevronLeft, ChevronRight, GraduationCap, Heart, Search, UserCheck, Grid, PartyPopper } from 'lucide-react';
 import { MainCategory } from '../types';
 
 interface CategoryBarProps {
@@ -195,6 +195,12 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
       subtitle: 'Demandeurs avec CV, Offres, Stages',
       icon: <UserCheck className="w-5 h-5" />,
     },
+    {
+      id: 'EVENEMENTS',
+      label: '9. ÉVÉNEMENTS',
+      subtitle: 'Mariages, Soirées, Anniversaires, Galas',
+      icon: <PartyPopper className="w-5 h-5" />,
+    },
   ];
 
   return (
@@ -265,7 +271,7 @@ export const CategoryBar: React.FC<CategoryBarProps> = ({
                 </span>
                 <span className="text-[10px] text-slate-500 block truncate">
                   {activeCategory === 'ALL'
-                    ? 'Choisir parmi les 8 rubriques'
+                    ? `Choisir parmi les ${categories.length} rubriques`
                     : `Sélection : ${categories.find((c) => c.id === activeCategory)?.label || activeCategory}`}
                 </span>
               </div>

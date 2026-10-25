@@ -13,6 +13,17 @@ export function isTestAd(ad: Ad): boolean {
 }
 
 /**
+ * isEventPast : une annonce Événements dont la date est passée (fin de journée locale) n'est plus affichée au catalogue public.
+ */
+export function isEventPast(ad: Pick<Ad, 'mainCategory' | 'eventData'>, now: number = Date.now()): boolean {
+  if (ad.mainCategory !== 'EVENEMENTS') return false;
+  const day = ad.eventData?.eventDate;
+  if (!day) return false;
+  const endOfDay = new Date(`${day}T23:59:59`).getTime();
+  return !Number.isNaN(endOfDay) && endOfDay < now;
+}
+
+/**
  * adBelongsToUser (S-16) : Vérification d'appartenance stricte par identifiant utilisateur (userId).
  */
 export function adBelongsToUser(ad: Ad, user: UserProfile): boolean {

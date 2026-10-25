@@ -10,7 +10,8 @@ export type MainCategory =
   | 'COURS_A_DOMICILE' 
   | 'NECROLOGIE'
   | 'AVIS_DE_RECHERCHE'
-  | 'AUTRES_EMPLOIS';
+  | 'AUTRES_EMPLOIS'
+  | 'EVENEMENTS';
 
 export type TransactionType = 'VENTE' | 'LOCATION' | 'EMPLOYER' | 'A_EMPLOYER' | 'CHERCHE_EMPLOI';
 export type JobAdKind = 'OFFRE_EMPLOI' | 'DEMANDE_EMPLOI'; // Point 8: Offre (Recruteur cherche un employé) vs Demande (Candidat cherche à travailler)
@@ -131,6 +132,26 @@ export interface AutresEmploisData {
   jobDocFileSize?: number;
 }
 
+// Événements : mariages, soirées, anniversaires, galas, etc.
+export type EventType =
+  | 'Mariage'
+  | 'Soirée'
+  | 'Anniversaire'
+  | 'Gala & Cérémonie'
+  | 'Concert & Spectacle'
+  | 'Baptême & Communion'
+  | 'Conférence & Séminaire'
+  | 'Autre événement';
+
+export interface EventData {
+  eventType: EventType;
+  eventDate: string; // YYYY-MM-DD
+  eventTime?: string; // HH:mm
+  venue?: string; // Salle, établissement ou lieu de l'événement
+  organizer?: string; // Organisateur ou famille
+  dressCode?: string;
+}
+
 export type PaymentOperator = 'AIRTEL_MONEY' | 'MOOV_MONEY';
 
 export interface LocationHierarchy {
@@ -178,6 +199,7 @@ export interface Ad {
   necrologieData?: NecrologieData; // For Nécrologie
   avisRechercheData?: AvisRechercheData; // Point 2: Avis de Recherche
   autresEmploisData?: AutresEmploisData; // Point 2: Autres Emplois
+  eventData?: EventData; // Événements
   
   // Point 2: Document joint (.pdf, .docx, .md) : CV pour demandeur d'emploi OU Fiche de poste pour donneur d'emploi (optionnel)
   cvUrl?: string;

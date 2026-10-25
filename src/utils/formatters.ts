@@ -187,7 +187,22 @@ export function getPriceOrSalaryLabel(ad: {
   if (isJobAd(ad)) {
     return isJobSeekerAd(ad) ? 'Salaire désiré' : 'Salaire proposé';
   }
+  if (ad.mainCategory === 'EVENEMENTS') return "Tarif d'entrée";
   return 'Prix demandé';
+}
+
+/** Prix affiché d'une annonce : un événement à 0 FCFA est une « Entrée libre ». */
+export function formatAdPrice(ad: { mainCategory: string; price: number; priceMax?: number }): string {
+  if (ad.mainCategory === 'EVENEMENTS' && !(ad.price > 0)) return 'Entrée libre';
+  return formatPriceDisplay(ad.price, ad.priceMax);
+}
+
+/** Date d'événement (YYYY-MM-DD) en français : « samedi 14 novembre 2026 ». */
+export function formatEventDate(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(`${iso}T12:00:00`);
+  if (isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(d);
 }
 
 export function formatPriceUnit(priceUnit?: string, isJob?: boolean): string {

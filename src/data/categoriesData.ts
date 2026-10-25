@@ -3,6 +3,7 @@ import {
   AutresEmploisSubCategory,
   BricABracCategory, 
   DomesticJobType, 
+  EventType,
   NecrologieMinistry, 
   PropertyType, 
   RollingStockCategory, 
@@ -86,6 +87,17 @@ export const AUTRES_EMPLOIS_SUBCATEGORIES: AutresEmploisSubCategory[] = [
   'Stage / Alternance',
   'Freelance & Prestations',
   'Intérim & Saisonnier'
+];
+
+export const EVENT_TYPES: EventType[] = [
+  'Mariage',
+  'Soirée',
+  'Anniversaire',
+  'Gala & Cérémonie',
+  'Concert & Spectacle',
+  'Baptême & Communion',
+  'Conférence & Séminaire',
+  'Autre événement'
 ];
 
 export const PRICING_CONFIG = {

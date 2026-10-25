@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, RefreshCw, Shield, Share2, Video, Flag, ShieldAlert, Eye, Edit3, ShieldCheck, Heart, Download, FileText, ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
 import { Ad, UserProfile } from '../types';
-import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner, formatPriceDisplay, formatAdPrice, formatEventDate, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
 import { isAdVipCornerEligible } from '../utils/vipCorner';
 import { isValidStorageUrl } from '../utils/ads';
 import { ReportAdModal } from './ReportAdModal';
@@ -439,7 +439,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                 </span>
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-2xl sm:text-3xl font-black text-emerald-700">
-                    {formatPriceDisplay(ad.price, ad.priceMax)}
+                    {formatAdPrice(ad)}
                   </span>
                   {ad.priceUnit && ad.priceUnit !== 'total' && (
                     <span className="text-sm font-bold text-slate-600">
@@ -568,6 +568,23 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                     {ad.necrologieData?.funeralProgram || ad.necroFuneralProgram}
                   </p>
                 )}
+              </div>
+            )}
+
+            {/* ÉVÉNEMENTS DETAIL CARD */}
+            {(ad.mainCategory === 'EVENEMENTS' || ad.eventData) && ad.eventData && (
+              <div className="bg-fuchsia-50 p-4 rounded-xl border border-fuchsia-200 space-y-2">
+                <span className="font-extrabold text-fuchsia-950 block text-xs uppercase tracking-wide">
+                  Détails de l'événement
+                </span>
+                <p className="text-slate-800 text-xs">Type : <strong>{ad.eventData.eventType}</strong></p>
+                <p className="text-slate-800 text-xs">
+                  Date : <strong>{formatEventDate(ad.eventData.eventDate)}</strong>
+                  {ad.eventData.eventTime ? <> à <strong>{ad.eventData.eventTime}</strong></> : null}
+                </p>
+                {ad.eventData.venue && <p className="text-slate-700 text-xs">Lieu : <strong>{ad.eventData.venue}</strong></p>}
+                {ad.eventData.organizer && <p className="text-slate-700 text-xs">Organisateur : <strong>{ad.eventData.organizer}</strong></p>}
+                {ad.eventData.dressCode && <p className="text-slate-700 text-xs">Tenue : <strong>{ad.eventData.dressCode}</strong></p>}
               </div>
             )}
 

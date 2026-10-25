@@ -51,7 +51,7 @@ import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../services/firebase';
 import { trackDownloadRequest } from '../services/platformMetrics';
 import { Ad, UserProfile, SubscriptionTier, BoosterPackType, AdPackType, PaymentOperator, isUserAdmin, isUserSuperAdmin } from '../types';
-import { formatFCFA, formatRemainingTime, isAdOwner, formatPriceDisplay, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, isAdOwner, formatPriceDisplay, formatAdPrice, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
 import { isAdBoostFeatured } from '../utils/personalization';
 import { GABON_PROVINCES } from '../data/gabonLocations';
 import { KycUploadModal } from './KycUploadModal';
@@ -1177,7 +1177,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           {displayedAds.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {displayedAds.map((ad) => {
-                const { isExpired, label: remainingLabel } = formatRemainingTime(ad.expiresAt);
+                const remaining = formatRemainingTime(ad.expiresAt);
+                // Une annonce en attente (modération ou paiement) n'a pas encore d'échéance: elle n'est pas expirée
+                const isNotYetPublished = ad.status === 'PENDING_REVIEW' || ad.status === 'PENDING_PAYMENT';
+                const isExpired = isNotYetPublished ? false : remaining.isExpired;
+                const remainingLabel = remaining.label;
                 const isPending = ad.status === 'PENDING_REVIEW';
                 const isActive = ad.status === 'ACTIVE' && !isExpired;
                 const isRejected = ad.status === 'REJECTED';
@@ -1266,7 +1270,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         <span className="text-[10px] text-slate-400 block font-normal">
                           {getPriceOrSalaryLabel(ad)} :
                         </span>
-                        {formatPriceDisplay(ad.price, ad.priceMax)}
+                        {formatAdPrice(ad)}
                         {ad.priceUnit && (
                           <span className="text-xs text-slate-500 font-medium">/{formatPriceUnit(ad.priceUnit, isJobAd(ad))}</span>
                         )}

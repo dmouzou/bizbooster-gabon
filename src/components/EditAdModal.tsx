@@ -24,6 +24,7 @@ import {
   Crown,
   FileText,
   Download,
+  PartyPopper,
 } from 'lucide-react';
 import {
   Ad,
@@ -36,6 +37,7 @@ import {
   JobAdKind,
   NecrologieMinistry,
   AvisRechercheCategory,
+  EventType,
   AutresEmploisSubCategory,
   TutoringSubject,
   TutoringLevel,
@@ -45,6 +47,7 @@ import { GABON_PROVINCES } from '../data/gabonLocations';
 import {
   NECROLOGIE_MINISTRIES,
   AVIS_RECHERCHE_CATEGORIES,
+  EVENT_TYPES,
   AUTRES_EMPLOIS_SUBCATEGORIES,
   TUTORING_SUBJECTS,
   TUTORING_LEVELS,
@@ -140,6 +143,14 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
   const [avisRewardAmount, setAvisRewardAmount] = useState<number | ''>(ad.avisRechercheData?.rewardAmount || '');
   const [avisEmergencyContact, setAvisEmergencyContact] = useState(ad.avisRechercheData?.contactEmergency || '');
 
+  // Événements fields
+  const [eventType, setEventType] = useState<EventType>(ad.eventData?.eventType || 'Mariage');
+  const [eventDate, setEventDate] = useState(ad.eventData?.eventDate || '');
+  const [eventTime, setEventTime] = useState(ad.eventData?.eventTime || '');
+  const [eventVenue, setEventVenue] = useState(ad.eventData?.venue || '');
+  const [eventOrganizer, setEventOrganizer] = useState(ad.eventData?.organizer || '');
+  const [eventDressCode, setEventDressCode] = useState(ad.eventData?.dressCode || '');
+
   // Autres Emplois fields (Point 2: Demandeur d'emploi + CV)
   const initialAutresSub: AutresEmploisSubCategory =
     (ad.autresEmploisData?.subCategory as any) === 'DEMANDE_EMPLOI'
@@ -214,6 +225,12 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
       setAvisHasReward(Boolean(ad.avisRechercheData?.hasReward || (ad.avisRechercheData?.rewardAmount && ad.avisRechercheData.rewardAmount > 0)));
       setAvisRewardAmount(ad.avisRechercheData?.rewardAmount ? Number(ad.avisRechercheData.rewardAmount) : '');
       setAvisEmergencyContact(ad.avisRechercheData?.contactEmergency || '');
+      setEventType(ad.eventData?.eventType || 'Mariage');
+      setEventDate(ad.eventData?.eventDate || '');
+      setEventTime(ad.eventData?.eventTime || '');
+      setEventVenue(ad.eventData?.venue || '');
+      setEventOrganizer(ad.eventData?.organizer || '');
+      setEventDressCode(ad.eventData?.dressCode || '');
       const resetSub: AutresEmploisSubCategory =
         (ad.autresEmploisData?.subCategory as any) === 'DEMANDE_EMPLOI'
           ? "Demandeur d'emploi"
@@ -366,6 +383,25 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
 
     if (mainCategory === 'NECROLOGIE' || mainCategory === 'AVIS_DE_RECHERCHE') {
       numPrice = 0;
+    } else if (mainCategory === 'EVENEMENTS') {
+      // Prix d'entrée facultatif : 0 = entrée libre
+      numPrice = price === '' || String(price).trim() === '' ? 0 : Number(price);
+      if (isNaN(numPrice) || numPrice < 0) {
+        setErrorMsg("Le prix d'entrée ne peut pas être négatif.");
+        return;
+      }
+      if (!eventDate) {
+        setErrorMsg("La date de l'événement est obligatoire.");
+        return;
+      }
+      if (eventDate < new Date().toISOString().slice(0, 10)) {
+        setErrorMsg("La date de l'événement ne peut pas être dans le passé.");
+        return;
+      }
+      if (!eventVenue.trim()) {
+        setErrorMsg("Le lieu de l'événement est obligatoire.");
+        return;
+      }
     } else {
       if (price === '' || String(price).trim() === '') {
         setErrorMsg(
@@ -474,6 +510,15 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
         hasReward: avisHasReward,
         rewardAmount: Number(avisRewardAmount) || undefined,
         contactEmergency: avisEmergencyContact.trim() || undefined,
+      };
+    } else if (mainCategory === 'EVENEMENTS') {
+      updatedData.eventData = {
+        eventType,
+        eventDate,
+        eventTime: eventTime || undefined,
+        venue: eventVenue.trim() || undefined,
+        organizer: eventOrganizer.trim() || undefined,
+        dressCode: eventDressCode.trim() || undefined,
       };
     } else if (mainCategory === 'AUTRES_EMPLOIS') {
       const isSeeker = autresEmploisSubCategory === "Demandeur d'emploi";
@@ -643,7 +688,7 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
               1. Catégorie & Type de transaction
             </h4>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {[
                 { key: 'IMMOBILIER', label: 'Immobilier', icon: Building2 },
                 { key: 'MATERIEL_ROULANT', label: 'Véhicules', icon: Car },
@@ -653,12 +698,15 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
                 { key: 'NECROLOGIE', label: 'Nécrologie', icon: Heart },
                 { key: 'AVIS_DE_RECHERCHE', label: 'Avis de Recherche', icon: Search },
                 { key: 'AUTRES_EMPLOIS', label: 'Autres Emplois', icon: UserCheck },
+                { key: 'EVENEMENTS', label: 'Événements', icon: PartyPopper },
               ].map(({ key, label, icon: Icon }) => (
                 <button
                   type="button"
                   key={key}
                   onClick={() => setMainCategory(key as MainCategory)}
                   className={`p-3 rounded-2xl border text-center transition-all flex flex-col items-center gap-1.5 cursor-pointer ${
+                    key === 'EVENEMENTS' ? 'col-span-2 sm:col-span-1' : ''
+                  } ${
                     mainCategory === key
                       ? 'border-emerald-600 bg-emerald-50/70 text-emerald-900 font-extrabold ring-2 ring-emerald-500/20'
                       : 'border-slate-200 text-slate-700 hover:bg-slate-50 font-bold'
@@ -979,6 +1027,101 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
                           <option key={l} value={l}>{l}</option>
                         ))}
                       </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ÉVÉNEMENTS */}
+              {mainCategory === 'EVENEMENTS' && (
+                <div className="space-y-3 bg-fuchsia-50/80 p-4 rounded-2xl border border-fuchsia-300">
+                  <div className="flex items-center gap-2 text-fuchsia-900 font-bold text-xs uppercase tracking-wider border-b border-fuchsia-200 pb-2">
+                    <PartyPopper className="w-4 h-4 text-fuchsia-700 shrink-0" />
+                    <span>Détails de l'événement</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-fuchsia-950 mb-1">
+                      Type d'événement :
+                    </label>
+                    <select
+                      value={eventType}
+                      onChange={(e) => setEventType(e.target.value as EventType)}
+                      className="w-full text-xs font-bold bg-white border border-fuchsia-200 rounded-xl px-3 py-2 focus:outline-fuchsia-500"
+                    >
+                      {EVENT_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {type}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-fuchsia-950 mb-1">
+                        Date de l'événement :
+                      </label>
+                      <input
+                        type="date"
+                        value={eventDate}
+                        min={new Date().toISOString().slice(0, 10)}
+                        onChange={(e) => setEventDate(e.target.value)}
+                        className="w-full text-xs font-bold bg-white border border-fuchsia-200 rounded-xl px-3 py-2 focus:outline-fuchsia-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-fuchsia-950 mb-1">
+                        Heure de début (facultatif) :
+                      </label>
+                      <input
+                        type="time"
+                        value={eventTime}
+                        onChange={(e) => setEventTime(e.target.value)}
+                        className="w-full text-xs font-bold bg-white border border-fuchsia-200 rounded-xl px-3 py-2 focus:outline-fuchsia-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-fuchsia-950 mb-1">
+                      Lieu : salle, établissement ou adresse :
+                    </label>
+                    <input
+                      type="text"
+                      value={eventVenue}
+                      onChange={(e) => setEventVenue(e.target.value)}
+                      maxLength={120}
+                      placeholder="Ex: Salle des fêtes de la Sablière, Libreville"
+                      className="w-full text-xs font-bold bg-white border border-fuchsia-200 rounded-xl px-3 py-2 focus:outline-fuchsia-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-fuchsia-950 mb-1">
+                        Organisateur ou famille (facultatif) :
+                      </label>
+                      <input
+                        type="text"
+                        value={eventOrganizer}
+                        onChange={(e) => setEventOrganizer(e.target.value)}
+                        maxLength={80}
+                        className="w-full text-xs font-bold bg-white border border-fuchsia-200 rounded-xl px-3 py-2 focus:outline-fuchsia-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-fuchsia-950 mb-1">
+                        Tenue exigée (facultatif) :
+                      </label>
+                      <input
+                        type="text"
+                        value={eventDressCode}
+                        onChange={(e) => setEventDressCode(e.target.value)}
+                        maxLength={60}
+                        className="w-full text-xs font-bold bg-white border border-fuchsia-200 rounded-xl px-3 py-2 focus:outline-fuchsia-500"
+                      />
                     </div>
                   </div>
                 </div>
@@ -1426,15 +1569,17 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
                               ? 'Salaire désiré en Francs CFA (XAF) :'
                               : isEmployerOffer
                               ? 'Salaire proposé en Francs CFA (XAF) :'
+                              : mainCategory === 'EVENEMENTS'
+                              ? "Prix d'entrée / billet en Francs CFA (0 = entrée libre) :"
                               : 'Prix en Francs CFA (XAF) :'}
                           </label>
                           <input
                             type="number"
                             value={price}
                             onChange={(e) => setPrice(e.target.value)}
-                            placeholder={isJob ? 'Ex: 150000' : 'Ex: 250000'}
+                            placeholder={isJob ? 'Ex: 150000' : mainCategory === 'EVENEMENTS' ? 'Ex: 5000 (0 si entrée libre)' : 'Ex: 250000'}
                             className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-emerald-800 focus:outline-emerald-500"
-                            required
+                            required={mainCategory !== 'EVENEMENTS'}
                           />
                         </div>
 
