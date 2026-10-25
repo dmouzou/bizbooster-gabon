@@ -35,6 +35,10 @@ export const CAR_BRANDS_AND_MODELS: CarBrandModels[] = [
     models: ['3008', '2008', '5008', '208', '508', 'Landtrek Pick-up']
   },
   {
+    brand: 'DAIHATSU',
+    models: ['Terios', 'Sirion', 'Rocky', 'Gran Max', 'Mira']
+  },
+  {
     brand: 'SUZUKI',
     models: ['Jimny', 'Grand Vitara', 'Swift', 'Baleno', 'S-Presso', 'Ertiga']
   },
