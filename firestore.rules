@@ -146,7 +146,14 @@ service cloud.firestore {
                         && request.resource.data.status in ['PENDING_REVIEW', 'PENDING_PAYMENT']
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(ownerLockedKeys())
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(rankingKeys())
-                        && !touchesProtectedAdFields());
+                        && !touchesProtectedAdFields())
+                    // Synchronisation du nom de l'annonceur : seul contactName, sur n'importe quel statut
+                    || (isSignedIn()
+                        && resource.data.userId == request.auth.uid
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['contactName'])
+                        && request.resource.data.contactName is string
+                        && request.resource.data.contactName.size() > 0
+                        && request.resource.data.contactName.size() <= 80);
 
       // Suppression : Admin ou propriétaire
       allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);

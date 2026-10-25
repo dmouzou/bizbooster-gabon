@@ -676,6 +676,28 @@ describe('Firestore Security Rules (Phase 1)', () => {
     );
   });
 
+  it('synchro du nom: le propriétaire peut modifier seul contactName sur une annonce ACTIVE, pas autre chose', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'ads', 'ad_active_name'), {
+        userId: 'user_name',
+        title: 'Titre approuve',
+        contactName: 'Ancien Nom',
+        status: 'ACTIVE',
+        price: 100000,
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext('user_name').firestore();
+    const otherDb = testEnv.authenticatedContext('user_autre').firestore();
+    const adRef = doc(userDb, 'ads', 'ad_active_name');
+
+    await assertSucceeds(updateDoc(adRef, { contactName: 'Nouveau Nom' }));
+    await assertFails(updateDoc(adRef, { contactName: 'Nouveau Nom', title: 'Titre modifie' }));
+    await assertFails(updateDoc(adRef, { contactName: '' }));
+    await assertFails(updateDoc(adRef, { contactName: 'x'.repeat(81) }));
+    await assertFails(updateDoc(doc(otherDb, 'ads', 'ad_active_name'), { contactName: 'Pirate' }));
+  });
+
   // 18. B31 : idVerificationStatus ne peut pas être repassé à PENDING si déjà VERIFIED
   it('B31: interdit de repasser idVerificationStatus à PENDING si le statut est déjà VERIFIED', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
