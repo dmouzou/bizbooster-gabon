@@ -64,7 +64,7 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
   initialPhone,
   onPaymentPendingChange,
 }) => {
-  const [operator, setOperator] = useState<PaymentOperator>('MOOV_MONEY');
+  const [operator, setOperator] = useState<PaymentOperator>('AIRTEL_MONEY');
   const [mobileNumber, setMobileNumber] = useState(to8Digits(initialPhone) || '');
   const [phoneError, setPhoneError] = useState('');
 
@@ -108,7 +108,7 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
     };
   }, []);
 
-  // Détection automatique de l'opérateur selon la saisie
+  // Détection automatique de l'opérateur selon la saisie (Moov en standby -> reste sur Airtel)
   const handlePhoneChange = (val: string) => {
     setMobileNumber(val);
     setPhoneError('');
@@ -116,9 +116,7 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
     const clean = normalizeGabonPhone(val);
     if (clean.length >= 2) {
       const detected = detectOperator(clean);
-      if (detected === 'MOOV') {
-        setOperator('MOOV_MONEY');
-      } else if (detected === 'AIRTEL') {
+      if (detected === 'AIRTEL') {
         setOperator('AIRTEL_MONEY');
       }
     }
@@ -226,12 +224,14 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
     }
 
     if (operator === 'MOOV_MONEY') {
+      setPhoneError('Le paiement Moov Money est temporairement en standby. Veuillez utiliser Airtel Money.');
+      return;
+    } else if (operator === 'AIRTEL_MONEY') {
       const isMoov = (GABON_MOBILE_PREFIXES.MOOV as readonly string[]).some((p) => digits.startsWith(p));
-      if (!isMoov) {
-        setPhoneError('Préfixe Moov Money requis : le numéro doit commencer par 060, 062, 065 ou 066.');
+      if (isMoov) {
+        setPhoneError('Le paiement Moov Money est temporairement en standby. Veuillez saisir un numéro Airtel Money (074, 076 ou 077).');
         return;
       }
-    } else if (operator === 'AIRTEL_MONEY') {
       const isAirtel = (GABON_MOBILE_PREFIXES.AIRTEL as readonly string[]).some((p) => digits.startsWith(p));
       if (!isAirtel) {
         setPhoneError('Préfixe Airtel Money requis : le numéro doit commencer par 074, 076 ou 077.');
@@ -362,31 +362,22 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
               Opérateur de paiement mobile
             </label>
             <div className="grid grid-cols-2 gap-3">
-              {/* Moov Money */}
+              {/* Moov Money (En standby temporaire) */}
               <button
                 type="button"
-                onClick={() => {
-                  setOperator('MOOV_MONEY');
-                  setPhoneError('');
-                }}
-                className={`p-3 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center cursor-pointer relative ${
-                  operator === 'MOOV_MONEY'
-                    ? 'bg-blue-950/70 border-blue-500 ring-2 ring-blue-500/50 text-white'
-                    : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-600'
-                }`}
+                disabled
+                title="Moov Money est temporairement en standby. Utilisez Airtel Money."
+                className="p-3 rounded-2xl border flex flex-col items-center gap-1.5 transition-all text-center relative bg-slate-900/50 border-slate-800 text-slate-500 opacity-60 cursor-not-allowed"
               >
-                <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-black text-xs text-white shadow-sm">
+                <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center font-black text-xs text-slate-300 shadow-sm">
                   MM
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="font-bold text-xs">Moov Money</span>
-                  {operator === 'MOOV_MONEY' && (
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
-                  )}
                 </div>
-                <span className="text-[10px] text-blue-300">060 / 062 / 065 / 066</span>
-                <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                  SingPay Actif
+                <span className="text-[10px] text-slate-500">060 / 062 / 065 / 066</span>
+                <span className="text-[9px] font-bold text-amber-300 bg-amber-950/70 px-2 py-0.5 rounded-full border border-amber-500/30">
+                  En standby
                 </span>
               </button>
 

@@ -9,6 +9,7 @@ import {
   buildSingPayPaymentPayload,
   getSingPayConfig,
   clearSingPayConfigCache,
+  MOOV_PAYMENT_ENABLED,
 } from "../index";
 
 describe("Configuration administrable Passerelle (Phase 2)", () => {
@@ -122,6 +123,16 @@ describe("Configuration administrable Passerelle (Phase 2)", () => {
       expect(maskIdentifier("WALLET_DISB_9876")).toBe("••••••••9876");
       expect(maskIdentifier("1234")).toBe("••••");
       expect(maskIdentifier("")).toBe("");
+    });
+
+    it("rejette une valeur déjà masquée si renvoyée à validateDisbursementId", () => {
+      expect(() => validateDisbursementId("••••••••9876")).toThrow(
+        /identifiant alphanumérique valide/
+      );
+    });
+
+    it("maintient le paiement Moov Money en standby", () => {
+      expect(MOOV_PAYMENT_ENABLED).toBe(false);
     });
 
     it("masque correctement les numéros clients pour l'audit et l'affichage", () => {

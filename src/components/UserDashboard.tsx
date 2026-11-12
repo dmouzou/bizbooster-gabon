@@ -51,11 +51,12 @@ import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../services/firebase';
 import { trackDownloadRequest } from '../services/platformMetrics';
 import { Ad, UserProfile, SubscriptionTier, BoosterPackType, AdPackType, PaymentOperator, isUserAdmin, isUserSuperAdmin } from '../types';
-import { formatFCFA, formatRemainingTime, isAdOwner, formatPriceDisplay, formatAdPrice, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
+import { formatFCFA, formatRemainingTime, formatFrozenRemainingTime, isAdOwner, formatPriceDisplay, formatAdPrice, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
 import { isAdBoostFeatured } from '../utils/personalization';
 import { GABON_PROVINCES } from '../data/gabonLocations';
 import { KycUploadModal } from './KycUploadModal';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
+import { ReactivateAdModal } from './ReactivateAdModal';
 import { SubscriptionUpgradeModal } from './SubscriptionUpgradeModal';
 import { AdCard } from './AdCard';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
@@ -196,6 +197,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const [adsSortBy, setAdsSortBy] = useState<UserAdsSortOption>('DATE_DESC');
   const [isKycModalOpen, setIsKycModalOpen] = useState(false);
   const [previewDocModal, setPreviewDocModal] = useState<string | null>(null);
+  const [adToReactivate, setAdToReactivate] = useState<Ad | null>(null);
 
   // Boost modal state (Requirement 4: single vs pack)
   const [adToBoost, setAdToBoost] = useState<Ad | null>(null);
@@ -1132,7 +1134,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-slate-600 mt-1 max-w-2xl">
-                    Vos {maxQuota} annonces les plus anciennes restent en ligne. Vos {suspendedQuotaAds.length} annonces les plus récentes ont été automatiquement suspendues et restent conservées intactes. Renouvelez votre forfait pour les réactiver immédiatement.
+                    Vos {maxQuota} annonces les plus anciennes restent en ligne. Vos {suspendedQuotaAds.length} annonces les plus récentes ont été automatiquement suspendues et restent conservées intactes. Renouvelez votre forfait ou payez la réactivation à l'unité (selon les jours restants gelés) pour les remettre en ligne immédiatement.
                   </p>
                 </div>
               </div>
@@ -1318,6 +1320,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               {remainingLabel}
                             </span>
                           )}
+                          {ad.status === 'SUSPENDED' && (
+                            <span className="font-bold text-amber-700 flex items-center gap-1">
+                              <PauseCircle className="w-3 h-3 text-amber-600" />
+                              {formatFrozenRemainingTime(ad.expiresAt, ad.suspendedAt || ad.updatedAt).label}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1355,15 +1363,25 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1.5">
-                        {ad.status === 'SUSPENDED' && (
-                          <button
-                            onClick={() => setDashboardTab('SUBSCRIPTIONS')}
-                            className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
-                            title="Renouveler votre forfait pour réactiver cette annonce"
-                          >
-                            <Crown className="w-3 h-3 fill-slate-950" />
-                            <span>Réactiver (Forfait)</span>
-                          </button>
+                        {ad.status === 'SUSPENDED' && (!ad.suspensionReason || ad.suspensionReason === 'FORFAIT_EXPIRE_QUOTA') && (
+                          <>
+                            <button
+                              onClick={() => setAdToReactivate(ad)}
+                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                              title="Payer la réactivation à l'unité selon vos jours restants gelés"
+                            >
+                              <CreditCard className="w-3 h-3 text-amber-300" />
+                              <span>Réactiver</span>
+                            </button>
+                            <button
+                              onClick={() => setDashboardTab('SUBSCRIPTIONS')}
+                              className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                              title="Renouveler votre forfait pour réactiver toutes vos annonces"
+                            >
+                              <Crown className="w-3 h-3 fill-slate-950" />
+                              <span>Forfait</span>
+                            </button>
+                          </>
                         )}
 
                         {/* Requirement 6: Boost to top button */}
@@ -2092,7 +2110,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
                       <ShieldCheck className="w-4 h-4 text-amber-300" />
-                      <span>Payer 5 000 FCFA via Airtel ou Moov</span>
+                      <span>Payer 5 000 FCFA via Airtel Money</span>
                     </button>
                   </div>
                 ) : (
@@ -2307,6 +2325,20 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* Reactivate Paused Ad Modal */}
+      <ReactivateAdModal
+        ad={adToReactivate}
+        onClose={() => setAdToReactivate(null)}
+        onReactivateSuccess={() => {
+          setAdToReactivate(null);
+          showAlert(
+            "Votre annonce a été réactivée avec succès et remise en ligne pour sa durée restante.",
+            'success',
+            'Annonce réactivée'
+          );
+        }}
+      />
 
       {/* Identity Verification Upload Modal */}
       <KycUploadModal

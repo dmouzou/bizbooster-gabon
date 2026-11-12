@@ -230,4 +230,80 @@ describe("Attribution transactionnelle (Phase 4)", () => {
     // Le statut doit impérativement rester PENDING_REVIEW et non passer à ACTIVE
     expect(adDoc?.status).toBe("PENDING_REVIEW");
   });
+
+  it("réactive une annonce SUSPENDED (FORFAIT_EXPIRE_QUOTA) via AD_REACTIVATE en restaurant la durée gelée", async () => {
+    const adId = "ad_test_reactivate_paused";
+    const suspendedAtMs = Date.now() - 5 * 24 * 3600 * 1000;
+    const frozenDays = 12;
+    const oldExpiresAt = new Date(suspendedAtMs + frozenDays * 24 * 3600 * 1000).toISOString();
+
+    await db.collection("ads").doc(adId).set({
+      id: adId,
+      userId: testUid,
+      status: "SUSPENDED",
+      suspensionReason: "FORFAIT_EXPIRE_QUOTA",
+      suspendedAt: new Date(suspendedAtMs).toISOString(),
+      expiresAt: oldExpiresAt,
+      images: ["p1", "p2", "p3", "p4"],
+      paidAmount: 0,
+      createdAt: new Date(suspendedAtMs - 10 * 24 * 3600 * 1000).toISOString(),
+    });
+
+    // 12j -> palier 15j (5500) + 1 photo supp (500) = 6000 FCFA
+    const payRef = "PAY_TEST_REACTIVATE_AD";
+    await db.collection("payments").doc(payRef).set({
+      reference: payRef,
+      userId: testUid,
+      productId: "AD_REACTIVATE",
+      operator: "AIRTEL_MONEY",
+      amount: 6000,
+      metadata: { adId, remainingDays: 12, billedTierDays: 15 },
+      status: "PENDING",
+      attributed: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    const beforeSettleMs = Date.now();
+    const res = await settlePayment(payRef, { status: "SUCCESS", amountReceived: 6000 });
+    expect(res.status).toBe("SUCCESS");
+    expect(res.attributed).toBe(true);
+
+    const adDoc = (await db.collection("ads").doc(adId).get()).data();
+    expect(adDoc?.status).toBe("ACTIVE");
+    expect(adDoc?.suspensionReason).toBeUndefined();
+    expect(adDoc?.suspendedAt).toBeUndefined();
+    expect(adDoc?.paidAmount).toBe(6000);
+    // La nouvelle date d'expiration doit être ~ now + 12 jours (durée gelée restituée)
+    const newExpMs = new Date(String(adDoc?.expiresAt)).getTime();
+    const expectedMinMs = beforeSettleMs + (frozenDays * 24 * 3600 * 1000) - 5000;
+    expect(newExpMs).toBeGreaterThanOrEqual(expectedMinMs);
+  });
+
+  it("refuse de réactiver via AD_REACTIVATE une annonce non suspendue pour forfait expiré", async () => {
+    const adId = "ad_test_reactivate_moderation";
+    await db.collection("ads").doc(adId).set({
+      id: adId,
+      userId: testUid,
+      status: "SUSPENDED",
+      suspensionReason: "MODERATION",
+      expiresAt: new Date(Date.now() + 10 * 24 * 3600 * 1000).toISOString(),
+      createdAt: new Date().toISOString(),
+    });
+
+    const payRef = "PAY_TEST_REACTIVATE_FORBIDDEN";
+    await db.collection("payments").doc(payRef).set({
+      reference: payRef,
+      userId: testUid,
+      productId: "AD_REACTIVATE",
+      amount: 5500,
+      metadata: { adId },
+      status: "PENDING",
+      attributed: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    await settlePayment(payRef, { status: "SUCCESS", amountReceived: 5500 });
+    const adDoc = (await db.collection("ads").doc(adId).get()).data();
+    expect(adDoc?.status).toBe("SUSPENDED");
+  });
 });

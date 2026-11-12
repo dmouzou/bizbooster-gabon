@@ -1201,7 +1201,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
             <h2 className="text-base sm:text-lg font-black tracking-tight text-white mt-0.5">
               {step === 1 && '1. Catégorie & Localisation spatiale'}
               {step === 2 && '2. Détails, Photos & Description (min 50 car.)'}
-              {step === 3 && (isExempt ? '3. Validation Partenaire VIP (Publication Gratuite)' : '3. Facturation & Paiement Mobile (Airtel / Moov)')}
+              {step === 3 && (isExempt ? '3. Validation Partenaire VIP (Publication Gratuite)' : '3. Facturation & Paiement Mobile (Airtel Money)')}
               {step === 4 && '4. Annonce Transmise à la Modération'}
             </h2>
           </div>

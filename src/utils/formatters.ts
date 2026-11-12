@@ -61,6 +61,41 @@ export function formatRemainingTime(expiresAtIso?: string | null): {
 }
 
 /**
+ * Calcule le temps restant gelé d'une annonce mise en pause (entre suspendedAt et expiresAt).
+ */
+export function formatFrozenRemainingTime(
+  expiresAtIso?: string | null,
+  suspendedAtIso?: string | null
+): {
+  remainingMs: number;
+  days: number;
+  hours: number;
+  label: string;
+} {
+  if (!expiresAtIso) {
+    return { remainingMs: 0, days: 0, hours: 0, label: '0 jour restant' };
+  }
+  const expiresMs = new Date(expiresAtIso).getTime();
+  const anchorMs = suspendedAtIso ? new Date(suspendedAtIso).getTime() : Date.now();
+  if (Number.isNaN(expiresMs) || Number.isNaN(anchorMs)) {
+    return { remainingMs: 0, days: 0, hours: 0, label: '0 jour restant' };
+  }
+  const remainingMs = Math.max(0, expiresMs - anchorMs);
+  if (remainingMs <= 0) {
+    return { remainingMs: 0, days: 0, hours: 0, label: '0 jour restant (palier min. 3j)' };
+  }
+  const days = Math.ceil(remainingMs / (1000 * 60 * 60 * 24));
+  const fullDays = Math.floor(remainingMs / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((remainingMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  return {
+    remainingMs,
+    days,
+    hours,
+    label: fullDays > 0 ? `${days} jour${days > 1 ? 's' : ''} gelé${days > 1 ? 's' : ''}` : `${hours}h gelées (1 jour)`,
+  };
+}
+
+/**
  * Nombre de photos gratuites incluses par niveau d'utilisateur (Point 10) :
  * - Standard : 3 photos
  * - Pro : 3 photos

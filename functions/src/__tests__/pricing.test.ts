@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   quoteOrder,
+  findReactivationTier,
   PricingError,
   PriceContext,
 } from "../pricing";
@@ -200,5 +201,46 @@ describe("Tarification serveur durcie (pricing.ts)", () => {
     expect(() =>
       quoteOrder("UNKNOWN_PRODUCT", {}, baseStandardCtx)
     ).toThrowError("Produit inconnu.");
+  });
+
+  // 14. Réactivation d'une annonce en pause (AD_REACTIVATE)
+  describe("AD_REACTIVATE (palier immédiatement supérieur + médias Standard)", () => {
+    it("sélectionne le palier standard immédiatement supérieur selon les jours restants", () => {
+      expect(findReactivationTier(0)).toEqual({ days: 3, price: 1500 });
+      expect(findReactivationTier(2)).toEqual({ days: 3, price: 1500 });
+      expect(findReactivationTier(3)).toEqual({ days: 3, price: 1500 });
+      expect(findReactivationTier(5)).toEqual({ days: 7, price: 3000 });
+      expect(findReactivationTier(12)).toEqual({ days: 15, price: 5500 });
+      expect(findReactivationTier(22)).toEqual({ days: 30, price: 9500 });
+      expect(findReactivationTier(45)).toEqual({ days: 60, price: 16000 });
+    });
+
+    it("ajoute les suppléments Standard (>3 photos à 500 FCFA + vidéo à 2000 FCFA)", () => {
+      const ctxPaused: PriceContext = {
+        ...baseStandardCtx,
+        adFrozenRemainingDays: 10,
+        adPhotoCount: 5,
+        adHasVideo: true,
+      };
+      // 10j -> palier 15j (5500) + 2 photos en plus (1000) + vidéo (2000) = 8500
+      const q = quoteOrder("AD_REACTIVATE", { adId: "ad_paused_1" }, ctxPaused);
+      expect(q.amount).toBe(8500);
+      expect(q.metadata.remainingDays).toBe(10);
+      expect(q.metadata.billedTierDays).toBe(15);
+      expect(q.lines).toHaveLength(3);
+    });
+
+    it("facture uniquement le palier si <= 3 photos et sans vidéo", () => {
+      const ctxPaused: PriceContext = {
+        ...baseStandardCtx,
+        adFrozenRemainingDays: 6,
+        adPhotoCount: 3,
+        adHasVideo: false,
+      };
+      // 6j -> palier 7j (3000)
+      const q = quoteOrder("AD_REACTIVATE", { adId: "ad_paused_2" }, ctxPaused);
+      expect(q.amount).toBe(3000);
+      expect(q.lines).toHaveLength(1);
+    });
   });
 });

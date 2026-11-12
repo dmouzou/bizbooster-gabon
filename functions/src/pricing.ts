@@ -67,6 +67,17 @@ export const EXTENSION_PRICES: Record<number, number> = {
   365: 75000,
 };
 
+export const REACTIVATION_TIERS: Array<{days: number; price: number}> = [
+  {days: 3, price: 1500},
+  {days: 7, price: 3000},
+  {days: 15, price: 5500},
+  {days: 30, price: 9500},
+  {days: 60, price: 16000},
+  {days: 90, price: 22000},
+  {days: 180, price: 40000},
+  {days: 365, price: 75000},
+];
+
 export const MAX_PHOTOS = 10;
 export const MAX_BOOSTS = 20;
 export const MAX_VALIDITY_DAYS = 365;
@@ -95,6 +106,12 @@ export interface PriceContext {
   freeBoosts: number;
   /** AD_EXTEND : jours restants de l'annonce ciblée. */
   adRemainingDays?: number;
+  /** AD_REACTIVATE : jours restants gelés entre suspendedAt et expiresAt. */
+  adFrozenRemainingDays?: number;
+  /** AD_REACTIVATE : nombre de photos enregistrées sur l'annonce. */
+  adPhotoCount?: number;
+  /** AD_REACTIVATE : présence d'une vidéo sur l'annonce. */
+  adHasVideo?: boolean;
 }
 
 export interface QuoteLine {
@@ -257,6 +274,101 @@ function quoteExtension(
 }
 
 /**
+ * Calcule le palier standard immédiatement supérieur couvrant les jours restants.
+ * @param {number} remainingDays Nombre de jours restants gelés.
+ * @return {{days: number, price: number}} Palier tarifaire applicable.
+ */
+export function findReactivationTier(
+  remainingDays: number
+): {days: number; price: number} {
+  const effectiveDays = Math.max(1, Math.ceil(Number(remainingDays) || 0));
+  return (
+    REACTIVATION_TIERS.find((t) => t.days >= effectiveDays) ||
+    REACTIVATION_TIERS[REACTIVATION_TIERS.length - 1]
+  );
+}
+
+/**
+ * Calcule les suppléments médias (photos supplémentaires et vidéo) selon le palier.
+ * @param {number} photoCount Nombre de photos.
+ * @param {boolean} hasVideo Présence d'une vidéo.
+ * @param {string} benefitTier Palier applicable.
+ * @return {{amount: number, lines: QuoteLine[]}} Montant et lignes de devis.
+ */
+function computeMediaSurcharges(
+  photoCount: number,
+  hasVideo: boolean,
+  benefitTier: string
+): {amount: number; lines: QuoteLine[]} {
+  const lines: QuoteLine[] = [];
+  let amount = 0;
+
+  const extraPhotos = Math.max(
+    0, photoCount - getTierFreePhotosCount(benefitTier)
+  );
+  if (extraPhotos > 0) {
+    const cost = extraPhotos * EXTRA_PHOTO_PRICE;
+    amount += cost;
+    lines.push({label: `${extraPhotos} photo(s) supplémentaire(s)`, amount: cost});
+  }
+
+  if (hasVideo) {
+    const cost = benefitTier === "BUSINESS" ? 0 :
+      benefitTier === "ELITE" ? 1000 : 2000;
+    amount += cost;
+    lines.push({label: "Vidéo descriptive", amount: cost});
+  }
+
+  return {amount, lines};
+}
+
+/**
+ * @param {Record<string, unknown>} meta Métadonnées brutes.
+ * @param {PriceContext} ctx Contexte utilisateur et annonce.
+ * @return {Quote} Devis de réactivation d'une annonce en pause.
+ */
+function quoteReactivation(
+  meta: Record<string, unknown>,
+  ctx: PriceContext
+): Quote {
+  const adId = cleanId(meta.adId, "Annonce");
+  const remainingDays = Math.max(
+    0,
+    Math.ceil(ctx.adFrozenRemainingDays ?? ctx.adRemainingDays ?? 0)
+  );
+  const tier = findReactivationTier(remainingDays);
+  const photoCount = Math.max(0, Math.floor(ctx.adPhotoCount ?? 0));
+  const hasVideo = ctx.adHasVideo === true;
+
+  const lines: QuoteLine[] = [
+    {
+      label: remainingDays > 0 ?
+        `Réactivation (${remainingDays}j restants — palier ${tier.days}j)` :
+        `Réactivation (palier minimum ${tier.days}j)`,
+      amount: tier.price,
+    },
+  ];
+  let amount = tier.price;
+
+  const media = computeMediaSurcharges(photoCount, hasVideo, ctx.effectiveTier);
+  amount += media.amount;
+  lines.push(...media.lines);
+
+  return {
+    productId: "AD_REACTIVATE",
+    amount,
+    metadata: {
+      adId,
+      remainingDays,
+      billedTierDays: tier.days,
+      photoCount,
+      hasVideo,
+    },
+    lines,
+  };
+}
+
+/**
  * @param {Record<string, unknown>} meta Métadonnées brutes.
  * @param {PriceContext} ctx Contexte utilisateur.
  * @return {Quote} Devis de publication.
@@ -300,22 +412,9 @@ function quoteAdPublish(
     lines.push({label: `Publication ${durationDays} jours`, amount: base});
   }
 
-  const extraPhotos = Math.max(
-    0, photoCount - getTierFreePhotosCount(benefitTier)
-  );
-  if (extraPhotos > 0) {
-    const cost = extraPhotos * EXTRA_PHOTO_PRICE;
-    amount += cost;
-    lines.push({label: `${extraPhotos} photo(s) supplémentaire(s)`,
-      amount: cost});
-  }
-
-  if (hasVideo) {
-    const cost = benefitTier === "BUSINESS" ? 0 :
-      benefitTier === "ELITE" ? 1000 : 2000;
-    amount += cost;
-    lines.push({label: "Vidéo descriptive", amount: cost});
-  }
+  const media = computeMediaSurcharges(photoCount, hasVideo, benefitTier);
+  amount += media.amount;
+  lines.push(...media.lines);
 
   let boostSource: string | null = null;
   if (withBoost) {
@@ -372,6 +471,8 @@ export function quoteOrder(
     quote = quoteBoost(productId, meta, ctx);
   } else if (productId === "AD_EXTEND") {
     quote = quoteExtension(meta, ctx);
+  } else if (productId === "AD_REACTIVATE") {
+    quote = quoteReactivation(meta, ctx);
   } else if (productId === "AD_PUBLISH") {
     quote = quoteAdPublish(meta, ctx);
   } else {

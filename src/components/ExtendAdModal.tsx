@@ -346,7 +346,7 @@ const ExtendAdModalContent: React.FC<Omit<ExtendAdModalProps, 'ad'> & { ad: Ad }
                     className="flex-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-3 rounded-xl shadow-lg shadow-emerald-700/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <ShieldCheck className="w-4 h-4 text-amber-300" />
-                    <span>Payer via Airtel ou Moov Money</span>
+                    <span>Payer via Airtel Money</span>
                   </button>
                 )
               )}

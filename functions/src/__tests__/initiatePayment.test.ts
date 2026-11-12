@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildPriceContext,
+  computeFrozenRemainingMs,
   singpayFetch,
 } from "../index";
 
@@ -70,6 +71,25 @@ describe("Initiation de paiement (Phase 3)", () => {
       });
       expect(ctx.isExempt).toBe(true);
       expect(ctx.hasFreeAdQuota).toBe(true);
+    });
+
+    it("calcule les jours restants gelés entre suspendedAt et expiresAt pour AD_REACTIVATE", () => {
+      const suspendedAt = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString();
+      const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+      const ad = {
+        status: "SUSPENDED",
+        suspendedAt,
+        expiresAt,
+        images: ["p1", "p2", "p3", "p4"],
+        videoUrl: "https://example.com/v.mp4",
+      };
+      const frozenMs = computeFrozenRemainingMs(ad);
+      expect(Math.round(frozenMs / (24 * 3600 * 1000))).toBe(12);
+
+      const ctx = buildPriceContext({ subscriptionTier: "STANDARD" }, ad);
+      expect(ctx.adFrozenRemainingDays).toBe(12);
+      expect(ctx.adPhotoCount).toBe(4);
+      expect(ctx.adHasVideo).toBe(true);
     });
   });
 

@@ -26,7 +26,10 @@ import {
   Quote,
   PRICING_DURATIONS,
   SUBSCRIPTION_QUOTAS,
+  MAX_VALIDITY_DAYS,
 } from "./pricing";
+
+export const MOOV_PAYMENT_ENABLED = false;
 
 export const FUNCTION_REGION = process.env.FUNCTION_REGION || "us-central1";
 
@@ -690,6 +693,7 @@ export const getGatewayConfig = onCall(
     const maskedClientId = cfg.clientId
       ? (cfg.clientId.length > 4 ? `••••••••••••${cfg.clientId.slice(-4)}` : "••••")
       : "";
+    const maskedDisbursementId = maskIdentifier(cfg.disbursementId);
 
     const projectId = process.env.GCLOUD_PROJECT || "bizbooster-gabon";
     const webhookUrl = `https://us-central1-${projectId}.cloudfunctions.net/singpayWebhook`;
@@ -699,7 +703,8 @@ export const getGatewayConfig = onCall(
       hasClientSecret: Boolean(cfg.clientSecret),
       hasWebhookSecret: Boolean(cfg.webhookSecret),
       walletId: cfg.walletId,
-      disbursementId: cfg.disbursementId,
+      disbursementId: maskedDisbursementId,
+      hasDisbursementId: Boolean(cfg.disbursementId),
       isLive: cfg.isLive,
       updatedAt: cfg.updatedAt || null,
       updatedBy: cfg.updatedBy || null,
@@ -1086,13 +1091,23 @@ export async function settlePayment(
         if (!suspendedAdsSnap.empty) {
           const toReactivate = suspendedAdsSnap.docs.slice(0, quota);
           for (const doc of toReactivate) {
-            tx.update(doc.ref, {
+            const d = doc.data() || {};
+            const frozenMs = computeFrozenRemainingMs(d, now.getTime());
+            const existingExpMs = parseTimestampMs(d.expiresAt);
+            const maxAllowed = now.getTime() + MAX_VALIDITY_DAYS * 24 * 3600 * 1000;
+            const reactivateUpdates: Record<string, unknown> = {
               status: "ACTIVE",
               ownerTier: tier,
               suspensionReason: FieldValue.delete(),
               suspendedAt: FieldValue.delete(),
               updatedAt: nowIso,
-            });
+            };
+            if (frozenMs > 0 && existingExpMs < now.getTime() + frozenMs) {
+              reactivateUpdates.expiresAt = new Date(
+                Math.min(maxAllowed, now.getTime() + frozenMs)
+              ).toISOString();
+            }
+            tx.update(doc.ref, reactivateUpdates);
           }
         }
       } catch (reErr) {
@@ -1152,6 +1167,39 @@ export async function settlePayment(
         if (adStatus === "EXPIRED") {
           adUpdates.status = "ACTIVE";
         }
+        hasAdUpdates = true;
+        paymentUpdates.consumedByAdId = adId || true;
+      }
+    } else if (productId === "AD_REACTIVATE") {
+      // AD_REACTIVATE : réactivation d'une annonce en pause suite à expiration d'abonnement
+      const adStatus = String(adData?.status || "").toUpperCase();
+      const reason = String(adData?.suspensionReason || "");
+      if (
+        adRef &&
+        adData &&
+        adStatus === "SUSPENDED" &&
+        (!reason || reason === "FORFAIT_EXPIRE_QUOTA")
+      ) {
+        const frozenMs = computeFrozenRemainingMs(adData, now.getTime());
+        const grantedMs = frozenMs > 0 ? frozenMs : 3 * 24 * 3600 * 1000;
+        const maxAllowed = now.getTime() + MAX_VALIDITY_DAYS * 24 * 3600 * 1000;
+        const newExpiresAt = new Date(
+          Math.min(maxAllowed, now.getTime() + grantedMs)
+        ).toISOString();
+
+        const prevPaid = Number(adData.paidAmount || 0);
+        const paymentAmount = Number(payment.amount || 0);
+        const currentImagesCount = Array.isArray(adData.images) ? adData.images.length : 0;
+
+        adUpdates.status = "ACTIVE";
+        adUpdates.expiresAt = newExpiresAt;
+        adUpdates.suspensionReason = FieldValue.delete();
+        adUpdates.suspendedAt = FieldValue.delete();
+        adUpdates.reactivatedAt = nowIso;
+        adUpdates.paidAmount = prevPaid + Math.max(paymentAmount, 1);
+        adUpdates.paymentMethod = payment.operator || "AIRTEL_MONEY";
+        adUpdates.transactionRef = payment.reference || paymentRefOrId;
+        adUpdates.maxPhotos = Math.max(Number(adData.maxPhotos || 3), currentImagesCount);
         hasAdUpdates = true;
         paymentUpdates.consumedByAdId = adId || true;
       }
@@ -1243,6 +1291,39 @@ export async function singpayFetch(
   }
 }
 
+export function parseTimestampMs(val: unknown): number {
+  if (!val) return 0;
+  if (typeof val === "string") {
+    const ms = new Date(val).getTime();
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  if (
+    typeof val === "object" &&
+    val !== null &&
+    "toMillis" in (val as Record<string, unknown>) &&
+    typeof (val as {toMillis?: unknown}).toMillis === "function"
+  ) {
+    return (val as {toMillis: () => number}).toMillis();
+  }
+  return 0;
+}
+
+/**
+ * Calcule le temps restant gelé d'une annonce en pause (entre suspendedAt et expiresAt).
+ */
+export function computeFrozenRemainingMs(
+  adData: Record<string, unknown>,
+  fallbackNowMs = Date.now()
+): number {
+  const expMs = parseTimestampMs(adData.expiresAt);
+  if (expMs <= 0) return 0;
+  const suspMs =
+    parseTimestampMs(adData.suspendedAt) ||
+    parseTimestampMs(adData.updatedAt) ||
+    fallbackNowMs;
+  return Math.max(0, expMs - suspMs);
+}
+
 /**
  * Construit le contexte de tarification PriceContext (Phase 3.2).
  */
@@ -1259,31 +1340,14 @@ export function buildPriceContext(
     ? rawTier
     : "STANDARD";
 
-  const expiresAt = userData.subscriptionExpiresAt;
-  if (effectiveTier !== "STANDARD" && expiresAt) {
-    const expTime =
-      typeof expiresAt === "string"
-        ? new Date(expiresAt).getTime()
-        : typeof expiresAt === "object" &&
-          expiresAt !== null &&
-          "toMillis" in (expiresAt as Record<string, unknown>)
-        ? (expiresAt as { toMillis: () => number }).toMillis()
-        : 0;
-    if (expTime > 0 && expTime < Date.now()) {
-      effectiveTier = "STANDARD";
-    }
+  const expTime = parseTimestampMs(userData.subscriptionExpiresAt);
+  if (effectiveTier !== "STANDARD" && expTime > 0 && expTime < Date.now()) {
+    effectiveTier = "STANDARD";
   }
 
   let subscriptionAgeDays = 0;
-  if (effectiveTier !== "STANDARD" && userData.subscriptionStartedAt) {
-    const startTime =
-      typeof userData.subscriptionStartedAt === "string"
-        ? new Date(userData.subscriptionStartedAt).getTime()
-        : typeof userData.subscriptionStartedAt === "object" &&
-          userData.subscriptionStartedAt !== null &&
-          "toMillis" in (userData.subscriptionStartedAt as Record<string, unknown>)
-        ? (userData.subscriptionStartedAt as { toMillis: () => number }).toMillis()
-        : 0;
+  if (effectiveTier !== "STANDARD") {
+    const startTime = parseTimestampMs(userData.subscriptionStartedAt);
     if (startTime > 0 && Date.now() > startTime) {
       subscriptionAgeDays = Math.floor(
         (Date.now() - startTime) / (1000 * 60 * 60 * 24)
@@ -1302,22 +1366,23 @@ export function buildPriceContext(
   );
 
   let adRemainingDays: number | undefined;
-  if (adData && adData.expiresAt) {
-    const expTime =
-      typeof adData.expiresAt === "string"
-        ? new Date(adData.expiresAt).getTime()
-        : typeof adData.expiresAt === "object" &&
-          adData.expiresAt !== null &&
-          "toMillis" in (adData.expiresAt as Record<string, unknown>)
-        ? (adData.expiresAt as { toMillis: () => number }).toMillis()
-        : 0;
-    if (expTime > Date.now()) {
-      adRemainingDays = Math.ceil(
-        (expTime - Date.now()) / (1000 * 60 * 60 * 24)
-      );
-    } else {
-      adRemainingDays = 0;
+  let adFrozenRemainingDays: number | undefined;
+  let adPhotoCount: number | undefined;
+  let adHasVideo: boolean | undefined;
+
+  if (adData) {
+    const adExpTime = parseTimestampMs(adData.expiresAt);
+    if (adExpTime > 0) {
+      adRemainingDays =
+        adExpTime > Date.now()
+          ? Math.ceil((adExpTime - Date.now()) / (1000 * 60 * 60 * 24))
+          : 0;
+      const frozenMs = computeFrozenRemainingMs(adData);
+      adFrozenRemainingDays =
+        frozenMs > 0 ? Math.ceil(frozenMs / (1000 * 60 * 60 * 24)) : 0;
     }
+    adPhotoCount = Array.isArray(adData.images) ? adData.images.length : 0;
+    adHasVideo = Boolean(adData.videoUrl);
   }
 
   return {
@@ -1327,7 +1392,27 @@ export function buildPriceContext(
     hasFreeAdQuota,
     freeBoosts,
     adRemainingDays,
+    adFrozenRemainingDays,
+    adPhotoCount,
+    adHasVideo,
   };
+}
+
+function assertReactivatableAd(adData: Record<string, unknown> | null) {
+  if (!adData) {
+    throw new HttpsError("not-found", "Annonce ciblée introuvable.");
+  }
+  const adStatus = String(adData.status || "").toUpperCase();
+  const suspensionReason = String(adData.suspensionReason || "");
+  if (
+    adStatus !== "SUSPENDED" ||
+    (suspensionReason && suspensionReason !== "FORFAIT_EXPIRE_QUOTA")
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Cette annonce n'est pas en pause pour abonnement expiré."
+    );
+  }
 }
 
 /**
@@ -1363,6 +1448,22 @@ export const previewQuote = onCall(
       const adDoc = await db.collection("ads").doc(cleanAdId).get();
       if (adDoc.exists) {
         adData = adDoc.data() || null;
+      }
+    }
+
+    if (productId === "AD_REACTIVATE") {
+      assertReactivatableAd(adData);
+      if (adData && adData.userId !== request.auth.uid) {
+        const isSuperOrAdmin =
+          request.auth.token.role === "SUPER_ADMIN" ||
+          request.auth.token.role === "SUPER ADMIN" ||
+          request.auth.token.role === "ADMIN" ||
+          userData.role === "SUPER_ADMIN" ||
+          userData.role === "SUPER ADMIN" ||
+          userData.role === "ADMIN";
+        if (!isSuperOrAdmin) {
+          throw new HttpsError("permission-denied", "Cette annonce ne vous appartient pas.");
+        }
       }
     }
 
@@ -1442,6 +1543,13 @@ export const initiateSingPayPayment = onCall(
     const requestedOperator =
       operator === "AIRTEL_MONEY" ? "AIRTEL_MONEY" : "MOOV_MONEY";
 
+    if (requestedOperator === "MOOV_MONEY" && !MOOV_PAYMENT_ENABLED) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Le paiement Moov Money est temporairement en standby. Veuillez utiliser Airtel Money."
+      );
+    }
+
     const {rawDigits} = normalizeGabonPhone(String(phoneNumber));
 
     // Validation stricte des opérateurs selon les préfixes officiels
@@ -1497,6 +1605,9 @@ export const initiateSingPayPayment = onCall(
           "failed-precondition",
           "Cette annonce ne peut pas être prolongée (statut non éligible)."
         );
+      }
+      if (productId === "AD_REACTIVATE") {
+        assertReactivatableAd(adData);
       }
       if (adStatus === "REJECTED" || adStatus === "DELETED") {
         throw new HttpsError(

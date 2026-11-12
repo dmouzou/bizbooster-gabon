@@ -622,7 +622,9 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
                 {ad.status === 'EXPIRED'
                   ? 'Cette annonce a expiré. Vous devez la prolonger ou souscrire un abonnement pour la réactiver avant de pouvoir la modifier.'
                   : ad.status === 'SUSPENDED'
-                  ? 'Cette annonce a été suspendue par la modération et ne peut pas être éditée directement.'
+                  ? (ad.suspensionReason === 'FORFAIT_EXPIRE_QUOTA' || !ad.suspensionReason)
+                    ? "Cette annonce est en pause suite à l'expiration de votre abonnement. Réactivez-la à l'unité ou renouvelez votre forfait avant de la modifier."
+                    : 'Cette annonce a été suspendue par la modération et ne peut pas être éditée directement.'
                   : 'Cette annonce est en attente de paiement et ne peut pas être modifiée.'}
               </p>
             </div>
