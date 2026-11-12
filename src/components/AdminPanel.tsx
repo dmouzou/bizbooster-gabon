@@ -193,8 +193,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     hasClientSecret: boolean;
     hasWebhookSecret: boolean;
     walletId: string;
-    moovDisbursement: string;
-    airtelDisbursement: string;
+    disbursementId: string;
     isLive: boolean;
     updatedAt?: string | null;
     updatedBy?: string | null;
@@ -206,29 +205,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     hasClientSecret: false,
     hasWebhookSecret: false,
     walletId: '',
-    moovDisbursement: '',
-    airtelDisbursement: '',
+    disbursementId: '',
     isLive: true,
   });
 
-  const [initialDisbursement, setInitialDisbursement] = useState<{
-    moov: string;
-    airtel: string;
-  }>({ moov: '', airtel: '' });
+  const [initialDisbursementId, setInitialDisbursementId] = useState<string>('');
 
   const [disbursementConfirmModal, setDisbursementConfirmModal] = useState<{
     isOpen: boolean;
-    oldMoov: string;
-    newMoov: string;
-    oldAirtel: string;
-    newAirtel: string;
+    oldDisbursementId: string;
+    newDisbursementId: string;
     confirmInput: string;
   }>({
     isOpen: false,
-    oldMoov: '',
-    newMoov: '',
-    oldAirtel: '',
-    newAirtel: '',
+    oldDisbursementId: '',
+    newDisbursementId: '',
     confirmInput: '',
   });
 
@@ -264,18 +255,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         hasClientSecret: Boolean(data.hasClientSecret),
         hasWebhookSecret: Boolean(data.hasWebhookSecret),
         walletId: data.walletId || '',
-        moovDisbursement: data.moovDisbursement || '',
-        airtelDisbursement: data.airtelDisbursement || '',
+        disbursementId: data.disbursementId || '',
         isLive: data.isLive ?? true,
         updatedAt: data.updatedAt || null,
         updatedBy: data.updatedBy || null,
         version: data.version || 1,
         webhookUrl: data.webhookUrl || '',
       }));
-      setInitialDisbursement({
-        moov: data.moovDisbursement || '',
-        airtel: data.airtelDisbursement || '',
-      });
+      setInitialDisbursementId(data.disbursementId || '');
     } catch (err) {
       console.warn('loadGatewayConfig notice:', err);
     }
@@ -308,11 +295,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       if (gatewayConfig.clientSecret.trim()) {
         payload.clientSecret = gatewayConfig.clientSecret.trim();
       }
-      if (gatewayConfig.moovDisbursement.trim()) {
-        payload.moovDisbursement = gatewayConfig.moovDisbursement.trim();
-      }
-      if (gatewayConfig.airtelDisbursement.trim()) {
-        payload.airtelDisbursement = gatewayConfig.airtelDisbursement.trim();
+      if (gatewayConfig.disbursementId.trim()) {
+        payload.disbursementId = gatewayConfig.disbursementId.trim();
       }
 
       await saveCfg(payload);
@@ -353,20 +337,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       return;
     }
 
-    const moovChanged =
-      gatewayConfig.moovDisbursement.trim() !== '' &&
-      gatewayConfig.moovDisbursement.trim() !== initialDisbursement.moov;
-    const airtelChanged =
-      gatewayConfig.airtelDisbursement.trim() !== '' &&
-      gatewayConfig.airtelDisbursement.trim() !== initialDisbursement.airtel;
+    const disbursementChanged =
+      gatewayConfig.disbursementId.trim() !== '' &&
+      gatewayConfig.disbursementId.trim() !== initialDisbursementId;
 
-    if (moovChanged || airtelChanged) {
+    if (disbursementChanged) {
       setDisbursementConfirmModal({
         isOpen: true,
-        oldMoov: initialDisbursement.moov,
-        newMoov: gatewayConfig.moovDisbursement.trim(),
-        oldAirtel: initialDisbursement.airtel,
-        newAirtel: gatewayConfig.airtelDisbursement.trim(),
+        oldDisbursementId: initialDisbursementId,
+        newDisbursementId: gatewayConfig.disbursementId.trim(),
         confirmInput: '',
       });
       return;
@@ -3342,24 +3321,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <span className="bg-blue-100 text-blue-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-sm">
                     Passerelle Officielle Gabon
                   </span>
-                  {gatewayConfig.clientId && gatewayConfig.hasClientSecret && gatewayConfig.walletId && gatewayConfig.moovDisbursement ? (
+                  {gatewayConfig.clientId && gatewayConfig.hasClientSecret && gatewayConfig.walletId && gatewayConfig.disbursementId ? (
                     <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
-                      Moov Actif
+                      SingPay Actif
                     </span>
                   ) : (
                     <span className="bg-slate-100 text-slate-600 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-slate-300 flex items-center gap-1">
-                      Moov Inactif
-                    </span>
-                  )}
-                  {gatewayConfig.clientId && gatewayConfig.hasClientSecret && gatewayConfig.walletId && gatewayConfig.airtelDisbursement ? (
-                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
-                      Airtel Actif
-                    </span>
-                  ) : (
-                    <span className="bg-slate-100 text-slate-600 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-slate-300 flex items-center gap-1">
-                      Airtel Inactif
+                      Reversement Inactif
                     </span>
                   )}
                 </div>
@@ -3385,15 +3354,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
 
             {/* Status Alert Banner */}
-            {gatewayConfig.clientId && gatewayConfig.hasClientSecret && gatewayConfig.walletId ? (
+            {gatewayConfig.clientId && gatewayConfig.hasClientSecret && gatewayConfig.walletId && gatewayConfig.disbursementId ? (
               <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-900 flex items-start gap-3">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="font-extrabold text-emerald-950">Passerelle SingPay opérationnelle</p>
                   <p className="text-emerald-800 leading-relaxed text-[11px]">
                     Les identifiants API sont enregistrés de façon confidentielle sur le serveur.
-                    Reversement Moov : <strong>{gatewayConfig.moovDisbursement || 'Non configuré'}</strong> |
-                    Reversement Airtel : <strong>{gatewayConfig.airtelDisbursement || 'Non configuré'}</strong>.
+                    Wallet de reversement (<code className="text-emerald-900">disbursement</code>) :{' '}
+                    <strong>{gatewayConfig.disbursementId}</strong>.
                   </p>
                 </div>
               </div>
@@ -3553,13 +3522,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <span className="text-[10px] text-slate-400">ID du portefeuille sur SingPay (affiché en clair pour vérification).</span>
                 </div>
 
-                {/* Moov Money Disbursement Phone */}
-                <div className="space-y-1.5">
+                {/* SingPay Disbursement Wallet ID */}
+                <div className="space-y-1.5 md:col-span-2">
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Numéro Moov Récepteur (<code className="text-blue-600 lowercase">disbursement</code>)
+                      ID Portefeuille de Reversement (<code className="text-indigo-600 lowercase">disbursement</code>)
                     </label>
-                    {gatewayConfig.moovDisbursement && (
+                    {gatewayConfig.disbursementId && (
                       <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.2 rounded-full">
                         Actif
                       </span>
@@ -3567,34 +3536,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
                   <input
                     type="text"
-                    value={gatewayConfig.moovDisbursement}
-                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, moovDisbursement: e.target.value })}
-                    placeholder="060, 062, 065 ou 066"
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                    value={gatewayConfig.disbursementId}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, disbursementId: e.target.value })}
+                    placeholder="Identifiant du portefeuille de reversement (SINGPAY_DISBURSEMENT_ID)"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
                   />
-                  <span className="text-[10px] text-slate-400">Numéro Moov Money recevant les fonds (préfixes : 60, 62, 65, 66).</span>
-                </div>
-
-                {/* Airtel Money Disbursement Phone */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Numéro Airtel Récepteur (<code className="text-red-600 lowercase">disbursement</code>)
-                    </label>
-                    {gatewayConfig.airtelDisbursement && (
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.2 rounded-full">
-                        Actif
-                      </span>
-                    )}
-                  </div>
-                  <input
-                    type="text"
-                    value={gatewayConfig.airtelDisbursement}
-                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, airtelDisbursement: e.target.value })}
-                    placeholder="074, 076 ou 077"
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-red-500 focus:outline-hidden"
-                  />
-                  <span className="text-[10px] text-slate-400">Numéro Airtel Money recevant les fonds (préfixes : 74, 76, 77).</span>
+                  <span className="text-[10px] text-slate-400">
+                    Identifiant alphanumérique du portefeuille SingPay où les frais collectés seront transférés (aussi configurable via Secret Manager <code>SINGPAY_DISBURSEMENT_ID</code>).
+                  </span>
                 </div>
 
                 {/* Interrupteur Paiements actifs */}
@@ -3661,44 +3610,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/60 space-y-1.5">
                 <span className="font-bold text-emerald-300 block">2. Journalisation d'Audit & Reconnexion</span>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Chaque modification de clés ou de numéros génère un enregistrement immuable dans <code>gateway_audit</code> (numéros masqués, jamais de secret) et exige une session connectée depuis moins de 10 minutes.
+                  Chaque modification de clés ou d'identifiant de portefeuille génère un enregistrement immuable dans <code>gateway_audit</code> (identifiants masqués, jamais de secret) et exige une session connectée depuis moins de 10 minutes.
                 </p>
               </div>
               <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/60 space-y-1.5">
                 <span className="font-bold text-purple-300 block">3. Masquage Strict & Validation</span>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Le Client Secret ne revient jamais à l'écran du navigateur une fois enregistré. Les numéros sont strictement validés selon les préfixes officiels Moov (60, 62, 65, 66) et Airtel (74, 76, 77).
+                  Le Client Secret ne revient jamais à l'écran du navigateur une fois enregistré. L'ID de reversement (<code>disbursement</code>) est strictement validé (alphanumérique, tirets et underscores autorisés).
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Modal de Confirmation de changement de numéro marchand */}
+          {/* Modal de Confirmation de changement de portefeuille de reversement */}
           {disbursementConfirmModal.isOpen && (
             <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 overflow-hidden p-6 space-y-4">
                 <div className="flex items-center gap-2 text-amber-600 font-extrabold text-base">
                   <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
-                  <span>Confirmation de changement de numéro marchand</span>
+                  <span>Confirmation de changement de portefeuille de reversement</span>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Attention : modifier un numéro de reversement redirige l'intégralité des paiements clients collectés vers ce nouveau compte mobile.
+                  Attention : modifier l'identifiant <code>disbursement</code> redirige l'intégralité des paiements clients collectés vers ce nouveau portefeuille SingPay.
                 </p>
                 <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-xs space-y-2">
-                  {disbursementConfirmModal.newMoov !== disbursementConfirmModal.oldMoov && (
-                    <div>
-                      <span className="font-bold text-slate-700 block">Compte Moov Money :</span>
-                      <span className="text-slate-400">Ancien : {disbursementConfirmModal.oldMoov ? `•••• •• ${disbursementConfirmModal.oldMoov.slice(-4)}` : 'Non défini'}</span>
-                      <span className="text-emerald-700 font-bold block">Nouveau : {disbursementConfirmModal.newMoov}</span>
-                    </div>
-                  )}
-                  {disbursementConfirmModal.newAirtel !== disbursementConfirmModal.oldAirtel && (
-                    <div>
-                      <span className="font-bold text-slate-700 block">Compte Airtel Money :</span>
-                      <span className="text-slate-400">Ancien : {disbursementConfirmModal.oldAirtel ? `•••• •• ${disbursementConfirmModal.oldAirtel.slice(-4)}` : 'Non défini'}</span>
-                      <span className="text-emerald-700 font-bold block">Nouveau : {disbursementConfirmModal.newAirtel}</span>
-                    </div>
-                  )}
+                  <div>
+                    <span className="font-bold text-slate-700 block">Portefeuille de reversement (<code className="lowercase">disbursement</code>) :</span>
+                    <span className="text-slate-400">Ancien : {disbursementConfirmModal.oldDisbursementId ? `••••${disbursementConfirmModal.oldDisbursementId.slice(-4)}` : 'Non défini'}</span>
+                    <span className="text-emerald-700 font-bold block font-mono">Nouveau : {disbursementConfirmModal.newDisbursementId}</span>
+                  </div>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-700 block">
@@ -3715,7 +3655,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <div className="flex items-center justify-end gap-2 pt-2">
                   <button
                     type="button"
-                    onClick={() => setDisbursementConfirmModal({ isOpen: false, oldMoov: '', newMoov: '', oldAirtel: '', newAirtel: '', confirmInput: '' })}
+                    onClick={() => setDisbursementConfirmModal({ isOpen: false, oldDisbursementId: '', newDisbursementId: '', confirmInput: '' })}
                     className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
                   >
                     Annuler

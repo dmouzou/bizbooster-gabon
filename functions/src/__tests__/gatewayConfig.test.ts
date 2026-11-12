@@ -1,17 +1,30 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   assertSuperAdmin,
   validateNoControlOrWhitespace,
-  normalizeMoovDisbursement,
-  normalizeAirtelDisbursement,
+  validateDisbursementId,
+  maskIdentifier,
   maskNumber,
+  formatSingPayClientMsisdn,
+  buildSingPayPaymentPayload,
   getSingPayConfig,
   clearSingPayConfigCache,
 } from "../index";
 
 describe("Configuration administrable Passerelle (Phase 2)", () => {
+  const originalDisbursementEnv = process.env.SINGPAY_DISBURSEMENT_ID;
+
   beforeEach(() => {
     clearSingPayConfigCache();
+  });
+
+  afterEach(() => {
+    clearSingPayConfigCache();
+    if (originalDisbursementEnv === undefined) {
+      delete process.env.SINGPAY_DISBURSEMENT_ID;
+    } else {
+      process.env.SINGPAY_DISBURSEMENT_ID = originalDisbursementEnv;
+    }
   });
 
   describe("assertSuperAdmin", () => {
@@ -77,50 +90,81 @@ describe("Configuration administrable Passerelle (Phase 2)", () => {
     });
   });
 
-  describe("Normalisation et validation des numéros marchands", () => {
-    it("normalise un numéro Moov gabonais au format 241...", () => {
-      expect(normalizeMoovDisbursement("062 18 87 34")).toBe("24162188734");
-      expect(normalizeMoovDisbursement("65123456")).toBe("24165123456");
-      expect(normalizeMoovDisbursement("+241 66 00 11 22")).toBe("24166001122");
+  describe("Validation du Disbursement ID (wallet de reversement)", () => {
+    it("accepte un identifiant alphanumérique valide avec tirets/underscores et supprime les espaces externes", () => {
+      expect(validateDisbursementId("  wallet_disb-01_ABC  ")).toBe("wallet_disb-01_ABC");
     });
 
-    it("rejette un numéro Airtel saisi dans le champ Moov", () => {
-      expect(() => normalizeMoovDisbursement("074 12 34 56")).toThrow(
-        /doit commencer par un préfixe Moov/
-      );
-      expect(() => normalizeMoovDisbursement("077 12 34 56")).toThrow(
-        /doit commencer par un préfixe Moov/
+    it("rejette un Disbursement ID vide", () => {
+      expect(() => validateDisbursementId("   ")).toThrow(
+        /Disbursement ID ne peut pas être vide/
       );
     });
 
-    it("rejette une longueur invalide pour Moov", () => {
-      expect(() => normalizeMoovDisbursement("62123")).toThrow(
-        /doit comporter 8 chiffres/
+    it("rejette les espaces internes ou caractères spéciaux invalides", () => {
+      expect(() => validateDisbursementId("disb id")).toThrow(
+        /ne doit pas contenir d'espaces internes/
+      );
+      expect(() => validateDisbursementId("disb@id!")).toThrow(
+        /identifiant alphanumérique valide/
       );
     });
 
-    it("normalise un numéro Airtel gabonais au format 241...", () => {
-      expect(normalizeAirtelDisbursement("074 12 34 56")).toBe("24174123456");
-      expect(normalizeAirtelDisbursement("77123456")).toBe("24177123456");
-      expect(normalizeAirtelDisbursement("+241 76 99 88 77")).toBe("24176998877");
-    });
-
-    it("rejette un numéro Moov saisi dans le champ Airtel", () => {
-      expect(() => normalizeAirtelDisbursement("062 18 87 34")).toThrow(
-        /doit commencer par un préfixe Airtel/
+    it("rejette un Disbursement ID dépassant 128 caractères", () => {
+      expect(() => validateDisbursementId("a".repeat(129))).toThrow(
+        /Disbursement ID trop long/
       );
     });
   });
 
-  describe("Masquage des numéros (maskNumber)", () => {
-    it("masque correctement les numéros marchands pour l'audit et l'affichage", () => {
+  describe("Masquage des identifiants et numéros", () => {
+    it("masque correctement les identifiants de portefeuille pour l'audit", () => {
+      expect(maskIdentifier("WALLET_DISB_9876")).toBe("••••••••9876");
+      expect(maskIdentifier("1234")).toBe("••••");
+      expect(maskIdentifier("")).toBe("");
+    });
+
+    it("masque correctement les numéros clients pour l'audit et l'affichage", () => {
       expect(maskNumber("24162188734")).toBe("+241 •• •• 8734");
       expect(maskNumber("074123456")).toBe("+241 •• •• 3456");
       expect(maskNumber("")).toBe("");
     });
   });
 
+  describe("Format SingPay client_msisdn et charge utile POST", () => {
+    it("formate client_msisdn sur 9 chiffres avec 0 initial et sans indicatif 241", () => {
+      expect(formatSingPayClientMsisdn("77000001")).toBe("077000001");
+      expect(formatSingPayClientMsisdn("62000002")).toBe("062000002");
+    });
+
+    it("construit la charge utile exacte attendue par SingPay (disbursement ID + isTransfer: false)", () => {
+      const payload = buildSingPayPaymentPayload({
+        amount: 2000,
+        reference: "BZB_user1234_abc12345",
+        rawDigits: "77000001",
+        walletId: "WAL_TEST_1234",
+        disbursementId: "DISB_TEST_9876",
+      });
+
+      expect(payload).toEqual({
+        amount: 2000,
+        reference: "BZB_user1234_abc12345",
+        client_msisdn: "077000001",
+        portefeuille: "WAL_TEST_1234",
+        disbursement: "DISB_TEST_9876",
+        isTransfer: false,
+      });
+    });
+  });
+
   describe("Configuration SingPay (getSingPayConfig)", () => {
+    it("lit SINGPAY_DISBURSEMENT_ID depuis l'environnement en repli Secret Manager", async () => {
+      process.env.SINGPAY_DISBURSEMENT_ID = "ENV_DISB_WALLET_01";
+      clearSingPayConfigCache();
+      const cfg = await getSingPayConfig();
+      expect(cfg.disbursementId).toBe("ENV_DISB_WALLET_01");
+    });
+
     it("supprime le repli webhookSecret = clientSecret", async () => {
       const cfg = await getSingPayConfig();
       // Si webhookSecret n'est pas configuré, il ne doit PAS copier clientSecret

@@ -428,8 +428,7 @@ const singpayClientId = defineSecret("SINGPAY_CLIENT_ID");
 const singpayClientSecret = defineSecret("SINGPAY_CLIENT_SECRET");
 const singpayWalletId = defineSecret("SINGPAY_WALLET_ID");
 const singpayWebhookSecret = defineSecret("SINGPAY_WEBHOOK_SECRET");
-const singpayMoovDisbursement = defineSecret("SINGPAY_MOOV_DISBURSEMENT");
-const singpayAirtelDisbursement = defineSecret("SINGPAY_AIRTEL_DISBURSEMENT");
+const singpayDisbursementId = defineSecret("SINGPAY_DISBURSEMENT_ID");
 
 // Table des préfixes d'opérateurs stricte (Phase 6)
 export const MOOV_PREFIXES = ["60", "62", "65", "66"];
@@ -454,8 +453,7 @@ export interface SingPayConfigData {
   clientSecret: string;
   walletId: string;
   webhookSecret: string;
-  moovDisbursement: string;
-  airtelDisbursement: string;
+  disbursementId: string;
   isLive: boolean;
   version?: number;
   updatedAt?: string;
@@ -498,8 +496,7 @@ export async function getSingPayConfig(): Promise<SingPayConfigData> {
   let secClientSecret = "";
   let secWalletId = "";
   let secWebhookSecret = "";
-  let secMoovDisbursement = "";
-  let secAirtelDisbursement = "";
+  let secDisbursementId = "";
 
   try {
     secClientId = singpayClientId.value() || process.env.SINGPAY_CLIENT_ID || "";
@@ -522,22 +519,16 @@ export async function getSingPayConfig(): Promise<SingPayConfigData> {
     secWebhookSecret = process.env.SINGPAY_WEBHOOK_SECRET || "";
   }
   try {
-    secMoovDisbursement = singpayMoovDisbursement.value() || process.env.SINGPAY_MOOV_DISBURSEMENT || "";
+    secDisbursementId = singpayDisbursementId.value() || process.env.SINGPAY_DISBURSEMENT_ID || "";
   } catch {
-    secMoovDisbursement = process.env.SINGPAY_MOOV_DISBURSEMENT || "";
-  }
-  try {
-    secAirtelDisbursement = singpayAirtelDisbursement.value() || process.env.SINGPAY_AIRTEL_DISBURSEMENT || "";
-  } catch {
-    secAirtelDisbursement = process.env.SINGPAY_AIRTEL_DISBURSEMENT || "";
+    secDisbursementId = process.env.SINGPAY_DISBURSEMENT_ID || "";
   }
 
   const clientId = (firestoreDoc?.clientId as string) || secClientId;
   const clientSecret = (firestoreDoc?.clientSecret as string) || secClientSecret;
   const walletId = (firestoreDoc?.walletId as string) || secWalletId;
   const webhookSecret = (firestoreDoc?.webhookSecret as string) || secWebhookSecret;
-  const moovDisbursement = (firestoreDoc?.moovDisbursement as string) || secMoovDisbursement;
-  const airtelDisbursement = (firestoreDoc?.airtelDisbursement as string) || secAirtelDisbursement;
+  const disbursementId = (firestoreDoc?.disbursementId as string) || secDisbursementId;
   // B30: Échouer fermé si la configuration n'est pas explicite
   const isLive = firestoreDoc?.isLive !== undefined ? Boolean(firestoreDoc.isLive) : false;
   const version = typeof firestoreDoc?.version === "number" ? firestoreDoc.version : 1;
@@ -549,8 +540,7 @@ export async function getSingPayConfig(): Promise<SingPayConfigData> {
     clientSecret,
     walletId,
     webhookSecret,
-    moovDisbursement,
-    airtelDisbursement,
+    disbursementId,
     isLive,
     version,
     updatedAt,
@@ -631,46 +621,52 @@ export function validateNoControlOrWhitespace(value: string, fieldName: string) 
   }
 }
 
-export function normalizeMoovDisbursement(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-  let clean = digits;
-  if (clean.startsWith("241")) clean = clean.slice(3);
-  if (clean.startsWith("0")) clean = clean.slice(1);
-  if (clean.length !== 8) {
-    throw new HttpsError(
-      "invalid-argument",
-      "Le numéro Moov Money doit comporter 8 chiffres après l'indicatif."
-    );
-  }
-  const prefix = clean.slice(0, 2);
-  if (!MOOV_PREFIXES.includes(prefix)) {
-    throw new HttpsError(
-      "invalid-argument",
-      `Le numéro Moov doit commencer par un préfixe Moov (${MOOV_PREFIXES.join(", ")}).`
-    );
-  }
-  return `241${clean}`;
+export function maskIdentifier(val?: string): string {
+  if (!val) return "";
+  if (val.length <= 4) return "••••";
+  return `••••••••${val.slice(-4)}`;
 }
 
-export function normalizeAirtelDisbursement(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-  let clean = digits;
-  if (clean.startsWith("241")) clean = clean.slice(3);
-  if (clean.startsWith("0")) clean = clean.slice(1);
-  if (clean.length !== 8) {
+export function validateDisbursementId(raw: string): string {
+  const trimmed = String(raw || "").trim();
+  validateNoControlOrWhitespace(trimmed, "Disbursement ID");
+  if (!trimmed) {
     throw new HttpsError(
       "invalid-argument",
-      "Le numéro Airtel Money doit comporter 8 chiffres après l'indicatif."
+      "Le champ Disbursement ID ne peut pas être vide."
     );
   }
-  const prefix = clean.slice(0, 2);
-  if (!AIRTEL_PREFIXES.includes(prefix)) {
+  if (trimmed.length > 128) {
+    throw new HttpsError("invalid-argument", "Disbursement ID trop long (max 128).");
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(trimmed)) {
     throw new HttpsError(
       "invalid-argument",
-      `Le numéro Airtel doit commencer par un préfixe Airtel (${AIRTEL_PREFIXES.join(", ")}).`
+      "Disbursement ID doit être un identifiant alphanumérique valide."
     );
   }
-  return `241${clean}`;
+  return trimmed;
+}
+
+export function formatSingPayClientMsisdn(rawDigits: string): string {
+  return `0${rawDigits}`;
+}
+
+export function buildSingPayPaymentPayload(params: {
+  amount: number;
+  reference: string;
+  rawDigits: string;
+  walletId: string;
+  disbursementId: string;
+}) {
+  return {
+    amount: params.amount,
+    reference: params.reference,
+    client_msisdn: formatSingPayClientMsisdn(params.rawDigits),
+    portefeuille: params.walletId,
+    disbursement: params.disbursementId,
+    isTransfer: false,
+  };
 }
 
 /**
@@ -684,8 +680,7 @@ export const getGatewayConfig = onCall(
       singpayClientSecret,
       singpayWalletId,
       singpayWebhookSecret,
-      singpayMoovDisbursement,
-      singpayAirtelDisbursement,
+      singpayDisbursementId,
     ],
   },
   async (request) => {
@@ -704,8 +699,7 @@ export const getGatewayConfig = onCall(
       hasClientSecret: Boolean(cfg.clientSecret),
       hasWebhookSecret: Boolean(cfg.webhookSecret),
       walletId: cfg.walletId,
-      moovDisbursement: cfg.moovDisbursement,
-      airtelDisbursement: cfg.airtelDisbursement,
+      disbursementId: cfg.disbursementId,
       isLive: cfg.isLive,
       updatedAt: cfg.updatedAt || null,
       updatedBy: cfg.updatedBy || null,
@@ -716,7 +710,7 @@ export const getGatewayConfig = onCall(
 );
 
 /**
- * Enregistre les clés et numéros de reversement configurés par le Super Admin.
+ * Enregistre les clés et le portefeuille de reversement configurés par le Super Admin.
  */
 export const saveGatewayConfig = onCall(
   {
@@ -726,8 +720,7 @@ export const saveGatewayConfig = onCall(
       singpayClientSecret,
       singpayWalletId,
       singpayWebhookSecret,
-      singpayMoovDisbursement,
-      singpayAirtelDisbursement,
+      singpayDisbursementId,
     ],
   },
   async (request) => {
@@ -747,8 +740,7 @@ export const saveGatewayConfig = onCall(
       clientId?: string;
       clientSecret?: string;
       walletId?: string;
-      moovDisbursement?: string;
-      airtelDisbursement?: string;
+      disbursementId?: string;
       isLive?: boolean;
       rotateWebhookSecret?: boolean;
     };
@@ -797,16 +789,9 @@ export const saveGatewayConfig = onCall(
       }
     }
 
-    let normalizedMoov: string | undefined;
-    if (data.moovDisbursement !== undefined && data.moovDisbursement !== "") {
-      validateNoControlOrWhitespace(data.moovDisbursement, "Numéro Moov");
-      normalizedMoov = normalizeMoovDisbursement(data.moovDisbursement);
-    }
-
-    let normalizedAirtel: string | undefined;
-    if (data.airtelDisbursement !== undefined && data.airtelDisbursement !== "") {
-      validateNoControlOrWhitespace(data.airtelDisbursement, "Numéro Airtel");
-      normalizedAirtel = normalizeAirtelDisbursement(data.airtelDisbursement);
+    let normalizedDisbursementId: string | undefined;
+    if (data.disbursementId !== undefined && data.disbursementId !== "") {
+      normalizedDisbursementId = validateDisbursementId(data.disbursementId);
     }
 
     const configRef = db.collection("private_config").doc("singpay");
@@ -846,22 +831,13 @@ export const saveGatewayConfig = onCall(
       }
 
       let disbursementChanged = false;
-      const oldMoovMasked = maskNumber(current.moovDisbursement);
-      let newMoovMasked = oldMoovMasked;
-      if (normalizedMoov !== undefined) {
-        updates.moovDisbursement = normalizedMoov;
-        changedFields.push("moovDisbursement");
+      const oldDisbursementMasked = maskIdentifier(current.disbursementId);
+      let newDisbursementMasked = oldDisbursementMasked;
+      if (normalizedDisbursementId !== undefined) {
+        updates.disbursementId = normalizedDisbursementId;
+        changedFields.push("disbursementId");
         disbursementChanged = true;
-        newMoovMasked = maskNumber(normalizedMoov);
-      }
-
-      const oldAirtelMasked = maskNumber(current.airtelDisbursement);
-      let newAirtelMasked = oldAirtelMasked;
-      if (normalizedAirtel !== undefined) {
-        updates.airtelDisbursement = normalizedAirtel;
-        changedFields.push("airtelDisbursement");
-        disbursementChanged = true;
-        newAirtelMasked = maskNumber(normalizedAirtel);
+        newDisbursementMasked = maskIdentifier(normalizedDisbursementId);
       }
 
       tx.set(configRef, updates, {merge: true});
@@ -873,10 +849,8 @@ export const saveGatewayConfig = onCall(
         uid,
         changedFields,
         disbursementChanged,
-        oldMoovMasked,
-        newMoovMasked,
-        oldAirtelMasked,
-        newAirtelMasked,
+        oldDisbursementMasked,
+        newDisbursementMasked,
         version,
       });
 
@@ -913,8 +887,7 @@ export const migrateGatewayConfig = onCall(
       clientSecret: data.singpayClientSecret || data.clientSecret || "",
       walletId: data.singpayWalletId || data.walletId || "",
       webhookSecret: data.singpayWebhookSecret || data.webhookSecret || "",
-      moovDisbursement: data.moovDisbursementNumber || data.moovDisbursement || "",
-      airtelDisbursement: data.airtelDisbursementNumber || data.airtelDisbursement || "",
+      disbursementId: data.singpayDisbursementId || data.disbursementId || "",
       isLive: data.isLive ?? true,
       version: 1,
       updatedAt: new Date().toISOString(),
@@ -1421,8 +1394,7 @@ export const initiateSingPayPayment = onCall(
       singpayClientId,
       singpayClientSecret,
       singpayWalletId,
-      singpayMoovDisbursement,
-      singpayAirtelDisbursement,
+      singpayDisbursementId,
     ],
   },
   async (request) => {
@@ -1566,7 +1538,7 @@ export const initiateSingPayPayment = onCall(
       .slice(0, 12);
     const serverReference = `BZB_${uid8}_${keyHash}`;
 
-    const clientMsisdn = `241${rawDigits}`;
+    const clientMsisdn = formatSingPayClientMsisdn(rawDigits);
     const nowIso = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 3 * 60 * 1000).toISOString();
 
@@ -1668,41 +1640,26 @@ export const initiateSingPayPayment = onCall(
       );
     }
 
-    const rawDisbursement =
-      requestedOperator === "AIRTEL_MONEY"
-        ? cfg.airtelDisbursement
-        : cfg.moovDisbursement;
-
-    if (!rawDisbursement) {
+    const disbursementId = String(cfg.disbursementId || "").trim();
+    if (!disbursementId) {
       await paymentRef.update({
         status: "FAILED",
-        errorReason: `Numéro de reversement non configuré pour ${requestedOperator}.`,
+        errorReason: "Disbursement ID SingPay non configuré sur le serveur.",
         updatedAt: new Date().toISOString(),
       });
       throw new HttpsError(
         "failed-precondition",
-        `Reversement non configuré pour ${requestedOperator}.`
+        "Disbursement ID SingPay non configuré sur le serveur."
       );
     }
 
-    const disbDigits = rawDisbursement.replace(/\D/g, "");
-    let disbursement = disbDigits;
-    if (disbDigits.startsWith("241")) {
-      disbursement = disbDigits;
-    } else if (disbDigits.startsWith("0")) {
-      disbursement = `241${disbDigits.slice(1)}`;
-    } else if (disbDigits.length === 8) {
-      disbursement = `241${disbDigits}`;
-    }
-
-    const paymentPayload = {
+    const paymentPayload = buildSingPayPaymentPayload({
       amount: quote.amount,
       reference: serverReference,
-      client_msisdn: clientMsisdn,
-      portefeuille: walletId,
-      disbursement: disbursement,
-      isTransfer: false,
-    };
+      rawDigits,
+      walletId,
+      disbursementId,
+    });
 
     const operatorEndpointCode =
       requestedOperator === "AIRTEL_MONEY" ? "74" : "62";

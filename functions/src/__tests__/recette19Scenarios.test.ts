@@ -456,25 +456,24 @@ describe('Recette Officielle : 19 Scénarios de Validation (Phase 9)', () => {
   // -----------------------------------------------------------------
   // Scénario 17 : Super Admin change un numéro de reversement -> audit créé, numéro masqué
   // -----------------------------------------------------------------
-  it('Scénario 17: Super Admin change un numéro de reversement -> audit créé, numéro masqué dans l\'audit', async () => {
-    const oldMoov = '24160000000';
-    const newMoov = '24162000000';
+  it("Scénario 17: Super Admin change le Disbursement ID -> audit créé, identifiant masqué dans l'audit", async () => {
+    const newDisbursement = "DISB_WALLET_NEW_9999";
 
-    await db.collection('gateway_audit').add({
-      uid: 'super_admin_1',
-      changedFields: ['moovDisbursement'],
+    await db.collection("gateway_audit").add({
+      uid: "super_admin_1",
+      changedFields: ["disbursementId"],
       disbursementChanged: true,
-      oldMoovMasked: '241••••0000',
-      newMoovMasked: '241••••0000',
+      oldDisbursementMasked: "••••••••1111",
+      newDisbursementMasked: "••••••••9999",
       at: new Date().toISOString(),
       version: 2,
     });
 
-    const auditSnap = await db.collection('gateway_audit').get();
+    const auditSnap = await db.collection("gateway_audit").get();
     expect(auditSnap.empty).toBe(false);
     const auditData = auditSnap.docs[0].data();
     expect(auditData.disbursementChanged).toBe(true);
-    expect(auditData.newMoovMasked).not.toBe(newMoov);
+    expect(auditData.newDisbursementMasked).not.toBe(newDisbursement);
   });
 
   // -----------------------------------------------------------------

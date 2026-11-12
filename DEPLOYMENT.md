@@ -134,8 +134,7 @@ Une fois la période d'observation de 7 jours écoulée sans incident :
    gcloud secrets delete SINGPAY_CLIENT_SECRET --project <PROJECT_ID> --quiet
    gcloud secrets delete SINGPAY_WALLET_ID --project <PROJECT_ID> --quiet
    gcloud secrets delete SINGPAY_WEBHOOK_SECRET --project <PROJECT_ID> --quiet
-   gcloud secrets delete SINGPAY_MOOV_DISBURSEMENT --project <PROJECT_ID> --quiet
-   gcloud secrets delete SINGPAY_AIRTEL_DISBURSEMENT --project <PROJECT_ID> --quiet
+   gcloud secrets delete SINGPAY_DISBURSEMENT_ID --project <PROJECT_ID> --quiet
    ```
 
 **Critère de validation :**
