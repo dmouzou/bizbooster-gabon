@@ -71,9 +71,11 @@ export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
                         </span>
                       );
                     })()}
-                    <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-sm">
-                      {ad.mainCategory}
-                    </span>
+                    {ad.mainCategory !== 'EVENEMENTS' && ad.mainCategory !== 'AVIS_DE_RECHERCHE' && (
+                      <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-sm">
+                        {ad.mainCategory}
+                      </span>
+                    )}
                   </div>
 
                   <div

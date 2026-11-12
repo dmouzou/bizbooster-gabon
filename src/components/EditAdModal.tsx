@@ -58,6 +58,8 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { compressImageForUpload } from '../utils/imageCompressor';
 import { trackDownloadRequest } from '../services/platformMetrics';
 import { toE164 } from '../utils/phone';
+import { EventDateTimePicker } from './EventDateTimePicker';
+import { validateEventSchedule } from '../utils/eventValidation';
 
 interface EditAdModalProps {
   isOpen: boolean;
@@ -390,12 +392,9 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
         setErrorMsg("Le prix d'entrée ne peut pas être négatif.");
         return;
       }
-      if (!eventDate) {
-        setErrorMsg("La date de l'événement est obligatoire.");
-        return;
-      }
-      if (eventDate < new Date().toISOString().slice(0, 10)) {
-        setErrorMsg("La date de l'événement ne peut pas être dans le passé.");
+      const scheduleCheck = validateEventSchedule(eventDate, eventTime);
+      if (!scheduleCheck.isValid) {
+        setErrorMsg(scheduleCheck.error || "La date et l'heure de l'événement doivent être valides et dans le futur.");
         return;
       }
       if (!eventVenue.trim()) {
@@ -1057,32 +1056,13 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
                     </select>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-fuchsia-950 mb-1">
-                        Date de l'événement :
-                      </label>
-                      <input
-                        type="date"
-                        value={eventDate}
-                        min={new Date().toISOString().slice(0, 10)}
-                        onChange={(e) => setEventDate(e.target.value)}
-                        className="w-full text-xs font-bold bg-white border border-fuchsia-200 rounded-xl px-3 py-2 focus:outline-fuchsia-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-fuchsia-950 mb-1">
-                        Heure de début (facultatif) :
-                      </label>
-                      <input
-                        type="time"
-                        value={eventTime}
-                        onChange={(e) => setEventTime(e.target.value)}
-                        className="w-full text-xs font-bold bg-white border border-fuchsia-200 rounded-xl px-3 py-2 focus:outline-fuchsia-500"
-                      />
-                    </div>
-                  </div>
+                  <EventDateTimePicker
+                    eventDate={eventDate}
+                    onDateChange={setEventDate}
+                    eventTime={eventTime}
+                    onTimeChange={setEventTime}
+                    idPrefix="edit-event"
+                  />
 
                   <div>
                     <label className="block text-xs font-bold text-fuchsia-950 mb-1">
@@ -1562,7 +1542,7 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
 
                   return (
                     <div className="space-y-3">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className={mainCategory === 'EVENEMENTS' ? 'space-y-3' : 'grid grid-cols-1 sm:grid-cols-2 gap-3'}>
                         <div>
                           <label className="block text-xs font-bold text-slate-700 mb-1">
                             {isSeeker
@@ -1583,34 +1563,36 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
                           />
                         </div>
 
-                        <div>
-                          <label className="block text-xs font-bold text-slate-700 mb-1">
-                            {isJob ? 'Périodicité du salaire :' : 'Unité du prix :'}
-                          </label>
-                          <select
-                            value={priceUnit}
-                            onChange={(e) => setPriceUnit(e.target.value as any)}
-                            className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-emerald-500"
-                          >
-                            {isJob ? (
-                              <>
-                                <option value="mois">Salaire mensuel</option>
-                                <option value="jour">Salaire journalier</option>
-                                <option value="trimestre">Salaire trimestriel</option>
-                                <option value="an">Salaire annuel</option>
-                              </>
-                            ) : (
-                              <>
-                                <option value="total">Prix Total (Achat / Vente)</option>
-                                <option value="mois">Par Mois (Location)</option>
-                                <option value="jour">Par Jour (Location)</option>
-                                <option value="trimestre">Par Trimestre (Location)</option>
-                                <option value="an">Par An (Location)</option>
-                                <option value="heure">Par Heure</option>
-                              </>
-                            )}
-                          </select>
-                        </div>
+                        {mainCategory !== 'EVENEMENTS' && (
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                              {isJob ? 'Périodicité du salaire :' : 'Unité du prix :'}
+                            </label>
+                            <select
+                              value={priceUnit}
+                              onChange={(e) => setPriceUnit(e.target.value as any)}
+                              className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-emerald-500"
+                            >
+                              {isJob ? (
+                                <>
+                                  <option value="mois">Salaire mensuel</option>
+                                  <option value="jour">Salaire journalier</option>
+                                  <option value="trimestre">Salaire trimestriel</option>
+                                  <option value="an">Salaire annuel</option>
+                                </>
+                              ) : (
+                                <>
+                                  <option value="total">Prix Total (Achat / Vente)</option>
+                                  <option value="mois">Par Mois (Location)</option>
+                                  <option value="jour">Par Jour (Location)</option>
+                                  <option value="trimestre">Par Trimestre (Location)</option>
+                                  <option value="an">Par An (Location)</option>
+                                  <option value="heure">Par Heure</option>
+                                </>
+                              )}
+                            </select>
+                          </div>
+                        )}
                       </div>
 
                       {/* Tranche de salaire pour l'employeur (Point 1) */}

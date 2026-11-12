@@ -21,13 +21,16 @@ interface KycUploadModalProps {
   onSuccess?: () => void;
 }
 
-export const KycUploadModal: React.FC<KycUploadModalProps> = ({
-  isOpen,
+export const KycUploadModal: React.FC<KycUploadModalProps> = (props) => {
+  if (!props.isOpen) return null;
+  return <KycUploadModalContent {...props} />;
+};
+
+const KycUploadModalContent: React.FC<KycUploadModalProps> = ({
   onClose,
   currentUser,
   onSuccess,
 }) => {
-  if (!isOpen) return null;
 
   const [docType, setDocType] = useState<'CNI' | 'CARTE_SEJOUR' | 'PASSPORT'>(
     currentUser.idDocumentType || 'CNI'

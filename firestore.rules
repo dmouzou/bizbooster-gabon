@@ -192,9 +192,10 @@ service cloud.firestore {
                         && !request.resource.data.diff(resource.data).affectedKeys()
                             .hasAny(['isKycVerified', 'isVerified', 'isAdmin', 'isSuperAdmin', 'password', 'lastPasswordChangeDate'])
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['idVerificationStatus'])
-                            || request.resource.data.idVerificationStatus in ['NOT_SUBMITTED', 'PENDING'])
-                        && (resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') != 'VERIFIED'
-                            || request.resource.data.diff(resource.data).affectedKeys().hasAny(['idDocumentUrl']))
+                            || (request.resource.data.idVerificationStatus in ['NOT_SUBMITTED', 'PENDING']
+                                && (resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') != 'VERIFIED'
+                                    || (request.resource.data.idVerificationStatus == 'PENDING'
+                                        && request.resource.data.diff(resource.data).affectedKeys().hasAny(['idDocumentUrl'])))))
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['idDocumentUrl'])
                             || request.resource.data.get('idVerificationStatus', 'NOT_SUBMITTED') == 'PENDING')
                         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['phone'])

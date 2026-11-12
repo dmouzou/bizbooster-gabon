@@ -16,6 +16,8 @@ import {getAuth, UserRecord} from "firebase-admin/auth";
 import {initializeApp} from "firebase-admin/app";
 import * as crypto from "crypto";
 import {isAdVipCornerEligible} from "./vipCorner";
+import {isExplicitTestAd} from "./testAds";
+import {syncAdViewCounters} from "./syncViewCounters";
 import {
   calculateServerPrice,
   quoteOrder,
@@ -23,6 +25,7 @@ import {
   PriceContext,
   Quote,
   PRICING_DURATIONS,
+  SUBSCRIPTION_QUOTAS,
 } from "./pricing";
 
 export const FUNCTION_REGION = process.env.FUNCTION_REGION || "us-central1";
@@ -183,14 +186,7 @@ export type AdStatus = (typeof AD_STATUSES)[number];
 export const EXTENDABLE_AD_STATUSES = ["ACTIVE", "EXPIRED"] as const;
 export type ExtendableAdStatus = (typeof EXTENDABLE_AD_STATUSES)[number];
 
-// Table des quotas partagée (Phase 7 - Décision D3: Standard = 0)
-export const SUBSCRIPTION_QUOTAS: Record<string, number> = {
-  STANDARD: 0,
-  PRO: 8,
-  ELITE: 14,
-  BUSINESS: 20,
-  VIP_EXEMPT: 20,
-};
+export {SUBSCRIPTION_QUOTAS};
 
 // Numéros de test Firebase Auth (Phase 8) sans code secret
 export const FIREBASE_TEST_PHONE_NUMBERS = [
@@ -211,8 +207,8 @@ export const FIREBASE_TEST_PHONE_NUMBERS = [
  * - Ignore les partenaires avec isExempt ou exemptFromPaymentAndKyc lors
  *   des rétrogradations et suspensions.
  * - Rétrograde les abonnements expirés (PRO/ELITE/BUSINESS vers STANDARD).
- * - Suspend automatiquement les annonces excédentaires au-delà du quota
- *   Standard (3 annonces).
+ * - Suspend automatiquement les annonces excédentaires au-delà du plafond
+ *   simultané Standard (3 annonces, 0 annonce gratuite).
  */
 export const expireAds = onSchedule("every 60 minutes", async () => {
   const db = getFirestore();
@@ -2618,36 +2614,15 @@ export const onAdCreated = onDocumentCreated(
     const consumed = Number(userData.consumedFreeAdsCount || 0);
     const isCoveredByQuota = !isExempt && quota > 0 && consumed < quota;
 
-    // B13: Vérification annuaire professionnel (égalité exacte sur le numéro Auth vérifié)
-    let isRegistered = false;
-    try {
-      const sysConfigSnap = await db.doc("settings/system_config").get();
-      if (sysConfigSnap.exists) {
-        const sysConfig = sysConfigSnap.data() || {};
-        const registeredUserIds =
-          (sysConfig.registeredUserIds as string[]) || [];
-        const registeredPhones =
-          (sysConfig.registeredPhones as string[]) || [];
-        const authUserRecord = await getAuth().getUser(userId).catch(() => null);
-        const verifiedAuthPhone = authUserRecord?.phoneNumber || (userData.phoneNumber as string) || "";
-        const cleanAuthPhone = verifiedAuthPhone.replace(/\D/g, "");
-
-        isRegistered =
-          registeredUserIds.includes(userId) ||
-          (cleanAuthPhone.length >= 8 &&
-            registeredPhones.map((p: string) => p.replace(/\D/g, "")).includes(cleanAuthPhone));
-      }
-    } catch (cfgErr) {
-      console.warn("onAdCreated: Erreur lecture system_config:", cfgErr);
-    }
+    // F1: Seules les annonces/comptes portant un préfixe explicite de test/démo sont marqués isTest
+    const isTest = isExplicitTestAd(adId, userId);
 
     const updates: Record<string, unknown> = {
       ownerTier: effective.ownerTier,
       isOwnerVip: effective.isOwnerVip,
       isOwnerVerified: effective.isOwnerVerified,
       isVipCorner: isVip,
-      advertiserApproved: isRegistered,
-      isTest: !isRegistered,
+      isTest,
       updatedAt: new Date().toISOString(),
     };
 
@@ -3432,6 +3407,17 @@ export {
   logKycView,
 } from "./moderation";
 export { registerView } from "./registerView";
+export { isExplicitTestAd } from "./testAds";
+export { syncAdViewCounters } from "./syncViewCounters";
 export { reportAd } from "./reports";
 export { resubmitAd } from "./resubmitAd";
+
+/**
+ * Synchronise chaque heure les compteurs de vues (`ad_counters/{adId}.views`)
+ * vers `ads/{adId}.viewsCount` sans écrire dans `ads` à chaque vue.
+ */
+export const syncAdCounters = onSchedule("every 60 minutes", async () => {
+  const db = getFirestore();
+  await syncAdViewCounters(db);
+});
 

@@ -231,6 +231,7 @@ export function getAdTransactionBadge(ad?: {
   autresEmploisData?: { subCategory?: string };
   tutoringData?: { kind?: string };
   courseType?: string;
+  eventData?: { eventType?: string };
 } | null): AdBadgeDetails {
   if (!ad) {
     return {
@@ -312,8 +313,9 @@ export function getAdTransactionBadge(ad?: {
 
   // 6. Événements
   if (cat === 'EVENEMENTS') {
+    const eventType = ad.eventData?.eventType;
     return {
-      label: 'ÉVÉNEMENT',
+      label: (eventType || 'ÉVÉNEMENT').toUpperCase(),
       badgeClass: 'bg-fuchsia-100 text-fuchsia-900 border border-fuchsia-300',
       cardBadgeClass: 'bg-fuchsia-600 text-white ring-1 ring-fuchsia-400',
     };

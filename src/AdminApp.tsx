@@ -16,6 +16,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { AdDetailModal } from './components/AdDetailModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { getFrontendUrl } from './utils/navigation';
+import { mergeAdViewCounts } from './utils/viewCounters';
 import { AppAlertModal, AlertModalConfig } from './components/AppAlertModal';
 import { BizboosterLogo } from './components/BizboosterLogo';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -33,6 +34,7 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
   const [ads, setAds] = useState<Ad[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [reports, setReports] = useState<AdReport[]>([]);
+  const [counterViews, setCounterViews] = useState<Record<string, number>>({});
   const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
   const [deleteModalState, setDeleteModalState] = useState<{
     isOpen: boolean;
@@ -130,6 +132,7 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
       setAds([]);
       setUsers([]);
       setReports([]);
+      setCounterViews({});
       return;
     }
 
@@ -151,10 +154,26 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
       (err) => console.error('Admin reports listener error:', err)
     );
 
+    const unsubCounters = onSnapshot(
+      collection(db, 'ad_counters'),
+      (snap) => {
+        const next: Record<string, number> = {};
+        snap.docs.forEach((d) => {
+          const v = d.data()?.views;
+          if (typeof v === 'number') {
+            next[d.id] = v;
+          }
+        });
+        setCounterViews(next);
+      },
+      (err) => console.error('Admin ad_counters listener error:', err)
+    );
+
     return () => {
       unsubAds();
       unsubUsers();
       unsubReports();
+      unsubCounters();
     };
   }, [status]);
 
@@ -417,7 +436,7 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
   };
 
   // Étape 4.2 & S-18 : Modération sur les annonces réelles uniquement (pas de démo en production)
-  const allAds = ads;
+  const allAds = useMemo(() => mergeAdViewCounts(ads, counterViews), [ads, counterViews]);
 
   const handleSwitchToFrontend = () => {
     try {
@@ -569,7 +588,7 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
         onLogKycView={handleLogKycView}
       />
       <AdDetailModal
-        ad={selectedAd}
+        ad={selectedAd ? allAds.find((a) => a.id === selectedAd.id) || selectedAd : null}
         onClose={() => setSelectedAd(null)}
         onOpenExtendModal={() => {}}
         currentUser={null}

@@ -77,8 +77,8 @@ export const PRICING_CONFIG = {
     { days: 30, label: '30 Jours (1 Mois - Populaire)', price: 9500 },
     { days: 60, label: '60 Jours (2 Mois)', price: 16000 }
   ],
-  includedImages: 5, // 5 premières photos incluses sans supplément
-  pricePerExtraImage: 500, // 500 FCFA par photo à partir de la 6e
+  includedImages: 3, // 3 premières photos incluses sans supplément en Standard/Pro (4 en Élite, 5 en Business)
+  pricePerExtraImage: 500, // 500 FCFA par photo supplémentaire
   maxImages: 10, // Plafond maximal de photos par annonce
   videoPrice: 2000, // FCFA pour courte vidéo descriptive (30s max)
   maxCharLength: 1000 // Limite de caractères du descriptif (1000 caractères max pour toutes les catégories)

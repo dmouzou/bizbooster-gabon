@@ -1,15 +1,35 @@
 import { Ad, UserProfile } from '../types';
+export { validateEventSchedule, isValidDateString, isValidTimeString, parseEventDateTime } from './eventValidation';
+
+const TEST_AD_ID_PREFIXES = ['test_', 'test-', 'ad-test', 'ad_test', 'demo_', 'demo-'];
+const TEST_USER_ID_PREFIXES = ['test_', 'test-', 'user_test_', 'demo_', 'demo-'];
 
 /**
- * isTestAd (B-04) : Détection robuste des annonces de test / simulation.
- * S'appuie strictement sur le drapeau serveur `ad.isTest` ou sur les préfixes explicites `test_` / `ad-test`.
+ * isTestAd (B-04 / F1) : Détection robuste des annonces de test / simulation.
+ * S'appuie sur le drapeau serveur `ad.isTest` ou sur les préfixes explicites de test/démo.
  * Ne pénalise plus les annonces légitimes contenant 'test' dans leur titre (ex: Testament, Attestation).
  */
 export function isTestAd(ad: Ad): boolean {
   if (ad.isTest) return true;
-  const id = (ad.id || '').toLowerCase();
-  if (id.startsWith('test_') || id.startsWith('test-') || id.startsWith('ad-test')) return true;
+  const id = (ad.id || '').trim().toLowerCase();
+  if (TEST_AD_ID_PREFIXES.some((prefix) => id.startsWith(prefix))) return true;
+  const uid = (ad.userId || '').trim().toLowerCase();
+  if (TEST_USER_ID_PREFIXES.some((prefix) => uid.startsWith(prefix))) return true;
   return false;
+}
+
+/**
+ * Determines whether an ad is visible in the public catalog.
+ * Active, non-expired ads from real users are always visible;
+ * test/demo ads are hidden unless showTestAds is enabled.
+ */
+export function isPublicCatalogAd(ad: Ad, showTestAds: boolean, now: number = Date.now()): boolean {
+  if (ad.status !== 'ACTIVE') return false;
+  if (!ad.expiresAt) return false;
+  const expiresMs = new Date(ad.expiresAt).getTime();
+  if (Number.isNaN(expiresMs) || expiresMs <= now) return false;
+  if (isEventPast(ad, now)) return false;
+  return showTestAds || !isTestAd(ad);
 }
 
 /**
@@ -116,3 +136,45 @@ export function isValidStorageUrl(url?: string): boolean {
   }
 }
 
+/**
+ * FORBIDDEN_AD_CREATE_KEYS: Clés strictement interdites lors de la création d'une annonce
+ * selon firestore.rules (pas d'échéance, pas de publication anticipée, pas de ranking/boost/tier auto-attribués).
+ */
+export const FORBIDDEN_AD_CREATE_KEYS = [
+  'publishedAt',
+  'expiresAt',
+  'moderatedAt',
+  'moderationReason',
+  'isFeatured',
+  'featuredUntil',
+  'featuredAt',
+  'featuredPausedAt',
+  'boostRequested',
+  'withBoost',
+  'ownerTier',
+  'isOwnerVip',
+  'isOwnerVerified',
+  'isVipCorner',
+  'paidAmount',
+  'paymentMethod',
+  'transactionRef',
+  'paymentVerified',
+  'viewsCount',
+  'reportsCount',
+  'pendingExtension',
+  'suspensionReason',
+  'suspendedAt',
+  'lastExtendedAt',
+] as const;
+
+/**
+ * Assainit les données d'une annonce avant enregistrement dans Firestore sur la collection /ads,
+ * garantissant qu'aucune clé protégée ou privilégiée par firestore.rules n'est envoyée.
+ */
+export function sanitizeAdForCreation(ad: Partial<Ad>): Record<string, any> {
+  const sanitized: Record<string, any> = { ...ad };
+  for (const key of FORBIDDEN_AD_CREATE_KEYS) {
+    delete sanitized[key];
+  }
+  return sanitized;
+}

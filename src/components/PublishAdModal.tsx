@@ -91,6 +91,8 @@ import { isAdVipCornerEligible, getVipThresholdDescription, VIP_CORNER_INFO } fr
 import { toE164 } from '../utils/phone';
 import { MobilePaymentSimulator } from './MobilePaymentSimulator';
 import { CguModal } from './CguModal';
+import { EventDateTimePicker } from './EventDateTimePicker';
+import { validateEventSchedule } from '../utils/eventValidation';
 
 interface PublishAdModalProps {
   isOpen: boolean;
@@ -682,23 +684,23 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
   const simultaneousAdsCount = userSimultaneousAds.length;
 
   // Max simultaneous ads quota:
-  // Standard = 3 max. VIP / Business = 20 max. Elite = 14. Pro = 8.
+  // Standard = 3 max. VIP / Business = 10 max. Elite = 7. Pro = 4.
   const maxQuota = useMemo(() => {
-    if (isExempt) return 20; // VIP Partner: 20 simultaneous ads (reflects Business version)
-    if (currentUser?.subscriptionTier === 'BUSINESS') return 20;
-    if (currentUser?.subscriptionTier === 'ELITE') return 14;
-    if (currentUser?.subscriptionTier === 'PRO') return 8;
+    if (isExempt) return 10; // VIP Partner: 10 simultaneous ads (reflects Business version)
+    if (currentUser?.subscriptionTier === 'BUSINESS') return 10;
+    if (currentUser?.subscriptionTier === 'ELITE') return 7;
+    if (currentUser?.subscriptionTier === 'PRO') return 4;
     return 3; // Standard free users: max 3 simultaneous ads
   }, [currentUser?.subscriptionTier, isExempt]);
 
-  // Absolute hard ceiling is 20 ads
-  const isUltimateCeilingReached = simultaneousAdsCount >= 20;
+  // Absolute hard ceiling is 10 ads
+  const isUltimateCeilingReached = simultaneousAdsCount >= 10;
 
-  // Subscription upgrade required if simultaneous ads >= current quota and < 20
+  // Subscription upgrade required if simultaneous ads >= current quota and < 10
   const isSubscriber = Boolean(currentUser?.subscriptionTier && currentUser.subscriptionTier !== 'STANDARD');
   const requiresSubscription = useMemo(() => {
     if (isExempt) return false;
-    return simultaneousAdsCount >= maxQuota && maxQuota < 20;
+    return simultaneousAdsCount >= maxQuota && maxQuota < 10;
   }, [isExempt, simultaneousAdsCount, maxQuota]);
 
   const [selectedTierToBuy, setSelectedTierToBuy] = useState<'PRO' | 'ELITE' | 'BUSINESS'>('PRO');
@@ -717,10 +719,6 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     const brand = CAR_BRANDS_AND_MODELS.find((b) => b.brand === vehicleBrand);
     return brand ? brand.models : ['Standard'];
   }, [vehicleBrand]);
-
-  // Point 3: Subscription free ads are strictly consumable
-  const consumedFreeAdsCount = currentUser?.consumedFreeAdsCount || 0;
-  const hasFreeAdQuotaRemaining = Boolean(isExempt || consumedFreeAdsCount < maxQuota);
 
   // Devis officiel calculé par le serveur (Phase 8.3 & P1)
   const [serverQuote, setServerQuote] = useState<PreviewQuoteResult | null>(null);
@@ -972,6 +970,17 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     setIsSubmitting(true);
     setMediaError(null);
 
+    // Contrôle strict de la validité de la date et de l'heure des événements (futur uniquement)
+    if (mainCategory === 'EVENEMENTS') {
+      const scheduleCheck = validateEventSchedule(eventDate, eventTime);
+      if (!scheduleCheck.isValid) {
+        setMediaError(scheduleCheck.error || "La date et l'heure de l'événement doivent être valides et dans le futur.");
+        setIsSubmitting(false);
+        hasHandledPaymentSuccessRef.current = false;
+        return;
+      }
+    }
+
     try {
       // 1. Upload local photo files to Firebase Storage
       const finalImageUrls: string[] = [];
@@ -1023,7 +1032,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
 
       const newAd: Ad = {
         id: preGeneratedAdId,
-        title: title || `${transactionType === 'VENTE' ? 'Vente' : 'Location'} - ${mainCategory}`,
+        title: (title || `${transactionType === 'VENTE' ? 'Vente' : 'Location'} - ${mainCategory}`).trim().slice(0, 120),
         mainCategory,
         transactionType:
           mainCategory === 'IMMOBILIER' || mainCategory === 'MATERIEL_ROULANT'
@@ -1126,7 +1135,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
         hasWhatsapp: true,
         contactName: contactName || 'Annonceur BIZBOOSTER',
         durationDays,
-        publishedAt: now.toISOString(),
+        createdAt: now.toISOString(),
         status: 'PENDING_REVIEW', // L'échéance et le statut final sont gérés exclusivement par le serveur
         userId: currentUser?.id || auth.currentUser?.uid,
         paymentReference: (!isExempt && totalBillCalculated > 0) ? paymentInfo.transactionRef : undefined,
@@ -1276,10 +1285,10 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                   <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
                   <div className="text-xs">
                     <p className="font-black text-red-900 uppercase">
-                      Plafond maximal atteint (20 / 20 annonces actives)
+                      Plafond maximal atteint (10 / 10 annonces actives)
                     </p>
                     <p className="text-red-700 mt-1 leading-relaxed">
-                      Conformément aux règles de diffusion BIZBOOSTER Gabon, chaque annonceur est soumis au plafond maximal de 20 annonces simultanées en cours.
+                      Conformément aux règles de diffusion BIZBOOSTER Gabon, chaque annonceur est soumis au plafond maximal de 10 annonces simultanées en cours.
                       Veuillez attendre l'expiration d'une annonce ou en supprimer une depuis votre espace pour déposer une nouvelle offre.
                     </p>
                   </div>
@@ -1292,7 +1301,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                       Limite de {maxQuota} annonce{maxQuota > 1 ? 's' : ''} atteinte ({simultaneousAdsCount} actives)
                     </p>
                     <p className="text-amber-800 mt-1 leading-relaxed">
-                      Pour afficher plus de 3 annonces simultanément, vous devez souscrire au forfait Pro (jusqu'à 8), Élite (jusqu'à 14) ou Business (jusqu'à 20). Vous pourrez choisir votre formule à l'étape suivante.
+                      Pour afficher plus de {maxQuota} annonces simultanément, vous devez passer à un forfait supérieur (Pro : jusqu'à 4, Élite : jusqu'à 7 ou Business : jusqu'à 10). Vous pourrez choisir votre formule à l'étape suivante.
                     </p>
                   </div>
                 </div>
@@ -2023,33 +2032,13 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                     </select>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Date de l'événement *
-                      </label>
-                      <input
-                        type="date"
-                        value={eventDate}
-                        min={new Date().toISOString().slice(0, 10)}
-                        onChange={(e) => setEventDate(e.target.value)}
-                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-fuchsia-600"
-                        id="publish-event-date-input"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Heure de début (facultatif)
-                      </label>
-                      <input
-                        type="time"
-                        value={eventTime}
-                        onChange={(e) => setEventTime(e.target.value)}
-                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-fuchsia-600"
-                      />
-                    </div>
-                  </div>
+                  <EventDateTimePicker
+                    eventDate={eventDate}
+                    onDateChange={setEventDate}
+                    eventTime={eventTime}
+                    onTimeChange={setEventTime}
+                    idPrefix="publish-event"
+                  />
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -2390,6 +2379,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                 <input
                   type="text"
                   value={title}
+                  maxLength={120}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="Ex: Villa de standing 4 chambres avec piscine à La Sablière"
                   required
@@ -2408,7 +2398,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
 
                 return (
                   <div className="space-y-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className={mainCategory === 'EVENEMENTS' ? 'space-y-3' : 'grid grid-cols-1 sm:grid-cols-2 gap-3'}>
                       <div>
                         <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
                           {isSeeker
@@ -2437,31 +2427,33 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                         />
                       </div>
 
-                      <div>
-                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                          {isJob ? 'Périodicité du salaire *' : 'Unité de prix'}
-                        </label>
-                        <select
-                          value={priceUnit}
-                          onChange={(e) => setPriceUnit(e.target.value as any)}
-                          className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                        >
-                          {isJob ? (
-                            <>
-                              <option value="mois">Salaire mensuel</option>
-                              <option value="jour">Salaire journalier</option>
-                              <option value="trimestre">Salaire trimestriel</option>
-                              <option value="an">Salaire annuel</option>
-                            </>
-                          ) : (
-                            <>
-                              <option value="total">Prix total (Achat définitif)</option>
-                              <option value="mois">Par mois (Location mensuelle)</option>
-                              <option value="jour">Par jour (Location journalière)</option>
-                            </>
-                          )}
-                        </select>
-                      </div>
+                      {mainCategory !== 'EVENEMENTS' && (
+                        <div>
+                          <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
+                            {isJob ? 'Périodicité du salaire *' : 'Unité de prix'}
+                          </label>
+                          <select
+                            value={priceUnit}
+                            onChange={(e) => setPriceUnit(e.target.value as any)}
+                            className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                          >
+                            {isJob ? (
+                              <>
+                                <option value="mois">Salaire mensuel</option>
+                                <option value="jour">Salaire journalier</option>
+                                <option value="trimestre">Salaire trimestriel</option>
+                                <option value="an">Salaire annuel</option>
+                              </>
+                            ) : (
+                              <>
+                                <option value="total">Prix total (Achat définitif)</option>
+                                <option value="mois">Par mois (Location mensuelle)</option>
+                                <option value="jour">Par jour (Location journalière)</option>
+                              </>
+                            )}
+                          </select>
+                        </div>
+                      )}
                     </div>
 
                     {/* Tranche de prix pour le donneur d'emploi (Point 1) */}
@@ -2855,7 +2847,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                   <button
                     type="button"
                     onClick={handleAddCustomImage}
-                    disabled={photos.length >= 5}
+                    disabled={photos.length >= (PRICING_CONFIG.maxImages || 10)}
                     className="bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -3259,14 +3251,14 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                 <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <span className="bg-amber-500 text-slate-950 text-[10px] font-black uppercase px-2 py-0.5 rounded-sm">
-                      Quota standard ({maxQuota} annonces) atteint
+                      Plafond simultané ({maxQuota} annonces) atteint
                     </span>
                     <h4 className="font-extrabold text-xs text-slate-900">
-                      Abonnement Pro, Élite ou Business requis (Au-delà de 3 annonces simultanées)
+                      Abonnement Pro, Élite ou Business requis (Au-delà de {maxQuota} annonces simultanées)
                     </h4>
                   </div>
                   <p className="text-xs text-slate-600 leading-relaxed">
-                    Pour diffuser plus de 3 annonces simultanément, vous devez souscrire à un forfait d'abonnement. Choisissez la formule qui convient à votre volume d'activité :
+                    Pour diffuser plus de {maxQuota} annonces simultanément, vous devez souscrire à un forfait d'abonnement (Pro : 4, Élite : 7 ou Business : 10 annonces). Choisissez la formule qui convient à votre volume d'activité :
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
                     <button
@@ -3280,7 +3272,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-extrabold text-xs text-slate-900">🥉 Pro</span>
-                        <span className="text-[10px] font-black bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">Jusqu'à 8</span>
+                        <span className="text-[10px] font-black bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">Jusqu'à 4</span>
                       </div>
                       <div className="text-sm font-black text-blue-700 mt-1">29 000 FCFA/m</div>
                       <div className="text-[10px] text-slate-500 mt-0.5">+1 boost offert/m</div>
@@ -3297,7 +3289,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-extrabold text-xs text-slate-900">🥈 Élite</span>
-                        <span className="text-[10px] font-black bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">Jusqu'à 14</span>
+                        <span className="text-[10px] font-black bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">Jusqu'à 7</span>
                       </div>
                       <div className="text-sm font-black text-purple-700 mt-1">59 000 FCFA/m</div>
                       <div className="text-[10px] text-slate-500 mt-0.5">+3 boosts offerts/m</div>
@@ -3314,7 +3306,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-extrabold text-xs text-slate-900">🥇 Business</span>
-                        <span className="text-[10px] font-black bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">Jusqu'à 20</span>
+                        <span className="text-[10px] font-black bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">Jusqu'à 10</span>
                       </div>
                       <div className="text-sm font-black text-emerald-700 mt-1">99 000 FCFA/m</div>
                       <div className="text-[10px] text-slate-500 mt-0.5">+6 boosts offerts/m</div>
@@ -3640,6 +3632,26 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
               onClick={() => {
                 if (isUltimateCeilingReached) return;
                 if (step === 1) {
+                  // Événements : date, heure et lieu obligatoires à l'étape 1 (futur uniquement)
+                  if (mainCategory === 'EVENEMENTS') {
+                    const scheduleCheck = validateEventSchedule(eventDate, eventTime);
+                    if (!scheduleCheck.isValid) {
+                      setMediaError(scheduleCheck.error || "La date et l'heure de l'événement doivent être valides et dans le futur.");
+                      if (scheduleCheck.field === 'date') {
+                        const el = document.getElementById('publish-event-day-select') || document.getElementById('publish-event-date-input');
+                        el?.focus();
+                      } else {
+                        const el = document.getElementById('publish-event-hour-select');
+                        el?.focus();
+                      }
+                      return;
+                    }
+                    if (!eventVenue.trim()) {
+                      setMediaError("Veuillez indiquer le lieu de l'événement (salle, établissement ou adresse).");
+                      document.getElementById('publish-event-venue-input')?.focus();
+                      return;
+                    }
+                  }
                   if (!neighborhood.trim()) {
                     setMediaError('Veuillez préciser ou détailler le quartier de votre bien / service.');
                     const el = document.getElementById('publish-neighborhood-input');
@@ -3649,24 +3661,8 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                   setMediaError(null);
                   setStep(2);
                 } else if (step === 2) {
-                  // Événements : date et lieu obligatoires, prix d'entrée facultatif (0 = entrée libre)
+                  // Événements : prix d'entrée facultatif (0 = entrée libre)
                   if (mainCategory === 'EVENEMENTS') {
-                    const todayIso = new Date().toISOString().slice(0, 10);
-                    if (!eventDate) {
-                      setMediaError("Veuillez indiquer la date de l'événement.");
-                      document.getElementById('publish-event-date-input')?.focus();
-                      return;
-                    }
-                    if (eventDate < todayIso) {
-                      setMediaError("La date de l'événement ne peut pas être dans le passé.");
-                      document.getElementById('publish-event-date-input')?.focus();
-                      return;
-                    }
-                    if (!eventVenue.trim()) {
-                      setMediaError("Veuillez indiquer le lieu de l'événement (salle, établissement ou adresse).");
-                      document.getElementById('publish-event-venue-input')?.focus();
-                      return;
-                    }
                     if (price === '' || Number.isNaN(Number(price)) || Number(price) < 0) {
                       setPrice(0);
                     }

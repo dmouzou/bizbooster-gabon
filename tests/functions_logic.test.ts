@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { SUBSCRIPTION_QUOTAS } from '../functions/src/pricing';
 
 // Test des fonctions pures et logiques de transition des Cloud Functions Phase 2
 
@@ -55,14 +56,10 @@ describe('Logique de déduplication des vues (registerView Phase 2)', () => {
 
 describe('Validation des quotas et gratuité (Phase 2)', () => {
   it('accorde les annonces gratuites selon le palier', () => {
-    const quotas: Record<string, number> = {
-      STANDARD: 3,
-      PRO: 8,
-      ELITE: 15,
-      BUSINESS: 30,
-    };
-    expect(quotas['STANDARD']).toBe(3);
-    expect(quotas['PRO']).toBe(8);
+    expect(SUBSCRIPTION_QUOTAS['STANDARD']).toBe(0);
+    expect(SUBSCRIPTION_QUOTAS['PRO']).toBe(4);
+    expect(SUBSCRIPTION_QUOTAS['ELITE']).toBe(7);
+    expect(SUBSCRIPTION_QUOTAS['BUSINESS']).toBe(10);
   });
 
   it('plafonne les boosters gratuits à 20 maximum', () => {

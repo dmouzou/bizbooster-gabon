@@ -97,7 +97,8 @@ describe('Coin VIP (Parité Client/Serveur)', () => {
     expect(clientVipEligible(adUnderThreshold as any)).toBe(false);
   });
 
-  it('détecte un véhicule VIP selon les seuils', () => {
+  it('détecte un véhicule VIP selon les seuils (Voitures >= 25M FCFA, Motos >= 5M FCFA)', () => {
+    // Voiture VIP (>= 25M FCFA)
     const adCarVip = {
       mainCategory: 'MATERIEL_ROULANT',
       transactionType: 'VENTE',
@@ -107,13 +108,61 @@ describe('Coin VIP (Parité Client/Serveur)', () => {
     expect(serverVipEligible(adCarVip)).toBe(true);
     expect(clientVipEligible(adCarVip as any)).toBe(true);
 
+    const adCarExact = {
+      mainCategory: 'MATERIEL_ROULANT',
+      transactionType: 'VENTE',
+      price: 25_000_000,
+      vehicleData: { category: 'voiture' },
+    };
+    expect(serverVipEligible(adCarExact)).toBe(true);
+    expect(clientVipEligible(adCarExact as any)).toBe(true);
+
+    // Voiture non-VIP (< 25M FCFA, même à 20M)
     const adCarLow = {
       mainCategory: 'MATERIEL_ROULANT',
       transactionType: 'VENTE',
-      price: 10_000_000,
+      price: 20_000_000,
       vehicleData: { category: 'voiture' },
     };
     expect(serverVipEligible(adCarLow)).toBe(false);
     expect(clientVipEligible(adCarLow as any)).toBe(false);
+
+    // Moto de luxe VIP (>= 5M FCFA)
+    const adMotoVip = {
+      mainCategory: 'MATERIEL_ROULANT',
+      transactionType: 'VENTE',
+      price: 5_000_000,
+      vehicleData: { category: 'Motos' },
+    };
+    expect(serverVipEligible(adMotoVip)).toBe(true);
+    expect(clientVipEligible(adMotoVip as any)).toBe(true);
+
+    const adMotoPrestige = {
+      mainCategory: 'MATERIEL_ROULANT',
+      transactionType: 'VENTE',
+      price: 8_500_000,
+      vehicleData: { category: 'moto' },
+    };
+    expect(serverVipEligible(adMotoPrestige)).toBe(true);
+    expect(clientVipEligible(adMotoPrestige as any)).toBe(true);
+
+    // Moto non-VIP (< 5M FCFA)
+    const adMotoUnder = {
+      mainCategory: 'MATERIEL_ROULANT',
+      transactionType: 'VENTE',
+      price: 4_500_000,
+      vehicleData: { category: 'Motos' },
+    };
+    expect(serverVipEligible(adMotoUnder)).toBe(false);
+    expect(clientVipEligible(adMotoUnder as any)).toBe(false);
+
+    const adMotoBasic = {
+      mainCategory: 'MATERIEL_ROULANT',
+      transactionType: 'VENTE',
+      price: 800_000,
+      vehicleData: { category: 'moto' },
+    };
+    expect(serverVipEligible(adMotoBasic)).toBe(false);
+    expect(clientVipEligible(adMotoBasic as any)).toBe(false);
   });
 });

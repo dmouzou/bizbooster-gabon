@@ -13,6 +13,7 @@ export const VIP_THRESHOLDS = {
   },
   MATERIEL_ROULANT: {
     VENTE: 25_000_000,
+    VENTE_MOTO: 5_000_000,
     LOCATION_JOUR: 50_000,
     LOCATION_MOIS: 1_000_000,
     LOCATION_HEURE: 15_000,
@@ -79,8 +80,9 @@ export function isAdVipCornerEligible(params: VipCheckParams): boolean {
   }
 
   // 2. Filtrage strict Matériel Roulant
+  let vehCat = "";
   if (category === "MATERIEL_ROULANT") {
-    const vehCat = (
+    vehCat = (
       params.vehicleData?.category ||
       params.rollingStockCategory ||
       params.vehicleCategory ||
@@ -121,8 +123,13 @@ export function isAdVipCornerEligible(params: VipCheckParams): boolean {
   }
 
   if (category === "MATERIEL_ROULANT") {
+    const isMoto = vehCat.includes("moto");
+    const venteThreshold = isMoto
+      ? VIP_THRESHOLDS.MATERIEL_ROULANT.VENTE_MOTO
+      : VIP_THRESHOLDS.MATERIEL_ROULANT.VENTE;
+
     if (transType === "VENTE" || unit === "total") {
-      return numPrice >= VIP_THRESHOLDS.MATERIEL_ROULANT.VENTE;
+      return numPrice >= venteThreshold;
     }
     if (unit === "jour") {
       return numPrice >= VIP_THRESHOLDS.MATERIEL_ROULANT.LOCATION_JOUR;

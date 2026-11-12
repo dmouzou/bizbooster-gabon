@@ -24,6 +24,13 @@ interface AppAlertModalProps {
 export const AppAlertModal: React.FC<AppAlertModalProps> = ({ config, onClose }) => {
   if (!config || !config.isOpen) return null;
   if (typeof document === 'undefined') return null;
+  return <AppAlertModalContent config={config} onClose={onClose} />;
+};
+
+const AppAlertModalContent: React.FC<{ config: AlertModalConfig; onClose: () => void }> = ({
+  config,
+  onClose,
+}) => {
 
   const type = config.type || 'info';
   const isConfirm = type === 'confirm';

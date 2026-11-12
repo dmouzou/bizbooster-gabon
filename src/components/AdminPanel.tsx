@@ -2104,9 +2104,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                   title="Modifier ou révoquer le forfait d'abonnement (Super Admin)"
                                 >
                                   <option value="STANDARD">Standard (Sans forfait)</option>
-                                  <option value="PRO">Pro (8 annonces)</option>
-                                  <option value="ELITE">Élite (14 annonces)</option>
-                                  <option value="BUSINESS">Business (20 annonces)</option>
+                                  <option value="PRO">Pro (4 annonces)</option>
+                                  <option value="ELITE">Élite (7 annonces)</option>
+                                  <option value="BUSINESS">Business (10 annonces)</option>
                                 </select>
                               )}
                             </div>

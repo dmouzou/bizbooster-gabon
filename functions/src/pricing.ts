@@ -32,6 +32,15 @@ export const TIER_RANK: Record<string, number> = {
   BUSINESS: 3,
 };
 
+// Table des quotas d'annonces gratuites (Phase 7 - Décision D3: Standard = 0)
+export const SUBSCRIPTION_QUOTAS: Record<string, number> = {
+  STANDARD: 0,
+  PRO: 4,
+  ELITE: 7,
+  BUSINESS: 10,
+  VIP_EXEMPT: 10,
+};
+
 export const BOOST_PRICE = 5000;
 
 export const BOOST_PRODUCTS: Record<string, {price: number; boosts: number}> = {

@@ -11,6 +11,10 @@ interface ShareAdModalProps {
 
 export const ShareAdModal: React.FC<ShareAdModalProps> = ({ isOpen, onClose, ad }) => {
   if (!isOpen || !ad) return null;
+  return <ShareAdModalContent ad={ad} onClose={onClose} />;
+};
+
+const ShareAdModalContent: React.FC<{ ad: Ad; onClose: () => void }> = ({ ad, onClose }) => {
 
   const [copied, setCopied] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);

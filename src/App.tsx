@@ -71,7 +71,8 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, increment, writeBatch, deleteField, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from './services/firebase';
-import { isTestAd, isEventPast } from './utils/ads';
+import { isTestAd, isPublicCatalogAd, isEventPast, sanitizeAdForCreation, validateEventSchedule } from './utils/ads';
+import { resolveAdViewsCount } from './utils/viewCounters';
 import { markNotificationAsSeenLocally, rejectionNotifId } from './services/notificationService';
 // S-11 : Lazy-loading d'AdminApp pour ne pas livrer le bundle d'administration à tous les visiteurs
 const AdminApp = React.lazy(() => import('./AdminApp'));
@@ -383,7 +384,7 @@ function PublicApp({
     };
   }, [currentUser?.id]);
 
-  // Point 3: Test ads visibility state (synced with Firestore system_config and localStorage, defaults to OFF/false)
+  // Point 3: Test ads visibility state (synced with Firestore public_config and localStorage, defaults to OFF/false)
   const [showTestAds, setShowTestAds] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('bizbooster_show_test_ads');
@@ -391,9 +392,6 @@ function PublicApp({
     } catch {}
     return false;
   });
-
-  const [registeredUserIds, setRegisteredUserIds] = useState<string[]>([]);
-  const [registeredPhones, setRegisteredPhones] = useState<string[]>([]);
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -425,27 +423,53 @@ function PublicApp({
     };
   }, []);
 
-  // Check whether an ad belongs to a registered advertiser from the Admin Directory
-  const isAdFromRegisteredAdvertiser = (ad: Ad): boolean => {
-    if (ad.advertiserApproved !== undefined) return ad.advertiserApproved && !ad.isTest;
-    if (ad.isTest !== undefined) return !ad.isTest;
-    if (!ad.userId || ad.userId.startsWith('demo-') || ad.userId.startsWith('test-')) {
-      return false;
-    }
-    if (registeredUserIds.length > 0) {
-      if (registeredUserIds.includes(ad.userId)) return true;
-      const cleanPhone = (ad.contactPhone || '').replace(/\D/g, '');
-      if (cleanPhone && registeredPhones.length > 0 && registeredPhones.some((p) => p.includes(cleanPhone) || cleanPhone.includes(p))) {
-        return true;
-      }
-      return false;
-    }
-    return !isTestAd(ad);
-  };
-
   // Local views overrides for instant UI updates & non-duplicated views tracking
   const [localViewOverrides, setLocalViewOverrides] = useState<Record<string, number>>({});
+  const [ownerCounterViews, setOwnerCounterViews] = useState<Record<string, number>>({});
   const [testAds, setTestAds] = useState<Ad[]>([]);
+
+  const myAdIdsKey = useMemo(
+    () => Array.from(new Set(myAds.map((a) => a.id))).sort().join(','),
+    [myAds]
+  );
+  const myAdIds = useMemo(() => (myAdIdsKey ? myAdIdsKey.split(',') : []), [myAdIdsKey]);
+
+  // F6 : Écoute en temps réel de ad_counters/{adId} pour les annonces de l'utilisateur connecté
+  useEffect(() => {
+    if (!currentUser || myAdIds.length === 0) {
+      setOwnerCounterViews({});
+      return;
+    }
+
+    const activeIds = new Set(myAdIds);
+    setOwnerCounterViews((prev) => {
+      const next: Record<string, number> = {};
+      for (const id of Object.keys(prev)) {
+        if (activeIds.has(id)) {
+          next[id] = prev[id];
+        }
+      }
+      return next;
+    });
+
+    const unsubs = myAdIds.map((adId) =>
+      onSnapshot(
+        doc(db, 'ad_counters', adId),
+        (snap) => {
+          const rawViews = snap.exists() ? snap.data()?.views : 0;
+          const count = typeof rawViews === 'number' ? rawViews : 0;
+          setOwnerCounterViews((prev) => (prev[adId] === count ? prev : { ...prev, [adId]: count }));
+        },
+        (err) => {
+          console.warn('Owner ad_counters listener error:', err);
+        }
+      )
+    );
+
+    return () => {
+      unsubs.forEach((unsub) => unsub());
+    };
+  }, [currentUser, myAdIds]);
 
   // Dynamically load initial demonstration ads ONLY when showTestAds is active (F2)
   useEffect(() => {
@@ -470,8 +494,7 @@ function PublicApp({
 
     // 2. Real-time active public ads from Firestore (filtered if test ads are disabled)
     publicAds
-      .filter((a) => a.status === 'ACTIVE' && new Date(a.expiresAt).getTime() > now)
-      .filter((a) => showTestAds || isAdFromRegisteredAdvertiser(a))
+      .filter((a) => isPublicCatalogAd(a, showTestAds, now))
       .forEach((a) => map.set(a.id, a));
 
     // 3. Current user's own ads from Firestore (even if PENDING_REVIEW or EXPIRED, for dashboard management)
@@ -495,13 +518,13 @@ function PublicApp({
           isOwnerVip: currentAd.isOwnerVip || Boolean(currentUser?.isExempt || currentUser?.exemptFromPaymentAndKyc)
         };
       }
-      const override = localViewOverrides[currentAd.id];
-      if (override !== undefined && override > (currentAd.viewsCount || 0)) {
-        return { ...currentAd, viewsCount: override };
+      const mergedViews = resolveAdViewsCount(currentAd, ownerCounterViews, localViewOverrides);
+      if (mergedViews !== (currentAd.viewsCount || 0)) {
+        return { ...currentAd, viewsCount: mergedViews };
       }
       return currentAd;
     });
-  }, [publicAds, myAds, localViewOverrides, currentUser, showTestAds, testAds, registeredUserIds, registeredPhones]);
+  }, [publicAds, myAds, ownerCounterViews, localViewOverrides, currentUser, showTestAds, testAds]);
 
   // Frontend Tab State: 'catalog' | 'user-dashboard'
   const [frontendTab, setFrontendTab] = useState<'catalog' | 'user-dashboard'>('catalog');
@@ -862,14 +885,8 @@ function PublicApp({
   // Total active (publicly visible) ads count (strictly active & non-expired & excluding test ads if OFF)
   const activeAdsCount = useMemo(() => {
     const now = Date.now();
-    return ads.filter(
-      (ad) =>
-        ad.status === 'ACTIVE' &&
-        new Date(ad.expiresAt).getTime() > now &&
-        !isEventPast(ad, now) &&
-        (showTestAds || isAdFromRegisteredAdvertiser(ad))
-    ).length;
-  }, [ads, showTestAds, registeredUserIds, registeredPhones]);
+    return ads.filter((ad) => isPublicCatalogAd(ad, showTestAds, now)).length;
+  }, [ads, showTestAds]);
 
   // Category counts calculation for ACTIVE and non-expired ads only (general visitors)
   const categoryCounts = useMemo(() => {
@@ -887,12 +904,7 @@ function PublicApp({
       EVENEMENTS: 0,
     };
     ads.forEach((ad) => {
-      if (
-        ad.status === 'ACTIVE' &&
-        new Date(ad.expiresAt).getTime() > now &&
-        !isEventPast(ad, now) &&
-        (showTestAds || isAdFromRegisteredAdvertiser(ad))
-      ) {
+      if (isPublicCatalogAd(ad, showTestAds, now)) {
         counts.ALL++;
         if (counts[ad.mainCategory] !== undefined) {
           counts[ad.mainCategory]++;
@@ -900,20 +912,18 @@ function PublicApp({
       }
     });
     return counts;
-  }, [ads, showTestAds, registeredUserIds, registeredPhones]);
+  }, [ads, showTestAds]);
 
   // VIP Corner Ads count (Point 4: restricted to Immobilier & Matériel Roulant)
   const vipAdsCount = useMemo(() => {
     const now = Date.now();
     return ads.filter(
       (ad) =>
-        ad.status === 'ACTIVE' &&
-        new Date(ad.expiresAt).getTime() > now &&
-        (showTestAds || isAdFromRegisteredAdvertiser(ad)) &&
+        isPublicCatalogAd(ad, showTestAds, now) &&
         isAdVipCornerEligible(ad) &&
         (ad.mainCategory === 'IMMOBILIER' || ad.mainCategory === 'MATERIEL_ROULANT')
     ).length;
-  }, [ads, showTestAds, registeredUserIds, registeredPhones]);
+  }, [ads, showTestAds]);
 
   // Feed Sort Mode: 'RECOMMENDED' | 'RECENT' | 'PRICE_ASC' | 'PRICE_DESC' | 'POPULAR'
   type CatalogSortOption = 'RECOMMENDED' | 'RECENT' | 'PRICE_ASC' | 'PRICE_DESC' | 'POPULAR';
@@ -923,21 +933,7 @@ function PublicApp({
   const filteredAds = useMemo(() => {
     const now = Date.now();
     const list = ads.filter((ad) => {
-      // Événements dont la date est passée : retirés du catalogue public
-      if (isEventPast(ad, now)) return false;
-
-      // Point 3: When test ads are OFF (showTestAds === false), strictly hide any ad whose advertiser is not in the directory
-      if (!showTestAds && !isAdFromRegisteredAdvertiser(ad)) {
-        return false;
-      }
-
-      // 0. Only show ACTIVE ads to public viewers!
-      if (ad.status !== 'ACTIVE') {
-        return false;
-      }
-
-      // Requirement 3: Ensure expired ads are never shown in public catalog
-      if (new Date(ad.expiresAt).getTime() <= now) {
+      if (!isPublicCatalogAd(ad, showTestAds, now)) {
         return false;
       }
 
@@ -1162,8 +1158,6 @@ function PublicApp({
     activeFavoriteIds,
     personalizationTick,
     showTestAds,
-    registeredUserIds,
-    registeredPhones,
   ]);
 
   // Handle open publish flow with mandatory auth check
@@ -1226,33 +1220,21 @@ function PublicApp({
       setIsPhoneAuthOpen(true);
       throw new Error("Session expirée. Veuillez vous reconnecter avant de publier votre annonce.");
     }
-    const {
-      isFeatured,
-      featuredUntil,
-      featuredAt,
-      ownerTier,
-      isOwnerVip,
-      isOwnerVerified,
-      isVipCorner,
-      paidAmount,
-      paymentMethod,
-      transactionRef,
-      paymentVerified,
-      viewsCount,
-      reportsCount,
-      pendingExtension,
-      suspensionReason,
-      suspendedAt,
-      lastExtendedAt,
-      expiresAt,
-      boostRequested,
-      ...safeAdData
-    } = newAd as any;
+
+    if (newAd.mainCategory === 'EVENEMENTS') {
+      const scheduleCheck = validateEventSchedule(newAd.eventData?.eventDate, newAd.eventData?.eventTime);
+      if (!scheduleCheck.isValid) {
+        throw new Error(scheduleCheck.error || "Un événement ne peut pas être défini dans le passé, uniquement dans le futur.");
+      }
+    }
+
+    const safeAdData = sanitizeAdForCreation(newAd);
 
     await setDoc(doc(db, 'ads', newAd.id), {
       ...safeAdData,
       userId: auth.currentUser.uid,
       status: 'PENDING_REVIEW',
+      createdAt: safeAdData.createdAt || new Date().toISOString(),
     });
     showToast(`Annonce "${newAd.title}" transmise à la modération administrative !`);
   };
@@ -1298,17 +1280,20 @@ function PublicApp({
       // ignore
     }
 
+    const isOwner = Boolean(currentUser && isAdOwner(ad, currentUser));
     const sessionKey = `bizbooster_view_${ad.id}`;
     if (!sessionStorage.getItem(sessionKey)) {
       sessionStorage.setItem(sessionKey, '1');
-      const nextViews = (ad.viewsCount || 0) + 1;
-      setSelectedAdForDetail((curr) =>
-        curr && curr.id === ad.id ? { ...curr, viewsCount: nextViews } : curr
-      );
-      setLocalViewOverrides((prev) => ({
-        ...prev,
-        [ad.id]: Math.max(nextViews, (prev[ad.id] || 0) + 1),
-      }));
+      if (!isOwner) {
+        const nextViews = (ad.viewsCount || 0) + 1;
+        setSelectedAdForDetail((curr) =>
+          curr && curr.id === ad.id ? { ...curr, viewsCount: nextViews } : curr
+        );
+        setLocalViewOverrides((prev) => ({
+          ...prev,
+          [ad.id]: Math.max(nextViews, (prev[ad.id] || 0) + 1),
+        }));
+      }
 
       try {
         const registerViewCallable = httpsCallable<{ adId: string }, { success: boolean; counted: boolean }>(functions, 'registerView');
@@ -1953,7 +1938,7 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
                         </span>
                       </div>
                       <p className="text-xs text-amber-900 mt-1 max-w-2xl leading-relaxed">
-                        Le <strong>Coin VIP</strong> regroupe les annonces les plus prestigieuses du Gabon. Réservé à l'<strong>Immobilier</strong> (villas, maisons, appartements, terrains dès 75M FCFA ou locations dès 1M FCFA/mois) et au <strong>Matériel Roulant</strong> (voitures et motos de luxe dès 25M FCFA ou locations dès 50k FCFA/jour). Les annonces qualifiées y sont automatiquement mises en avant <em>sans aucun frais</em>.
+                        Le <strong>Coin VIP</strong> regroupe les annonces les plus prestigieuses du Gabon. Réservé à l'<strong>Immobilier</strong> (villas, maisons, appartements, terrains dès 75M FCFA ou locations dès 1M FCFA/mois) et au <strong>Matériel Roulant</strong> (voitures dès 25M FCFA, motos de luxe dès 5M FCFA ou locations dès 50k FCFA/jour). Les annonces qualifiées y sont automatiquement mises en avant <em>sans aucun frais</em>.
                       </p>
                     </div>
                   </div>

@@ -237,7 +237,7 @@ export interface Ad {
   // Expiration & Duration management
   durationDays: number;
   createdAt?: string; // ISO string
-  publishedAt: string; // ISO string
+  publishedAt?: string; // ISO string (assigné par le serveur lors de la modération/publication)
   updatedAt?: string; // ISO string
   expiresAt?: string; // ISO string
   status: AdStatus;
@@ -248,7 +248,6 @@ export interface Ad {
   suspendedAt?: string;
   userId?: string; // Links ad to the authenticated phone user
   isTest?: boolean; // Flag to identify test or demo ads
-  advertiserApproved?: boolean; // Annonceur vérifié par le répertoire officiel
   boostRequested?: boolean; // Intention de boost lors de la publication
   featuredPausedAt?: string; // Pause du temps de boost pendant modération
 

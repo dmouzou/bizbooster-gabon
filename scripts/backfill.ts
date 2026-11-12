@@ -77,17 +77,18 @@ function isVipCornerEligible(adData: any): boolean {
   }
 
   if (cat === 'MATERIEL_ROULANT') {
-    const vCat = adData.vehicleData?.category;
+    const vCat = (adData.vehicleData?.category || adData.rollingStockCategory || adData.vehicleCategory || '').toLowerCase();
     const tType = adData.transactionType;
-    if (vCat === 'Engins lourds' || vCat === 'Bateaux' || vCat === 'Aviation') {
+    if (vCat === 'engins lourds' || vCat === 'bateaux' || vCat === 'aviation') {
       return true;
     }
+    const isMoto = vCat.includes('moto');
     if (tType === 'LOCATION') {
-      if (unit === 'jour') return price >= 80000;
+      if (unit === 'jour') return price >= 50000;
       return price >= 1000000;
     }
     if (tType === 'VENTE') {
-      return price >= 20000000;
+      return isMoto ? price >= 5000000 : price >= 25000000;
     }
     return false;
   }

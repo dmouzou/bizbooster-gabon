@@ -75,6 +75,7 @@ interface UserDashboardProps {
   onUpdateUser?: (updated: Partial<UserProfile>) => Promise<void>;
   onSwitchToAdmin?: () => void;
   onToggleFavorite?: (adId: string) => void;
+  initialTab?: 'ADS' | 'FAVORITES' | 'SUBSCRIPTIONS' | 'PROFILE';
 }
 
 const TIER_ORDER: Record<SubscriptionTier, number> = {
@@ -93,9 +94,9 @@ const TIER_PRICES: Record<SubscriptionTier, number> = {
 
 const TIER_QUOTAS: Record<SubscriptionTier, number> = {
   STANDARD: 3,
-  PRO: 8,
-  ELITE: 14,
-  BUSINESS: 20,
+  PRO: 4,
+  ELITE: 7,
+  BUSINESS: 10,
 };
 
 const SUBSCRIPTION_TIERS = [
@@ -108,8 +109,8 @@ const SUBSCRIPTION_TIERS = [
     ringColor: 'border-blue-300 hover:border-blue-500',
     description: 'Idéal pour indépendants, artisans et petites activités.',
     features: [
-      "8 annonces gratuites incluses par mois (au-delà : facturées au tarif standard)",
-      "Plafond de 8 annonces simultanées actives",
+      "4 annonces gratuites incluses par mois (au-delà : facturées au tarif standard)",
+      "Plafond de 4 annonces simultanées actives",
       "1 Boost 'En Tête de Liste' offert par mois (valeur 5 000 F)",
       '-25% de réduction sur toutes les prolongations',
       "Badge vérifié 'Pro' sur toutes vos annonces",
@@ -126,8 +127,8 @@ const SUBSCRIPTION_TIERS = [
     ringColor: 'border-purple-300 hover:border-purple-500',
     description: 'Parfait pour agences immobilières et concessionnaires auto.',
     features: [
-      "14 annonces gratuites incluses par mois (au-delà : facturées au tarif standard)",
-      "Plafond de 14 annonces simultanées actives",
+      "7 annonces gratuites incluses par mois (au-delà : facturées au tarif standard)",
+      "Plafond de 7 annonces simultanées actives",
       "3 Boosts 'En Tête de Liste' offerts par mois (valeur 15 000 F)",
       '-50% de réduction sur toutes les prolongations',
       'Badge prestige doré et visibilité renforcée',
@@ -144,8 +145,8 @@ const SUBSCRIPTION_TIERS = [
     ringColor: 'border-emerald-300 hover:border-emerald-500',
     description: 'Plafond maximal pour grandes entreprises et promoteurs.',
     features: [
-      "20 annonces gratuites incluses par mois (au-delà : facturées au tarif standard)",
-      "Plafond de 20 annonces simultanées (Plafond ultime du site)",
+      "10 annonces gratuites incluses par mois (au-delà : facturées au tarif standard)",
+      "Plafond de 10 annonces simultanées (Plafond ultime du site)",
       "6 Boosts 'En Tête de Liste' offerts par mois (valeur 30 000 F)",
       'Prolongations 100% GRATUITES et illimitées (Exemption totale)',
       "Badge officiel 'Entreprise Partenaire Business'",
@@ -185,8 +186,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onUpdateUser,
   onSwitchToAdmin,
   onToggleFavorite,
+  initialTab = 'ADS',
 }) => {
-  const [dashboardTab, setDashboardTab] = useState<'ADS' | 'FAVORITES' | 'SUBSCRIPTIONS' | 'PROFILE'>('ADS');
+  const [dashboardTab, setDashboardTab] = useState<'ADS' | 'FAVORITES' | 'SUBSCRIPTIONS' | 'PROFILE'>(initialTab);
   // Point 5: Inclus la case 'Expirées' et la fonction 'Trier par'
   type UserDashboardFilterStatus = 'ALL' | 'ACTIVE' | 'PENDING' | 'PENDING_PAYMENT' | 'EXPIRED' | 'REJECTED' | 'SUSPENDED';
   const [filterStatus, setFilterStatus] = useState<UserDashboardFilterStatus>('ALL');
@@ -311,12 +313,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     : currentUser.subscriptionTier || 'STANDARD';
 
   const maxQuota = useMemo(() => {
-    if (isExempt) return 20; // VIP Partner limit is 20 to reflect Business version
-    if (effectiveTier === 'BUSINESS') return 20;
-    if (effectiveTier === 'ELITE') return 14;
-    if (effectiveTier === 'PRO') return 8;
-    return 3; // Standard free users: max 3 simultaneous ads
+    if (isExempt) return 10; // VIP Partner limit is 10 to reflect Business version
+    if (effectiveTier === 'BUSINESS') return 10;
+    if (effectiveTier === 'ELITE') return 7;
+    if (effectiveTier === 'PRO') return 4;
+    return 3; // Standard users: max 3 simultaneous paid ads
   }, [effectiveTier, isExempt]);
+
+  const freeAdsQuota = useMemo(() => {
+    if (isExempt) return 10;
+    if (effectiveTier === 'STANDARD') return 0;
+    return maxQuota;
+  }, [effectiveTier, isExempt, maxQuota]);
 
   // Subscription upgrade/downgrade logic (Point 5)
   const isSubscriptionActive = !isSubscriptionExpired && effectiveTier !== 'STANDARD';
@@ -897,7 +905,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-slate-600 mt-1">
-                    Votre compte bénéficie d'une dispense spéciale accordée par l'administration BizBooster (0 FCFA facturé, max 20 annonces simultanées).
+                    Votre compte bénéficie d'une dispense spéciale accordée par l'administration BizBooster (0 FCFA facturé, max 10 annonces simultanées).
                   </p>
                 </div>
               </div>
@@ -1225,9 +1233,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                               </span>
                             );
                           })()}
-                          <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-sm">
-                            {ad.mainCategory}
-                          </span>
+                          {ad.mainCategory !== 'EVENEMENTS' && ad.mainCategory !== 'AVIS_DE_RECHERCHE' && (
+                            <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-sm">
+                              {ad.mainCategory}
+                            </span>
+                          )}
                         </div>
 
                         <span
@@ -1482,11 +1492,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 </span>
               </div>
               <h3 className="text-2xl font-black text-white">
-                Plan {currentTier === 'STANDARD' ? 'Standard Gratuit' : currentTier}
+                Plan {currentTier === 'STANDARD' ? 'Standard' : currentTier}
               </h3>
               <p className="text-xs text-slate-300 mt-1 max-w-xl">
                 {currentTier === 'STANDARD'
-                  ? 'Vous bénéficiez de 3 annonces simultanées incluses gratuitement. Au-delà de 3 annonces actives, vous pouvez souscrire à un forfait Pro, Élite ou Business pour augmenter votre quota simultané.'
+                  ? 'La formule Standard autorise jusqu’à 3 annonces actives simultanées (tarif normal, sans annonce gratuite incluse). Au-delà de 3 annonces actives, ou pour profiter d’annonces incluses mensuelles, vous pouvez souscrire à un forfait Pro, Élite ou Business.'
                   : `Votre abonnement ${currentTier} est actif jusqu'au ${currentUser.subscriptionExpiresAt ? new Date(currentUser.subscriptionExpiresAt).toLocaleDateString('fr-FR') : 'prochain renouvellement'}.`}
               </p>
             </div>
@@ -1495,9 +1505,13 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-400 block">Annonces gratuites</span>
                 <span className="text-xl font-black text-emerald-400">
-                  {Math.min(currentUser.consumedFreeAdsCount || 0, maxQuota)} / {maxQuota}
+                  {freeAdsQuota === 0
+                    ? '0 / 0'
+                    : `${Math.min(currentUser.consumedFreeAdsCount || 0, freeAdsQuota)} / ${freeAdsQuota}`}
                 </span>
-                <span className="text-[10px] text-slate-400 block">utilisées</span>
+                <span className="text-[10px] text-slate-400 block">
+                  {freeAdsQuota === 0 ? 'sur abonnement' : 'utilisées'}
+                </span>
               </div>
               <div className="w-px h-8 bg-slate-700 hidden sm:block" />
               <div>
@@ -1522,7 +1536,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   Modèles d'Abonnement Professionnels
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Augmentez votre quota d'annonces simultanées (jusqu'à 20 pour Business) et bénéficiez de réductions sur les prolongations.
+                  Augmentez votre quota d'annonces simultanées (jusqu'à 10 pour Business) et bénéficiez de réductions sur les prolongations.
                 </p>
               </div>
             </div>

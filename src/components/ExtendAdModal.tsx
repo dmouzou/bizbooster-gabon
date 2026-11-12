@@ -16,13 +16,17 @@ interface ExtendAdModalProps {
   ) => void;
 }
 
-export const ExtendAdModal: React.FC<ExtendAdModalProps> = ({
+export const ExtendAdModal: React.FC<ExtendAdModalProps> = (props) => {
+  if (!props.ad) return null;
+  return <ExtendAdModalContent {...props} ad={props.ad} />;
+};
+
+const ExtendAdModalContent: React.FC<Omit<ExtendAdModalProps, 'ad'> & { ad: Ad }> = ({
   ad,
   currentUser,
   onClose,
   onExtendSuccess,
 }) => {
-  if (!ad) return null;
 
   const isVip = Boolean(
     currentUser?.exemptFromPaymentAndKyc ||

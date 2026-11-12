@@ -11,7 +11,8 @@ export const VIP_THRESHOLDS = {
     LOCATION_AN: 12_000_000,
   },
   MATERIEL_ROULANT: {
-    VENTE: 25_000_000, // >= 25 Millions FCFA (Voitures et Motos de luxe/prestige)
+    VENTE: 25_000_000, // >= 25 Millions FCFA (Voitures de luxe/prestige)
+    VENTE_MOTO: 5_000_000, // >= 5 Millions FCFA (Motos de luxe/prestige)
     LOCATION_JOUR: 50_000, // >= 50 000 FCFA/jour (Véhicules premium, berlines de luxe, motos)
     LOCATION_MOIS: 1_000_000,
     LOCATION_HEURE: 15_000,
@@ -77,8 +78,9 @@ export function isAdVipCornerEligible(params: VipCheckParams): boolean {
   }
 
   // 2. Filtrage strict Matériel Roulant : uniquement voitures et motos
+  let vehCat = '';
   if (category === 'MATERIEL_ROULANT') {
-    const vehCat = (
+    vehCat = (
       params.vehicleData?.category ||
       params.rollingStockCategory ||
       params.vehicleCategory ||
@@ -113,8 +115,13 @@ export function isAdVipCornerEligible(params: VipCheckParams): boolean {
   }
 
   if (category === 'MATERIEL_ROULANT') {
+    const isMoto = vehCat.includes('moto');
+    const venteThreshold = isMoto
+      ? VIP_THRESHOLDS.MATERIEL_ROULANT.VENTE_MOTO
+      : VIP_THRESHOLDS.MATERIEL_ROULANT.VENTE;
+
     if (transType === 'VENTE' || unit === 'total') {
-      return numPrice >= VIP_THRESHOLDS.MATERIEL_ROULANT.VENTE;
+      return numPrice >= venteThreshold;
     }
     // Location units
     if (unit === 'jour') return numPrice >= VIP_THRESHOLDS.MATERIEL_ROULANT.LOCATION_JOUR;
@@ -129,16 +136,23 @@ export function isAdVipCornerEligible(params: VipCheckParams): boolean {
 /**
  * Description of VIP threshold for helper text during publishing
  */
-export function getVipThresholdDescription(mainCategory: string, transactionType: string): string {
+export function getVipThresholdDescription(
+  mainCategory: string,
+  transactionType: string,
+  vehicleCategory?: string
+): string {
   if (mainCategory === 'IMMOBILIER') {
     return transactionType === 'VENTE'
       ? '≥ 75 000 000 FCFA (Villas, Maisons, Appartements, Terrains/Parcelles)'
       : '≥ 1 000 000 FCFA/mois ou ≥ 100 000 FCFA/jour (Villas, Maisons, Appartements)';
   }
   if (mainCategory === 'MATERIEL_ROULANT') {
-    return transactionType === 'VENTE'
-      ? '≥ 25 000 000 FCFA (Voitures et Motos de prestige)'
-      : '≥ 50 000 FCFA/jour ou ≥ 1 000 000 FCFA/mois (Voitures et Motos)';
+    const isMoto = (vehicleCategory || '').toLowerCase().includes('moto');
+    if (transactionType === 'VENTE') {
+      if (isMoto) return '≥ 5 000 000 FCFA (Motos de luxe)';
+      return '≥ 25 000 000 FCFA (Voitures) ou ≥ 5 000 000 FCFA (Motos de luxe)';
+    }
+    return '≥ 50 000 FCFA/jour ou ≥ 1 000 000 FCFA/mois (Voitures et Motos)';
   }
   return '';
 }
@@ -149,6 +163,6 @@ export const VIP_CORNER_INFO = {
   summary:
     'Espace d\'exception dédié aux villas, maisons, appartements, terrains ainsi qu\'aux voitures et motos de grand standing au Gabon.',
   explanation:
-    'Le Coin VIP rassemble les offres immobilières de standing (villas, maisons, appartements, terrains dès 75M FCFA à la vente ou 1M FCFA/mois en location) et les voitures ou motos de prestige (dès 25M FCFA à la vente ou 50 000 FCFA/jour). Les annonces qualifiées y sont intégrées automatiquement sans aucun frais supplémentaire pour l\'annonceur.',
+    'Le Coin VIP rassemble les offres immobilières de standing (villas, maisons, appartements, terrains dès 75M FCFA à la vente ou 1M FCFA/mois en location) et le matériel roulant haut de gamme (voitures dès 25M FCFA, motos de luxe dès 5M FCFA à la vente ou 50 000 FCFA/jour). Les annonces qualifiées y sont intégrées automatiquement sans aucun frais supplémentaire pour l\'annonceur.',
   freeOfChargeNotice: 'Placement offert sans aucun frais',
 };
