@@ -8,6 +8,7 @@ import {
   Eye,
   DollarSign,
   Smartphone,
+  MessageSquare,
   MapPin,
   Calendar,
   ExternalLink,
@@ -53,6 +54,7 @@ import { getFirebaseQuotaComparison, DEFAULT_QUOTA_COMPARISON, getTodayString, t
 import { RealTimeAnalytics } from './RealTimeAnalytics';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
 import { AppAlertModal, AlertModalConfig } from './AppAlertModal';
+import { TwilioAdminPanel } from './TwilioAdminPanel';
 import { BizboosterLogo } from './BizboosterLogo';
 
 interface AdminPanelProps {
@@ -174,8 +176,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Active Admin Tab: 'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY' | 'PAYMENTS'
-  const [activeTab, setActiveTab] = useState<'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY' | 'PAYMENTS'>('MODERATION');
+  // Active Admin Tab: 'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY' | 'PAYMENTS' | 'TWILIO'
+  const [activeTab, setActiveTab] = useState<'MODERATION' | 'OBSERVATOIRE' | 'ADVERTISERS' | 'REPORTS' | 'SCALABILITY' | 'PAYMENTS' | 'TWILIO'>('MODERATION');
 
   // Point 4: Métriques temps réel de scalabilité et comparaison quota Firebase Spark/Blaze
   const [metricsTick, setMetricsTick] = useState(0);
@@ -277,9 +279,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   }, [isSuper, loadGatewayConfig]);
 
-  // Si un non-super admin se retrouve sur l'onglet PAYMENTS, redirection automatique vers MODERATION
+  // Si un non-super admin se retrouve sur l'onglet PAYMENTS ou TWILIO, redirection automatique vers MODERATION
   useEffect(() => {
-    if (!isSuper && activeTab === 'PAYMENTS') {
+    if (!isSuper && (activeTab === 'PAYMENTS' || activeTab === 'TWILIO')) {
       setActiveTab('MODERATION');
     }
   }, [isSuper, activeTab]);
@@ -1293,6 +1295,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               }`}>
                 {gatewayConfig.clientId && (gatewayConfig.hasClientSecret || gatewayConfig.clientSecret) ? 'Airtel Actif' : 'À configurer'}
               </span>
+            </button>
+          )}
+
+          {/* TAB 7: AUTHENTIFICATION TWILIO VERIFY (SUPER ADMIN UNIQUEMENT) */}
+          {isSuper && (
+            <button
+              onClick={() => setActiveTab('TWILIO')}
+              className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 border cursor-pointer ${
+                activeTab === 'TWILIO'
+                  ? 'bg-rose-600 text-white border-rose-500 shadow-md'
+                  : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span>Twilio Verify (+241)</span>
             </button>
           )}
         </div>
@@ -3730,6 +3747,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
         </div>
+      )}
+
+      {/* VIEW 7: AUTHENTIFICATION TWILIO VERIFY (SUPER ADMIN UNIQUEMENT) */}
+      {activeTab === 'TWILIO' && isSuper && (
+        <TwilioAdminPanel isSuper={isSuper} onShowAlert={showAlert} />
       )}
 
       {/* MODAL 1: REJECTION REASON FOR AD */}

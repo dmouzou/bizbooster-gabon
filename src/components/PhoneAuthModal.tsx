@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   RecaptchaVerifier,
   signInWithPhoneNumber,
+  signInWithCustomToken,
   ConfirmationResult,
   signInWithEmailAndPassword,
   EmailAuthProvider,
@@ -12,6 +13,7 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 import { trackSmsSent } from '../services/platformMetrics';
+import { sendTwilioOtp, verifyTwilioOtp } from '../services/twilioAuth';
 import {
   X,
   Phone,
@@ -76,6 +78,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [fullName, setFullName] = useState('');
+  const [otpChannel, setOtpChannel] = useState<'sms' | 'whatsapp'>('sms');
 
   // Initialisation localisation
   const initialRegions = COUNTRY_LOCATIONS.GA || [];
@@ -301,30 +304,26 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setErrorMessage(null);
     setSuccessNotice(null);
 
-    // Format SMS : +2410XXXXXXXX pour le Gabon, standard international pour les autres
     const smsE164 = toSmsE164(contactPhone, selectedCountry);
 
     try {
-      const verifier = getOrCreateRecaptcha();
-      confirmationRef.current = await signInWithPhoneNumber(auth, smsE164, verifier);
+      const res = await sendTwilioOtp({
+        phoneNumber: contactPhone,
+        channel: otpChannel,
+        country: selectedCountry,
+      });
+      const channelLabel = res.channel === 'whatsapp' ? 'WhatsApp' : 'SMS';
       try {
         await trackSmsSent(smsE164);
       } catch (trackErr) {
         console.warn('Erreur trackSmsSent (non bloquante):', trackErr);
       }
-      setSuccessNotice(`Code de confirmation SMS envoyé au ${smsE164}.`);
+      setSuccessNotice(`Code de confirmation ${channelLabel} envoyé au ${smsE164}.`);
       return true;
-    } catch (err: unknown) {
-      console.error('Erreur envoi SMS Firebase:', err);
-      if (recaptchaRef.current) {
-        try {
-          recaptchaRef.current.clear();
-        } catch (clearErr) {
-          console.error('Erreur clear reCAPTCHA catch:', clearErr);
-        }
-        recaptchaRef.current = null;
-      }
-      setErrorMessage(getAuthErrorMessage(err, selectedCountry));
+    } catch (err: any) {
+      console.error('Erreur envoi OTP Twilio Verify:', err);
+      const msg = err?.message || 'Erreur lors de l\'envoi du code de vérification.';
+      setErrorMessage(msg);
       return false;
     } finally {
       setIsLoading(false);
@@ -402,47 +401,38 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
     setErrorMessage(null);
 
     const cleanCode = otpCode.replace(/\D/g, '');
-    if (cleanCode.length < 6) {
-      setErrorMessage('Veuillez saisir le code à 6 chiffres.');
-      return;
-    }
-
-    if (!confirmationRef.current) {
-      setErrorMessage('Session expirée. Recommencez la vérification.');
-      setStage(1);
+    if (cleanCode.length < 4) {
+      setErrorMessage('Veuillez saisir le code reçu.');
       return;
     }
 
     setIsLoading(true);
 
     try {
-      const userCred = await confirmationRef.current.confirm(cleanCode);
-      const user = userCred.user;
+      const verifyRes = await verifyTwilioOtp({
+        phoneNumber: contactPhone,
+        code: cleanCode,
+        mode: authMode === 'FORGOT_PASSWORD' ? 'FORGOT_PASSWORD' : 'REGISTER',
+        country: selectedCountry,
+      });
+
+      if (!verifyRes.success || !verifyRes.customToken) {
+        throw new Error('Code de vérification non validé.');
+      }
+
+      // Connexion sécurisée Firebase avec le Custom Token
+      await signInWithCustomToken(auth, verifyRes.customToken);
 
       if (authMode === 'REGISTER') {
-        const userDocSnap = await getDoc(doc(db, 'users', user.uid));
-        if (userDocSnap.exists()) {
-          await signOut(auth);
-          setErrorMessage('Ce numéro a déjà un compte, connectez-vous.');
-          setAuthMode('LOGIN');
-          setStage(1);
-          return;
-        }
         setStage(3);
       } else if (authMode === 'FORGOT_PASSWORD') {
-        const userDocSnap = await getDoc(doc(db, 'users', user.uid));
-        if (!userDocSnap.exists()) {
-          await signOut(auth);
-          setErrorMessage('Aucun compte pour ce numéro.');
-          return;
-        }
         setPassword('');
         setConfirmPassword('');
         setStage(4);
       }
-    } catch (err: unknown) {
-      console.error('Erreur confirmation OTP:', err);
-      setErrorMessage(getAuthErrorMessage(err, selectedCountry));
+    } catch (err: any) {
+      console.error('Erreur confirmation OTP Twilio:', err);
+      setErrorMessage(err?.message || 'Code de vérification incorrect ou expiré.');
     } finally {
       setIsLoading(false);
     }
@@ -659,20 +649,20 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
           <h2 className="text-xl sm:text-2xl font-black text-white">
             {authMode === 'LOGIN' && 'Connexion Espace Annonceur'}
             {authMode === 'REGISTER' && stage === 1 && 'Inscription Annonceur (Étape 1/3)'}
-            {authMode === 'REGISTER' && stage === 2 && 'Vérification SMS OTP (Étape 2/3)'}
+            {authMode === 'REGISTER' && stage === 2 && 'Vérification du code OTP (Étape 2/3)'}
             {authMode === 'REGISTER' && stage === 3 && 'Informations Annonceur (Étape 3/3)'}
             {authMode === 'FORGOT_PASSWORD' && stage === 1 && 'Mot de Passe Oublié (Étape 1/3)'}
-            {authMode === 'FORGOT_PASSWORD' && stage === 2 && 'Vérification SMS OTP (Étape 2/3)'}
+            {authMode === 'FORGOT_PASSWORD' && stage === 2 && 'Vérification du code OTP (Étape 2/3)'}
             {authMode === 'FORGOT_PASSWORD' && stage === 4 && 'Nouveau Mot de Passe (Étape 3/3)'}
           </h2>
 
           <p className="text-xs text-slate-300 mt-1">
             {authMode === 'LOGIN' && `Connectez-vous avec votre numéro (${COUNTRIES[selectedCountry].label}) et mot de passe.`}
-            {authMode === 'REGISTER' && stage === 1 && 'Entrez votre numéro pour recevoir un code de vérification SMS sécurisé.'}
-            {authMode === 'REGISTER' && stage === 2 && `Saisissez le code SMS envoyé au ${toSmsE164(contactPhone, selectedCountry)}.`}
+            {authMode === 'REGISTER' && stage === 1 && 'Entrez votre numéro pour recevoir un code de vérification sécurisé (SMS ou WhatsApp).'}
+            {authMode === 'REGISTER' && stage === 2 && `Saisissez le code ${otpChannel === 'whatsapp' ? 'WhatsApp' : 'SMS'} envoyé au ${toSmsE164(contactPhone, selectedCountry)}.`}
             {authMode === 'REGISTER' && stage === 3 && 'Complétez votre profil pour finaliser la création de votre compte.'}
-            {authMode === 'FORGOT_PASSWORD' && stage === 1 && 'Entrez votre numéro pour recevoir un code de réinitialisation par SMS.'}
-            {authMode === 'FORGOT_PASSWORD' && stage === 2 && `Saisissez le code SMS reçu au ${toSmsE164(contactPhone, selectedCountry)}.`}
+            {authMode === 'FORGOT_PASSWORD' && stage === 1 && 'Entrez votre numéro pour recevoir un code de réinitialisation sécurisé (SMS ou WhatsApp).'}
+            {authMode === 'FORGOT_PASSWORD' && stage === 2 && `Saisissez le code ${otpChannel === 'whatsapp' ? 'WhatsApp' : 'SMS'} reçu au ${toSmsE164(contactPhone, selectedCountry)}.`}
             {authMode === 'FORGOT_PASSWORD' && stage === 4 && 'Définissez votre nouveau mot de passe sécurisé.'}
           </p>
 
@@ -850,6 +840,40 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                     <span>Numéro mobile {COUNTRIES[selectedCountry].name.toLowerCase()} valide ({COUNTRIES[selectedCountry].digitsLength} chiffres)</span>
                   </div>
                 )}
+
+                {/* Choix du canal pour tous les pays */}
+                <div className="mt-3 pt-3 border-t border-slate-200/80 space-y-1.5">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                    Canal de réception du code OTP
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setOtpChannel('sms')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                        otpChannel === 'sms'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-800 shadow-xs ring-1 ring-emerald-500'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>SMS (Standard)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setOtpChannel('whatsapp')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                        otpChannel === 'whatsapp'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-800 shadow-xs ring-1 ring-emerald-500'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="text-sm">🟢</span>
+                      <span>WhatsApp</span>
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <button
@@ -861,7 +885,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   <RefreshCw className="w-4 h-4 animate-spin" />
                 ) : (
                   <>
-                    <span>Envoyer le code SMS de vérification</span>
+                    <span>
+                      Envoyer le code par {otpChannel === 'whatsapp' ? 'WhatsApp' : 'SMS'}
+                    </span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
@@ -912,6 +938,40 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                     <Phone className="w-4 h-4 text-slate-400" />
                   </div>
                 </div>
+
+                {/* Choix du canal pour tous les pays */}
+                <div className="mt-3 pt-3 border-t border-slate-200/80 space-y-1.5">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                    Canal de réception du code OTP
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setOtpChannel('sms')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                        otpChannel === 'sms'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-800 shadow-xs ring-1 ring-emerald-500'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>SMS (Standard)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setOtpChannel('whatsapp')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                        otpChannel === 'whatsapp'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-800 shadow-xs ring-1 ring-emerald-500'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="text-sm">🟢</span>
+                      <span>WhatsApp</span>
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <button
@@ -923,7 +983,9 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   <RefreshCw className="w-4 h-4 animate-spin" />
                 ) : (
                   <>
-                    <span>Envoyer le code SMS de récupération</span>
+                    <span>
+                      Envoyer le code par {otpChannel === 'whatsapp' ? 'WhatsApp' : 'SMS'}
+                    </span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
@@ -946,14 +1008,20 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
             </form>
           )}
 
-          {/* 4. ÉTAPE 2 : VÉRIFICATION OTP SMS */}
+          {/* 4. ÉTAPE 2 : VÉRIFICATION OTP SMS / WHATSAPP */}
           {stage === 2 && (
             <form onSubmit={handleVerifyOtp} className="space-y-5">
               <div className="text-center space-y-1">
-                <span className="text-xs text-slate-500">Code SMS envoyé au numéro :</span>
+                <span className="text-xs text-slate-500">
+                  Code {otpChannel === 'whatsapp' ? 'WhatsApp' : 'SMS'} envoyé au numéro :
+                </span>
                 <p className="font-extrabold text-slate-800 text-base">
                   {toSmsE164(contactPhone, selectedCountry)}
                 </p>
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                  <span>Acheminé via Twilio Verify ({otpChannel === 'whatsapp' ? 'WhatsApp' : 'SMS'})</span>
+                </span>
               </div>
 
               <div>
@@ -983,15 +1051,29 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   {resendTimer > 0 ? (
                     <span className="text-slate-400">Renvoyer dans {resendTimer}s</span>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (await sendCode()) setResendTimer(45);
-                      }}
-                      className="text-emerald-600 hover:text-emerald-700 font-bold underline cursor-pointer"
-                    >
-                      Renvoyer un SMS
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setOtpChannel('sms');
+                          if (await sendCode()) setResendTimer(45);
+                        }}
+                        className="text-emerald-600 hover:text-emerald-700 font-bold underline cursor-pointer"
+                      >
+                        Renvoyer par SMS
+                      </button>
+                      <span className="text-slate-300">•</span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setOtpChannel('whatsapp');
+                          if (await sendCode()) setResendTimer(45);
+                        }}
+                        className="text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer"
+                      >
+                        WhatsApp
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

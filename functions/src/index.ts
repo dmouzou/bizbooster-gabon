@@ -3489,3 +3489,14 @@ export const syncAdCounters = onSchedule("every 60 minutes", async () => {
   await syncAdViewCounters(db);
 });
 
+// Phase Twilio Verify : Authentification OTP Gabon (SMS & WhatsApp)
+export {
+  getTwilioAdminConfig,
+  saveTwilioAdminConfig,
+  testTwilioOtpSend,
+  sendTwilioOtp,
+  verifyTwilioOtp,
+  getTwilioConfig,
+} from "./twilio";
+
+
