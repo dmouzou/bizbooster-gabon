@@ -49,6 +49,7 @@ import { ToastContainer } from './components/ui/Toast';
 
 // Lazy-loaded heavy modal components for bundle optimization (F3)
 const AdDetailModal = React.lazy(() => import('./components/AdDetailModal').then((m) => ({ default: m.AdDetailModal })));
+const AdDetailPage = React.lazy(() => import('./components/AdDetailPage').then((m) => ({ default: m.AdDetailPage })));
 const PublishAdModal = React.lazy(() => import('./components/PublishAdModal').then((m) => ({ default: m.PublishAdModal })));
 const EditAdModal = React.lazy(() => import('./components/EditAdModal').then((m) => ({ default: m.EditAdModal })));
 const UserDashboard = React.lazy(() => import('./components/UserDashboard').then((m) => ({ default: m.UserDashboard })));
@@ -603,8 +604,17 @@ function PublicApp({
   const [adPendingEditConfirm, setAdPendingEditConfirm] = useState<Ad | null>(null);
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
 
-  // Scroll position retention for catalogue (restores position when returning from advertiser space)
+  // Responsive desktop detection for AdDetailModal vs mobile AdDetailPage
+  const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
+  useEffect(() => {
+    const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Scroll position retention for catalogue and ad detail navigation
   const catalogScrollPosRef = useRef(0);
+  const savedDetailScrollYRef = useRef<number | null>(null);
   const prevFrontendTabRef = useRef(frontendTab);
 
   // Point 6: Bouton retour en haut de page dans l'espace catalogue
@@ -750,30 +760,46 @@ function PublicApp({
 
   // Deep-linking for shared ad (Requirement 5: ?ad=... or #ad-...) - (D3)
   useEffect(() => {
-    if (ads.length === 0 || hasProcessedUrlAdRef.current) return;
+    if (ads.length === 0) return;
 
     const checkUrlForAd = () => {
       try {
         const searchParams = new URLSearchParams(window.location.search);
         const adIdFromQuery = searchParams.get('ad');
         const hash = window.location.hash;
-        const adIdFromHash = hash.startsWith('#ad-') ? hash.slice(1) : (hash.startsWith('#') ? hash.slice(1) : null);
+        const adIdFromHash = hash.startsWith('#ad-')
+          ? hash.replace(/^#ad-/, '')
+          : (hash.startsWith('#') && hash.length > 1 ? hash.slice(1) : null);
         const targetAdId = adIdFromQuery || adIdFromHash;
 
         if (targetAdId) {
           const matchedAd = ads.find((a) => a.id === targetAdId);
           if (matchedAd) {
-            hasProcessedUrlAdRef.current = true;
             setSelectedAdForDetail(matchedAd);
             setFrontendTab('catalog');
           }
+        } else {
+          // If URL no longer contains ad and detail was open (e.g., browser back button), close and restore scroll
+          setSelectedAdForDetail((curr) => {
+            if (curr && savedDetailScrollYRef.current !== null) {
+              const targetY = savedDetailScrollYRef.current;
+              requestAnimationFrame(() => {
+                window.scrollTo({ top: targetY, behavior: 'instant' });
+              });
+            }
+            return null;
+          });
         }
       } catch (err) {
         console.error('Error parsing shared ad URL:', err);
       }
     };
 
-    checkUrlForAd();
+    if (!hasProcessedUrlAdRef.current) {
+      hasProcessedUrlAdRef.current = true;
+      checkUrlForAd();
+    }
+
     window.addEventListener('popstate', checkUrlForAd);
     return () => window.removeEventListener('popstate', checkUrlForAd);
   }, [ads]);
@@ -831,6 +857,12 @@ function PublicApp({
       window.history.replaceState(null, '', cleanUrl);
     } catch {
       // ignore
+    }
+    if (savedDetailScrollYRef.current !== null) {
+      const targetY = savedDetailScrollYRef.current;
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: targetY, behavior: 'instant' });
+      });
     }
   };
 
@@ -1280,13 +1312,14 @@ function PublicApp({
 
   // Handle selecting an ad detail with view counting and deep-link URL sync
   const handleSelectAdDetail = async (ad: Ad) => {
+    savedDetailScrollYRef.current = window.scrollY;
     setSelectedAdForDetail(ad);
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set('ad', ad.id);
-      url.hash = '';
-      const cleanUrl = url.pathname + (url.search ? url.search : '');
-      window.history.replaceState(null, '', cleanUrl);
+      url.searchParams.delete('ad');
+      url.hash = `ad-${ad.id}`;
+      const cleanUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+      window.history.pushState({ adId: ad.id, scrollY: window.scrollY }, '', cleanUrl);
     } catch {
       // ignore
     }
@@ -2514,16 +2547,30 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
           initialMode={authTriggerPurpose === 'PUBLISH' ? 'PUBLISH_TRIGGER' : 'LOGIN'}
         />
 
-        {/* 2. Detail Modal */}
-        <AdDetailModal
-          ad={activeSelectedAd}
-          onClose={handleCloseAdDetail}
-          onOpenExtendModal={(ad) => handleTriggerExtend(ad)}
-          onEditAd={(ad) => handleTriggerEdit(ad)}
-          currentUser={currentUser}
-          isFavorite={activeSelectedAd ? activeFavoriteIds.includes(activeSelectedAd.id) : false}
-          onToggleFavorite={handleToggleFavorite}
-        />
+        {/* 2. Detail View: Modal on Desktop (>=1024px), Full-Screen Page on Mobile (<1024px) */}
+        {activeSelectedAd && (
+          isDesktop ? (
+            <AdDetailModal
+              ad={activeSelectedAd}
+              onClose={handleCloseAdDetail}
+              onOpenExtendModal={(ad) => handleTriggerExtend(ad)}
+              onEditAd={(ad) => handleTriggerEdit(ad)}
+              currentUser={currentUser}
+              isFavorite={activeSelectedAd ? activeFavoriteIds.includes(activeSelectedAd.id) : false}
+              onToggleFavorite={handleToggleFavorite}
+            />
+          ) : (
+            <AdDetailPage
+              ad={activeSelectedAd}
+              onClose={handleCloseAdDetail}
+              onOpenExtendModal={(ad) => handleTriggerExtend(ad)}
+              onEditAd={(ad) => handleTriggerEdit(ad)}
+              currentUser={currentUser}
+              isFavorite={activeSelectedAd ? activeFavoriteIds.includes(activeSelectedAd.id) : false}
+              onToggleFavorite={handleToggleFavorite}
+            />
+          )
+        )}
 
         {/* 3. Full Publishing & Mobile Payment Wizard */}
         <PublishAdModal

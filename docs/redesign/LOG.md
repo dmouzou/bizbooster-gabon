@@ -4,7 +4,7 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 
 ---
 
-## [Phase 0] — Baseline & Outils de Mesure de Performance
+## [Phase 0] : Baseline & Outils de Mesure de Performance
 - **Date** : 14 novembre 2026
 - **Commit** : `34dff19`
 - **Ce qui est livré** :
@@ -26,7 +26,7 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 
 ---
 
-## [Phase 1] — Quick Wins & Fondations d'Optimisation Frontend
+## [Phase 1] : Quick Wins & Fondations d'Optimisation Frontend
 - **Date** : 14 novembre 2026
 - **Commit** : `5b1ca3c`
 - **Ce qui est livré** :
@@ -56,7 +56,7 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 
 ---
 
-## [Phase 2] — Design Foundation & Primitives UI Accessibles
+## [Phase 2] : Design Foundation & Primitives UI Accessibles
 - **Date** : 14 novembre 2026
 - **Commit** : `2ea9b5d`
 - **Ce qui est livré** :
@@ -85,9 +85,9 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 
 ---
 
-## [Phase 3] — Shell Mobile & Refonte Complète du Flux d'Annonces
+## [Phase 3] : Shell Mobile & Refonte Complète du Flux d'Annonces
 - **Date** : 14 novembre 2026
-- **Commit** : En cours de validation P3 (UI)
+- **Commit** : `087aeec`
 - **Ce qui est livré** :
   - Nouvelle carte de flux grand public (`src/components/AdCard.tsx`) conforme à la spécification 5.2 :
     - Format d'image optimisé 16:10 avec `ResponsiveImage` (placeholder solide `#DCE3EA` sans décalage de mise en page).
@@ -119,6 +119,44 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
   - ✅ Cibles tactiles strictement `>= 44x44 px`.
   - ✅ Navigation et grille desktop (>= 1024px) parfaitement préservées.
   - ✅ Aucun em dash dans les textes ou commentaires.
+
+---
+
+## [Phase 4] : Fiche Détail Mobile & Routage par Liens Profonds
+- **Date** : 14 novembre 2026
+- **Commit** : En cours de validation P4 (UI)
+- **Ce qui est livré** :
+  - Composant mobile dédié pleine page `src/components/AdDetailPage.tsx` monté sur les écrans `< 1024px`, tandis que `AdDetailModal` est conservé pour les écrans bureau (`>= 1024px`) :
+    - En-tête fixe avec bouton retour 44x44 px, titre et catégorie, bouton favori et bouton de partage rapide.
+    - Galerie photo ultra-fluide basée sur le scroll-snap CSS natif matériel (`overflow-x: auto; scroll-snap-type: x mandatory`) sans gestionnaire tactile JavaScript bloquant le thread principal.
+    - Compteur de photos dynamique et bouton d'agrandissement en plein écran (lightbox).
+    - Corps d'annonce structuré selon l'ordre strict de la spécification 5.4 :
+      1. Prix en grand format (24-30px, vert émeraude épuré) avec suffixe d'unité, ou ruban solennel pour Nécrologie / Avis de recherche.
+      2. Badges contextuels (Vérifié avec bouclier, VIP Corner avec couronne, Transaction Vente/Location/etc.).
+      3. Titre et localisation détaillée (quartier, ville, province) avec temps restant avant expiration.
+      4. Grille de caractéristiques principales par catégorie (type de bien, véhicule marque/modèle/sous-type, cours matière/niveau, événement date/lieu, référence annonce).
+      5. Description détaillée repliable après 6 lignes avec bascule accessible "Lire toute la description" / "Voir moins".
+      6. Bloc annonceur avec avatar, nom, statut vérifié par BIZBOOSTER et bouton d'ouverture de badge.
+      7. Bloc localisation au Gabon certifiée géolocalisée.
+      8. Actions de signalement (`ReportAdModal` en modale/tiroir) et partage social (`ShareAdModal`).
+    - Barre d'action inférieure collante fixe respectant la zone de sécurité (`env(safe-area-inset-bottom)`) avec bouton principal WhatsApp (hauteur 48px) et bouton d'appel direct (hauteur 48px), et adaptation textuelle selon la catégorie (Condoléances/Famille, Signaler/Urgence).
+    - Espacement inférieur généreux (`pb-28`) assurant qu'aucun contenu ni lien de signalement ne soit masqué par la barre d'action inférieure.
+  - Gestion du routage et des liens profonds dans `src/App.tsx` :
+    - Prise en charge des URL partagées sous forme `#ad-<id>` et `?ad=<id>`.
+    - Sauvegarde automatique de la position de défilement du catalogue (`savedDetailScrollYRef`) à l'ouverture d'une annonce.
+    - Restauration instantanée de la position de défilement au retour dans le catalogue, que ce soit via le bouton retour de l'interface ou le bouton Précédent du navigateur (`popstate`).
+  - Suite de tests unitaires et de rendu dédiée `tests/ad_detail_page.test.ts` (7 nouveaux tests unitaires).
+- **Résultats des tests & validations locales** :
+  - `npm run lint` (`tsc --noEmit`) : 🟢 0 erreur.
+  - `npm test` : 🟢 24 fichiers testés, 139/139 tests unitaires passés (+7 tests).
+  - `npm run build` : 🟢 0 erreur (`dist-frontend` et `dist-admin`).
+  - Chunk `AdDetailPage` découpé et chargé à la demande (4.05 KB gzip), poids de `index.js` initial à **76.04 KB gzip** (très inférieur au budget de 150 KB).
+- **Vérification des contraintes dures (Section 2 du brief)** :
+  - ✅ Commits UI strictement séparés du code backend (`functions/` et règles inchangées).
+  - ✅ Cibles tactiles strictement `>= 44x44 px`.
+  - ✅ Pas d'em dash dans le code, les commentaires ou les textes.
+  - ✅ `AdDetailModal` préservé pour desktop (>= 1024px).
+  - ✅ Marché Gabon, FCFA.
 - **Prochaine étape** :
-  - **Phase 4 (Detail Page & Routing)** : Fiche détaillée d'annonce optimisée mobile avec liens profonds (`#ad-<id>`), galerie d'images par swipe CSS scroll-snap sans gestionnaire JS bloquant, barre d'actions flottante sécurisée en bas d'écran (WhatsApp + Appeler) et restauration de la position de défilement du flux.
+  - **Phase 5 (Filter Sheet)** : Tiroir de filtrage mobile unifié remplaçant les barres séparées, piloté par un schéma de configuration par catégorie avec accordéons repliables, bouton fixe "Réinitialiser" et "Voir N résultats", et puces de filtres actifs amovibles sous la barre de recherche.
 
