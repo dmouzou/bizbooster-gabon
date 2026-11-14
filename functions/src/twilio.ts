@@ -2,7 +2,7 @@ import {onCall, HttpsError} from "firebase-functions/v2/https";
 import {defineSecret} from "firebase-functions/params";
 import {getFirestore, FieldValue} from "firebase-admin/firestore";
 import {getAuth} from "firebase-admin/auth";
-import {assertSuperAdmin, AIRTEL_PREFIXES, MOOV_PREFIXES} from "./index";
+import {assertSuperAdmin, AIRTEL_PREFIXES, MOOV_PREFIXES} from "./adminAuth";
 
 // 1. Définition des secrets Twilio pour Secret Manager (defineSecret)
 export const twilioAccountSid = defineSecret("TWILIO_ACCOUNT_SID");
@@ -58,9 +58,9 @@ export async function getTwilioConfig(): Promise<TwilioConfigData> {
     return cachedTwilioConfig;
   }
 
-  const db = getFirestore();
   let firestoreDoc: Record<string, unknown> | null = null;
   try {
+    const db = getFirestore();
     const snap = await db.collection("private_config").doc("twilio").get();
     if (snap.exists) {
       firestoreDoc = snap.data() || null;
@@ -349,7 +349,7 @@ async function callTwilioVerifyApi(
     if (twilioCode === 60605) {
       throw new HttpsError(
         "permission-denied",
-        "L'envoi vers cette destination est bloqué par les Géo-Permissions Twilio. Activez le pays de destination dans Twilio Console > Verify > Services > Settings > Geo-permissions."
+        "L'envoi vers cette destination n'est pas autorisé actuellement."
       );
     }
     if (twilioCode === 60200) {
@@ -364,25 +364,14 @@ async function callTwilioVerifyApi(
     if (twilioCode === 60203) {
       throw new HttpsError(
         "resource-exhausted",
-        "Nombre maximal de tentatives de saisie atteint pour ce code. Veuillez demander un nouveau code."
-      );
-    }
-    if (twilioCode === 20404) {
-      throw new HttpsError(
-        "not-found",
-        "Le Service Verify SID (VA...) est introuvable. Vérifiez la configuration dans le panneau Super Admin."
-      );
-    }
-    if (twilioCode === 20003) {
-      throw new HttpsError(
-        "unauthenticated",
-        "Identifiants Twilio non autorisés (Account SID ou Auth Token incorrects)."
+        "Nombre maximal de tentatives atteint pour ce code. Veuillez demander un nouveau code."
       );
     }
 
+    // T9 : Message générique pour le public, tous les détails d'administration sont loggués ci-dessus
     throw new HttpsError(
       "internal",
-      `Échec Twilio Verify (${twilioCode || response.status}): ${twilioMessage}`
+      "Le service d'envoi de code de vérification est temporairement indisponible. Veuillez réessayer plus tard."
     );
   }
 
@@ -623,39 +612,80 @@ export const sendTwilioOtp = onCall(
       );
     }
 
+    const cfg = await getTwilioConfig();
+    // T8 : Vérifier l'interrupteur isLive
+    if (cfg.isLive === false) {
+      throw new HttpsError(
+        "unavailable",
+        "Le service d'authentification par SMS est temporairement suspendu."
+      );
+    }
+
     const selectedChannel = channel === "whatsapp" ? "whatsapp" : "sms";
 
-    // Protection anti-abus / rate-limiting par pays et numéro
+    // F9 : Vérifier si le numéro fait l'objet d'un blocage administratif
     const db = getFirestore();
+    const cleanDigits = rawDigits.replace(/\D/g, "");
+    const blockSnap = await db.collection("blocklist").doc(`phone_${cleanDigits}`).get();
+    if (blockSnap.exists) {
+      throw new HttpsError(
+        "permission-denied",
+        "Ce numéro de téléphone fait l'objet d'un blocage administratif."
+      );
+    }
+
+    // Protection anti-abus / rate-limiting par pays et numéro (T2 : transactionnel et réinitialisable)
     const rateLimitRef = db.collection("otp_rate_limits").doc(`${resolvedCountry}_${rawDigits}`);
     const now = Date.now();
+    const WINDOW_MS = 15 * 60 * 1000; // Fenêtre de 15 minutes
+    const COOLDOWN_MS = 30 * 1000; // Cooldown de 30 secondes
+    const MAX_ATTEMPTS = 5;
 
-    const rateDoc = await rateLimitRef.get();
-    if (rateDoc.exists) {
-      const data = rateDoc.data() || {};
-      const lastSent = Number(data.lastSentAt || 0);
-      const attemptsCount = Number(data.attemptsCount || 0);
-      const windowStart = Number(data.windowStart || 0);
+    await db.runTransaction(async (tx) => {
+      const rateSnap = await tx.get(rateLimitRef);
+      const data = rateSnap.exists ? rateSnap.data() || {} : {};
+      const lastSentAt = typeof data.lastSentAt === "number" ? data.lastSentAt : 0;
+      let windowStart = typeof data.windowStart === "number" ? data.windowStart : 0;
+      let attemptsCount = typeof data.attemptsCount === "number" ? data.attemptsCount : 0;
+
+      // Réinitialisation après expiration de la fenêtre de 15 minutes
+      if (now - windowStart > WINDOW_MS || windowStart === 0) {
+        windowStart = now;
+        attemptsCount = 0;
+      }
 
       // Cooldown de 30 secondes entre deux renvois
-      if (now - lastSent < 30000) {
-        const waitSec = Math.ceil((30000 - (now - lastSent)) / 1000);
+      if (now - lastSentAt < COOLDOWN_MS) {
+        const waitSec = Math.ceil((COOLDOWN_MS - (now - lastSentAt)) / 1000);
         throw new HttpsError(
           "resource-exhausted",
           `Veuillez patienter ${waitSec} secondes avant de demander un nouveau code.`
         );
       }
 
-      // Max 5 OTPs par fenêtre de 15 minutes
-      if (now - windowStart < 900000 && attemptsCount >= 5) {
+      // Plafond de 5 envois par fenêtre de 15 minutes
+      if (attemptsCount >= MAX_ATTEMPTS) {
+        const remainingSec = Math.ceil((WINDOW_MS - (now - windowStart)) / 1000);
+        const remainingMin = Math.max(1, Math.ceil(remainingSec / 60));
         throw new HttpsError(
           "resource-exhausted",
-          "Trop de demandes de vérification pour ce numéro. Réessayez dans 15 minutes."
+          `Trop de demandes de vérification pour ce numéro. Réessayez dans ${remainingMin} minute(s).`
         );
       }
-    }
 
-    const cfg = await getTwilioConfig();
+      tx.set(
+        rateLimitRef,
+        {
+          lastSentAt: now,
+          windowStart,
+          attemptsCount: attemptsCount + 1,
+          channel: selectedChannel,
+          country: resolvedCountry,
+          expireAt: new Date(now + 24 * 3600 * 1000).toISOString(),
+        },
+        {merge: true}
+      );
+    });
 
     const result = await callTwilioVerifyApi(
       "Verifications",
@@ -666,31 +696,25 @@ export const sendTwilioOtp = onCall(
       cfg
     );
 
-    // Mise à jour de la limitation de débit
-    await rateLimitRef.set(
-      {
-        lastSentAt: now,
-        attemptsCount: FieldValue.increment(1),
-        windowStart: FieldValue.serverTimestamp(),
-        channel: selectedChannel,
-        country: resolvedCountry,
-      },
-      {merge: true}
-    );
-
-    // Enregistrement métrique pour l'Observatoire / Scalabilité
+    // Enregistrement métrique pour l'Observatoire / Scalabilité (T10 : réinitialisation journalière)
     try {
       const today = new Date().toISOString().split("T")[0];
       const metricRef = db.doc("system_counters/scalability_metrics");
-      await metricRef.set(
-        {
-          todayDate: today,
-          smsSentToday: FieldValue.increment(1),
-          smsSentAllTime: FieldValue.increment(1),
-          lastSmsSentAt: new Date().toISOString(),
-        },
-        {merge: true}
-      );
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(metricRef);
+        const data = snap.data() || {};
+        const isNewDay = data.todayDate !== today;
+        tx.set(
+          metricRef,
+          {
+            todayDate: today,
+            smsSentToday: isNewDay ? 1 : FieldValue.increment(1),
+            smsSentAllTime: FieldValue.increment(1),
+            lastSmsSentAt: new Date().toISOString(),
+          },
+          {merge: true}
+        );
+      });
     } catch (metricErr) {
       console.warn("Échec incrément compteur scalabilité (non bloquant):", metricErr);
     }
@@ -741,6 +765,13 @@ export const verifyTwilioOtp = onCall(
     }
 
     const cfg = await getTwilioConfig();
+    // T8 : Vérifier l'interrupteur isLive
+    if (cfg.isLive === false) {
+      throw new HttpsError(
+        "unavailable",
+        "Le service d'authentification par SMS est temporairement suspendu."
+      );
+    }
 
     // Appel Twilio Verify pour valider le code
     const verificationCheck = await callTwilioVerifyApi(
@@ -760,6 +791,15 @@ export const verifyTwilioOtp = onCall(
     }
 
     const db = getFirestore();
+    const cleanDigits = rawDigits.replace(/\D/g, "");
+    const blockSnap = await db.collection("blocklist").doc(`phone_${cleanDigits}`).get();
+    if (blockSnap.exists) {
+      throw new HttpsError(
+        "permission-denied",
+        "Ce numéro de téléphone fait l'objet d'un blocage administratif."
+      );
+    }
+
     const authAdmin = getAuth();
     const syntheticEmail = toSyntheticEmailBackend(rawDigits, resolvedCountry);
 
@@ -796,18 +836,33 @@ export const verifyTwilioOtp = onCall(
         );
       }
 
-      // Si un compte Auth résiduel orphelin existe sans profil Firestore, on le nettoie pour repartir propre
-      if (existingAuthUser && !hasFirestoreProfile) {
+      // T6 : Ne jamais supprimer un compte Auth existant (évite la destruction d'un vrai compte)
+      let uidToUse: string;
+      if (existingAuthUser) {
+        uidToUse = existingAuthUser.uid;
+      } else {
+        uidToUse = db.collection("users").doc().id;
         try {
-          await authAdmin.deleteUser(existingAuthUser.uid);
-        } catch (delErr) {
-          console.warn("Suppression utilisateur Auth orphelin:", delErr);
+          await authAdmin.createUser({
+            uid: uidToUse,
+            email: syntheticEmail,
+            phoneNumber: e164,
+          });
+        } catch (createErr) {
+          console.warn("Création user Auth côté serveur:", createErr);
         }
       }
 
-      // Créer un nouvel identifiant unique pour le futur profil
-      const newUid = db.collection("users").doc().id;
-      const customToken = await authAdmin.createCustomToken(newUid, {
+      // T11 : Mettre à jour phoneNumber sur l'utilisateur Auth si possible
+      try {
+        await authAdmin.updateUser(uidToUse, {
+          phoneNumber: e164,
+        });
+      } catch (phoneLinkErr) {
+        console.warn("Association phoneNumber Auth non bloquante:", phoneLinkErr);
+      }
+
+      const customToken = await authAdmin.createCustomToken(uidToUse, {
         role: "USER",
         phoneVerified: true,
         country: resolvedCountry,
@@ -819,6 +874,7 @@ export const verifyTwilioOtp = onCall(
         isNewUser: true,
         e164,
         country: resolvedCountry,
+        syntheticEmail,
       };
     }
 
@@ -831,6 +887,48 @@ export const verifyTwilioOtp = onCall(
           "not-found",
           "Aucun compte associé à ce numéro de téléphone. Veuillez créer un compte."
         );
+      }
+
+      // T4 & Réponse 5 : Les administrateurs doivent se connecter par email.
+      // Interdiction de réinitialiser le mot de passe d'un ADMIN / SUPER_ADMIN par SMS.
+      const targetUserDoc = await db.collection("users").doc(targetUid).get();
+      const targetUserData = targetUserDoc.exists ? targetUserDoc.data() || {} : {};
+      let targetAuthUser = existingAuthUser;
+      if (!targetAuthUser) {
+        try {
+          targetAuthUser = await authAdmin.getUser(targetUid);
+        } catch {}
+      }
+
+      const roleInDoc = String(targetUserData.role || "").toUpperCase();
+      const roleInClaim = String(targetAuthUser?.customClaims?.role || "").toUpperCase();
+      const isSuperInDoc = targetUserData.isSuperAdmin === true;
+      const isSuperInClaim = targetAuthUser?.customClaims?.isSuperAdmin === true;
+
+      const isAdminAccount =
+        roleInDoc === "ADMIN" ||
+        roleInDoc === "SUPER_ADMIN" ||
+        roleInDoc === "SUPER ADMIN" ||
+        roleInClaim === "ADMIN" ||
+        roleInClaim === "SUPER_ADMIN" ||
+        roleInClaim === "SUPER ADMIN" ||
+        isSuperInDoc ||
+        isSuperInClaim;
+
+      if (isAdminAccount) {
+        throw new HttpsError(
+          "permission-denied",
+          "Les comptes administrateurs ne peuvent pas réinitialiser leur mot de passe par SMS. Connectez-vous avec vos identifiants administrateur."
+        );
+      }
+
+      // T11 : Mettre à jour phoneNumber sur l'utilisateur Auth si possible
+      try {
+        await authAdmin.updateUser(targetUid, {
+          phoneNumber: e164,
+        });
+      } catch (updPhoneErr) {
+        console.warn("Mise à jour phoneNumber Auth (non bloquante):", updPhoneErr);
       }
 
       const customToken = await authAdmin.createCustomToken(targetUid, {

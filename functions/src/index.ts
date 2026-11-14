@@ -28,6 +28,7 @@ import {
   SUBSCRIPTION_QUOTAS,
   MAX_VALIDITY_DAYS,
 } from "./pricing";
+import {assertSuperAdmin, MOOV_PREFIXES, AIRTEL_PREFIXES} from "./adminAuth";
 
 export const MOOV_PAYMENT_ENABLED = false;
 
@@ -191,16 +192,8 @@ export type ExtendableAdStatus = (typeof EXTENDABLE_AD_STATUSES)[number];
 
 export {SUBSCRIPTION_QUOTAS};
 
-// Numéros de test Firebase Auth (Phase 8) sans code secret
-export const FIREBASE_TEST_PHONE_NUMBERS = [
-  "+24167256341",
-  "+24167896902",
-  "+24177276895",
-  "+24177905165",
-  "+24177000000",
-  "+24166000000",
-  "+24174000000",
-];
+// S1: Numéros de test Firebase Auth supprimés (fournisseur téléphone désactivé en faveur de Twilio Verify)
+export const FIREBASE_TEST_PHONE_NUMBERS: string[] = [];
 
 /**
  * 2. Expiration automatique des annonces et gestion des dépassements de
@@ -433,9 +426,8 @@ const singpayWalletId = defineSecret("SINGPAY_WALLET_ID");
 const singpayWebhookSecret = defineSecret("SINGPAY_WEBHOOK_SECRET");
 const singpayDisbursementId = defineSecret("SINGPAY_DISBURSEMENT_ID");
 
-// Table des préfixes d'opérateurs stricte (Phase 6)
-export const MOOV_PREFIXES = ["60", "62", "65", "66"];
-export const AIRTEL_PREFIXES = ["74", "76", "77"];
+// Table des préfixes d'opérateurs stricte et authentification admin (Phase 6)
+export { MOOV_PREFIXES, AIRTEL_PREFIXES, assertSuperAdmin };
 
 // Catalogue des produits et tarification officielle côté serveur (Phase 6)
 export const SERVER_PRODUCTS: Record<string, number> = {
@@ -554,53 +546,7 @@ export async function getSingPayConfig(): Promise<SingPayConfigData> {
   return cachedSingPayConfig;
 }
 
-/**
- * Vérifie les privilèges Super Admin.
- * Exige request.auth, puis vérifie le rôle SUPER_ADMIN ou SUPER ADMIN
- * dans le jeton ou dans users/{uid}.role (ou users/{uid}.isSuperAdmin === true).
- */
-export async function assertSuperAdmin(request: {
-  auth?: {
-    uid: string;
-    token: Record<string, unknown>;
-  };
-}): Promise<string> {
-  if (!request.auth || !request.auth.uid) {
-    throw new HttpsError(
-      "unauthenticated",
-      "Authentification requise pour cette opération."
-    );
-  }
 
-  const tokenRole = request.auth.token.role;
-  const isTokenSuperAdmin =
-    tokenRole === "SUPER_ADMIN" ||
-    tokenRole === "SUPER ADMIN" ||
-    request.auth.token.isSuperAdmin === true;
-
-  if (isTokenSuperAdmin) {
-    return request.auth.uid;
-  }
-
-  const db = getFirestore();
-  const userDoc = await db.collection("users").doc(request.auth.uid).get();
-  if (userDoc.exists) {
-    const userData = userDoc.data() || {};
-    const dbRole = userData.role;
-    if (
-      dbRole === "SUPER_ADMIN" ||
-      dbRole === "SUPER ADMIN" ||
-      userData.isSuperAdmin === true
-    ) {
-      return request.auth.uid;
-    }
-  }
-
-  throw new HttpsError(
-    "permission-denied",
-    "Accès réservé exclusivement au Super Administrateur."
-  );
-}
 
 export function maskNumber(val?: string): string {
   if (!val) return "";
@@ -970,20 +916,21 @@ export async function settlePayment(
     const currentRank = PAYMENT_STATUS_RANKS[currentStatus] ?? 0;
     const targetRank = PAYMENT_STATUS_RANKS[outcome.status] ?? -1;
 
-    // Règle: aucune baisse de rang sauf EXPIRED vers SUCCESS
+    // Règle: aucune baisse de rang sauf EXPIRED ou FAILED vers SUCCESS
     if (currentStatus === "SUCCESS") {
       // Déjà SUCCESS: terminal et immuable
       return { success: true, status: "SUCCESS", attributed: Boolean(payment.attributed) };
     }
-    if (currentStatus === "FAILED" && outcome.status !== "FAILED") {
-      // Statut final FAILED: aucune transition possible
+    if (currentStatus === "FAILED" && outcome.status !== "SUCCESS") {
+      // FAILED ne peut transiter que vers SUCCESS (P1 : confirmation fournisseur tardive)
       return { success: false, status: "FAILED", attributed: false };
     }
     if (currentStatus === "EXPIRED" && outcome.status !== "SUCCESS") {
       // EXPIRED ne peut transiter que vers SUCCESS (paiement mobile différé)
       return { success: false, status: "EXPIRED", attributed: false };
     }
-    if (targetRank < currentRank && !(currentStatus === "EXPIRED" && outcome.status === "SUCCESS")) {
+    const isLateSuccess = (currentStatus === "EXPIRED" || currentStatus === "FAILED") && outcome.status === "SUCCESS";
+    if (targetRank < currentRank && !isLateSuccess) {
       console.warn(
         `settlePayment: Transition interdite de ${currentStatus} vers ${outcome.status} pour ${paymentRefOrId}.`
       );
@@ -1079,17 +1026,27 @@ export async function settlePayment(
       userUpdates.consumedFreeAdsCount = 0;
       hasUserUpdates = true;
 
-      // B23: Réactivation automatique des annonces suspendues pour fin de forfait lors d'un réabonnement
+      // B23 & P18: Réactivation automatique des annonces suspendues pour fin de forfait lors d'un réabonnement
+      // P18 : Déduire les annonces déjà actives pour ne pas dépasser le quota autorisé
       try {
         const quota = SUBSCRIPTION_QUOTAS[tier] ?? 10;
+        const activeAdsSnap = await db
+          .collection("ads")
+          .where("userId", "==", userId)
+          .where("status", "==", "ACTIVE")
+          .get();
+        const activeCount = activeAdsSnap.size;
+        const availableSlots = Math.max(0, quota - activeCount);
+
         const suspendedAdsSnap = await db
           .collection("ads")
           .where("userId", "==", userId)
           .where("status", "==", "SUSPENDED")
           .where("suspensionReason", "==", "FORFAIT_EXPIRE_QUOTA")
           .get();
-        if (!suspendedAdsSnap.empty) {
-          const toReactivate = suspendedAdsSnap.docs.slice(0, quota);
+
+        if (availableSlots > 0 && !suspendedAdsSnap.empty) {
+          const toReactivate = suspendedAdsSnap.docs.slice(0, availableSlots);
           for (const doc of toReactivate) {
             const d = doc.data() || {};
             const frozenMs = computeFrozenRemainingMs(d, now.getTime());
@@ -1169,6 +1126,11 @@ export async function settlePayment(
         }
         hasAdUpdates = true;
         paymentUpdates.consumedByAdId = adId || true;
+      } else {
+        // P17 : Si l'annonce n'est pas éligible à la prolongation, passer en NEEDS_REVIEW
+        paymentUpdates.status = "NEEDS_REVIEW";
+        paymentUpdates.attributed = false;
+        paymentUpdates.errorReason = `Annonce non éligible à la prolongation (statut: ${adStatus || "inconnu"}).`;
       }
     } else if (productId === "AD_REACTIVATE") {
       // AD_REACTIVATE : réactivation d'une annonce en pause suite à expiration d'abonnement
@@ -1202,6 +1164,11 @@ export async function settlePayment(
         adUpdates.maxPhotos = Math.max(Number(adData.maxPhotos || 3), currentImagesCount);
         hasAdUpdates = true;
         paymentUpdates.consumedByAdId = adId || true;
+      } else {
+        // P17 : Annonce déjà réactivée ou non SUSPENDED -> NEEDS_REVIEW
+        paymentUpdates.status = "NEEDS_REVIEW";
+        paymentUpdates.attributed = false;
+        paymentUpdates.errorReason = `Annonce non réactivable (statut actuel: ${adStatus || "inconnu"}).`;
       }
     } else if (productId === "AD_PUBLISH") {
       // AD_PUBLISH : Achat abonnement éventuel, consommation quota ou boost gratuit, marquage consumedByAdId
@@ -1282,7 +1249,10 @@ export async function singpayFetch(
     });
     return res;
   } catch (err: unknown) {
-    if ((err as Error)?.name === "AbortError") {
+    if (
+      (err as Error)?.name === "AbortError" ||
+      (err as any)?.cause?.name === "AbortError"
+    ) {
       throw new Error(`Délai d'attente SingPay dépassé (${timeoutMs / 1000}s).`);
     }
     throw err;
@@ -1486,6 +1456,64 @@ export const previewQuote = onCall(
 );
 
 /**
+ * P0 : Valide l'éligibilité de l'annonce ciblée pour l'initiation de paiement.
+ */
+export function validateAdTargetForPayment(
+  productId: string,
+  cleanAdId: string,
+  adDocExists: boolean,
+  adData: Record<string, unknown> | null,
+  callerUid: string,
+  isSuperOrAdmin: boolean
+): { isValid: boolean; error?: { code: string; message: string } } {
+  const isPublish = productId === "AD_PUBLISH";
+  if (!cleanAdId) {
+    return { isValid: true };
+  }
+  if (!adDocExists) {
+    // AD_PUBLISH : l'annonce est créée APRÈS le paiement (id pré-généré côté client)
+    if (!isPublish) {
+      return {
+        isValid: false,
+        error: { code: "not-found", message: "Annonce ciblée introuvable." },
+      };
+    }
+    return { isValid: true };
+  }
+
+  const data = adData || {};
+  if (data.userId !== callerUid && !isSuperOrAdmin) {
+    return {
+      isValid: false,
+      error: { code: "permission-denied", message: "Cette annonce ne vous appartient pas." },
+    };
+  }
+
+  const adStatus = String(data.status || "").toUpperCase();
+  if (isPublish && adStatus !== "PENDING_PAYMENT") {
+    return {
+      isValid: false,
+      error: { code: "already-exists", message: "Une annonce existe déjà avec cet identifiant." },
+    };
+  }
+
+  if (productId === "AD_EXTEND" && !EXTENDABLE_AD_STATUSES.includes(adStatus as any)) {
+    return {
+      isValid: false,
+      error: { code: "failed-precondition", message: "Cette annonce ne peut pas être prolongée (statut non éligible)." },
+    };
+  }
+  if (adStatus === "REJECTED" || adStatus === "DELETED") {
+    return {
+      isValid: false,
+      error: { code: "failed-precondition", message: "Cette annonce ne peut plus être modifiée ou prolongée." },
+    };
+  }
+
+  return { isValid: true };
+}
+
+/**
  * 4. Passerelle SingPay Gabon (Phase 3 : Initiation sécurisée, idempotente et traçable)
  */
 export const initiateSingPayPayment = onCall(
@@ -1574,16 +1602,12 @@ export const initiateSingPayPayment = onCall(
     const userDoc = await db.collection("users").doc(request.auth.uid).get();
     const userData = userDoc.exists ? userDoc.data() || {} : {};
 
-    // 3.2 Contrôle de l'annonce si metadata.adId est présent
+    // 3.2 Contrôle de l'annonce si metadata.adId est présent (P0)
     let adData: Record<string, unknown> | null = null;
     const cleanAdId =
       metadata && typeof metadata.adId === "string" ? metadata.adId.trim() : "";
     if (cleanAdId) {
       const adDoc = await db.collection("ads").doc(cleanAdId).get();
-      if (!adDoc.exists) {
-        throw new HttpsError("not-found", "Annonce ciblée introuvable.");
-      }
-      adData = adDoc.data() || {};
       const isSuperOrAdmin =
         request.auth.token.role === "SUPER_ADMIN" ||
         request.auth.token.role === "SUPER ADMIN" ||
@@ -1592,28 +1616,23 @@ export const initiateSingPayPayment = onCall(
         userData.role === "SUPER ADMIN" ||
         userData.role === "ADMIN";
 
-      if (adData.userId !== request.auth.uid && !isSuperOrAdmin) {
-        throw new HttpsError(
-          "permission-denied",
-          "Cette annonce ne vous appartient pas."
-        );
+      const check = validateAdTargetForPayment(
+        productId,
+        cleanAdId,
+        adDoc.exists,
+        adDoc.exists ? (adDoc.data() || {}) : null,
+        request.auth.uid,
+        isSuperOrAdmin
+      );
+      if (!check.isValid && check.error) {
+        throw new HttpsError(check.error.code as any, check.error.message);
       }
 
-      const adStatus = String(adData.status || "").toUpperCase();
-      if (productId === "AD_EXTEND" && !EXTENDABLE_AD_STATUSES.includes(adStatus as any)) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Cette annonce ne peut pas être prolongée (statut non éligible)."
-        );
-      }
-      if (productId === "AD_REACTIVATE") {
-        assertReactivatableAd(adData);
-      }
-      if (adStatus === "REJECTED" || adStatus === "DELETED") {
-        throw new HttpsError(
-          "failed-precondition",
-          "Cette annonce ne peut plus être modifiée ou prolongée."
-        );
+      if (adDoc.exists) {
+        adData = adDoc.data() || {};
+        if (productId === "AD_REACTIVATE") {
+          assertReactivatableAd(adData);
+        }
       }
     }
 
@@ -1848,9 +1867,11 @@ export const initiateSingPayPayment = onCall(
         throw err;
       }
       const e = err as Error;
+      // P1 : Ne pas marquer immédiatement FAILED lors d'un timeout ou erreur réseau vers SingPay
+      // car le push USSD a pu être émis côté opérateur. Conserver en PENDING pour la réconciliation.
       await paymentRef.update({
-        status: "FAILED",
-        errorReason: e.message || "Erreur de communication SingPay",
+        status: "PENDING",
+        errorReason: e.message || "Erreur de communication SingPay (vérification en cours)",
         updatedAt: new Date().toISOString(),
       }).catch(() => {});
       throw new HttpsError("internal", `SingPay: ${e.message}`);
@@ -2124,8 +2145,10 @@ export const singpayWebhook = onRequest(
       const cfg = await getSingPayConfig();
       const expectedSecret = cfg.webhookSecret;
 
-      // 5.4 Transport du secret : en-tête x-webhook-secret uniquement (B21)
-      const receivedSecret = (req.headers["x-webhook-secret"] as string) || "";
+      // 5.4 Transport du secret : en-tête x-webhook-secret ou paramètre ?secret= (P4)
+      const headerSecret = (req.headers["x-webhook-secret"] as string) || "";
+      const querySecret = typeof req.query?.secret === "string" ? req.query.secret : "";
+      const receivedSecret = headerSecret || querySecret;
 
       // 5.3 Comparaison avec crypto.timingSafeEqual et suppression du repli Client Secret
       if (!expectedSecret || !receivedSecret) {
@@ -2556,6 +2579,7 @@ export interface ResolvedAdPayment {
   transactionRef?: string | null;
   boostRequested?: boolean;
   maxPhotos?: number;
+  withVideo?: boolean;
   failureReason?: string;
 }
 
@@ -2635,6 +2659,7 @@ export async function resolveAdPayment(
     const expiresAt = new Date(now + durationDays * 86400000).toISOString();
     const maxPhotos = Number(payMeta.photoCount) || 3;
     const boostRequested = Boolean(payMeta.withBoost);
+    const withVideo = Boolean(payMeta.withVideo);
 
     return {
       verified: true,
@@ -2645,6 +2670,7 @@ export async function resolveAdPayment(
       transactionRef: payData.singpayTransactionId || paymentReference,
       boostRequested,
       maxPhotos,
+      withVideo,
     };
   });
 }
@@ -2679,8 +2705,6 @@ export const onAdCreated = onDocumentCreated(
     );
     // Quota standard = 0 (Décision D3)
     const quota = SUBSCRIPTION_QUOTAS[effective.ownerTier || "STANDARD"] ?? 0;
-    const consumed = Number(userData.consumedFreeAdsCount || 0);
-    const isCoveredByQuota = !isExempt && quota > 0 && consumed < quota;
 
     // F1: Seules les annonces/comptes portant un préfixe explicite de test/démo sont marqués isTest
     const isTest = isExplicitTestAd(adId, userId);
@@ -2693,6 +2717,11 @@ export const onAdCreated = onDocumentCreated(
       isTest,
       updatedAt: new Date().toISOString(),
     };
+
+    // S16 : Verrouiller contactName après validation KYC
+    if (effective.isOwnerVerified && (userData.verifiedName || userData.name)) {
+      updates.contactName = userData.verifiedName || userData.name;
+    }
 
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
@@ -2739,6 +2768,11 @@ export const onAdCreated = onDocumentCreated(
         ) {
           updates.images = adData.images.slice(0, resolved.maxPhotos);
         }
+
+        // P5 : Retirer la vidéo si elle n'a pas été achetée
+        if (!resolved.withVideo && !isExempt && adData.videoUrl) {
+          updates.videoUrl = FieldValue.delete();
+        }
       }
     } else if (isExempt) {
       // Utilisateur exempté : publication sans frais
@@ -2749,26 +2783,51 @@ export const onAdCreated = onDocumentCreated(
       if (adData.boostRequested || adData.withBoost) {
         updates.boostRequested = true;
       }
-    } else if (isCoveredByQuota) {
-      // Inclus dans le quota d'abonnement actif (sans extras payants)
-      updates.paymentVerified = true;
-      updates.paidAmount = 0;
-      updates.durationDays = durationDays;
-      updates.expiresAt = new Date(now + durationDays * 86400000).toISOString();
-      if (userDoc.exists) {
-        await userDoc.ref.update({
-          consumedFreeAdsCount: FieldValue.increment(1),
-          updatedAt: nowIso,
+    } else {
+      // P6 : Vérification et décrémentation atomique du quota gratuit en transaction
+      let isCoveredByQuota = false;
+      if (quota > 0) {
+        await db.runTransaction(async (tx) => {
+          const uSnap = await tx.get(userDoc.ref);
+          if (uSnap.exists) {
+            const uData = uSnap.data() || {};
+            const currentConsumed = Number(uData.consumedFreeAdsCount || 0);
+            if (currentConsumed < quota) {
+              tx.update(userDoc.ref, {
+                consumedFreeAdsCount: FieldValue.increment(1),
+                updatedAt: nowIso,
+              });
+              isCoveredByQuota = true;
+            }
+          }
         });
       }
-    } else {
-      // Sans paiement et non couvert par un quota ou une exemption
-      updates.status = "PENDING_PAYMENT";
-      updates.paymentVerified = false;
-      updates.moderationReason = "PAIEMENT_REQUIS";
-      updates.isFeatured = false;
-      updates.featuredAt = null;
-      updates.featuredUntil = null;
+
+      if (isCoveredByQuota) {
+        // Inclus dans le quota d'abonnement actif (sans extras payants)
+        updates.paymentVerified = true;
+        updates.paidAmount = 0;
+        updates.durationDays = durationDays;
+        updates.expiresAt = new Date(now + durationDays * 86400000).toISOString();
+
+        // P5 : Plafonner les photos selon le forfait (3, 4 ou 5) et retirer la vidéo
+        const freePhotosAllowed =
+          effective.ownerTier === "BUSINESS" ? 5 : effective.ownerTier === "ELITE" ? 4 : 3;
+        if (Array.isArray(adData.images) && adData.images.length > freePhotosAllowed) {
+          updates.images = adData.images.slice(0, freePhotosAllowed);
+        }
+        if (adData.videoUrl) {
+          updates.videoUrl = FieldValue.delete();
+        }
+      } else {
+        // Sans paiement et non couvert par un quota ou une exemption
+        updates.status = "PENDING_PAYMENT";
+        updates.paymentVerified = false;
+        updates.moderationReason = "PAIEMENT_REQUIS";
+        updates.isFeatured = false;
+        updates.featuredAt = null;
+        updates.featuredUntil = null;
+      }
     }
 
     await snap.ref.update(updates);
@@ -2945,6 +3004,24 @@ export const approveAd = onCall(
         adTitle: ad.title || "Sans titre",
         timestamp: FieldValue.serverTimestamp(),
       });
+
+      // Notification utilisateur pour l'annonce validée (F3)
+      if (ad.userId) {
+        const notifId = `val_${adId}_${Date.now()}`;
+        const notifRef = db.collection("user_notifications").doc(`${ad.userId}_${notifId}`);
+        transaction.set(notifRef, {
+          id: notifId,
+          notifId,
+          userId: ad.userId,
+          type: "AD_VALIDATED",
+          title: "Annonce validée et publiée !",
+          message: `Votre annonce « ${ad.title || "Sans titre"} » a été validée par l'équipe de modération et est maintenant visible sur le portail public.`,
+          adId,
+          dispatchedAt: nowIso,
+          timestamp: Date.now(),
+          status: "DISPATCHED",
+        });
+      }
 
       return {success: true, adId};
     });
@@ -3473,6 +3550,7 @@ export {
   setExemption,
   rejectExtension,
   logKycView,
+  banUser,
 } from "./moderation";
 export { registerView } from "./registerView";
 export { isExplicitTestAd } from "./testAds";

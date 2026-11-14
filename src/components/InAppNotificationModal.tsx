@@ -52,6 +52,7 @@ interface InAppNotificationModalProps {
   onOpenExtendModal?: (ad: Ad) => void;
   onEditAd?: (ad: Ad) => void;
   onOpenSubscriptions?: () => void;
+  onBoostAd?: (ad: Ad) => void;
 }
 
 export interface NotificationVisualTheme {
@@ -215,6 +216,7 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
   onOpenExtendModal,
   onEditAd,
   onOpenSubscriptions,
+  onBoostAd,
 }) => {
   const [activeNotification, setActiveNotification] = useState<InAppNotification | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number>(15);
@@ -495,7 +497,13 @@ export const InAppNotificationModal: React.FC<InAppNotificationModalProps> = ({
               adId: ad.id,
               badgeLabel: 'Boost Terminé',
               actionLabel: 'Rebooster',
-              onAction: () => onSelectAdDetail && onSelectAdDetail(ad),
+              onAction: () => {
+                if (onBoostAd) {
+                  onBoostAd(ad);
+                } else if (onSelectAdDetail) {
+                  onSelectAdDetail(ad);
+                }
+              },
             });
           }
         }

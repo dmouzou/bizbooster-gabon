@@ -95,9 +95,34 @@ export const resubmitAd = onCall(CALLABLE_OPTIONS, async (request) => {
     }
   }
 
-  // Cap photos à 10 max (E1)
+  // Cap photos à 5 max (quota maximum de la plateforme) (P5, E1)
   if (Array.isArray(filteredUpdates.images)) {
-    filteredUpdates.images = filteredUpdates.images.slice(0, 10);
+    filteredUpdates.images = filteredUpdates.images
+      .filter((img: unknown) => typeof img === "string" && (img.startsWith("https://") || img.startsWith("http://")))
+      .slice(0, 5);
+  }
+
+  // Validation des champs édités (F2)
+  if (filteredUpdates.title !== undefined) {
+    const cleanTitle = String(filteredUpdates.title || "").trim();
+    if (cleanTitle.length < 3 || cleanTitle.length > 150) {
+      throw new HttpsError("invalid-argument", "Le titre doit comporter entre 3 et 150 caractères.");
+    }
+    filteredUpdates.title = cleanTitle;
+  }
+  if (filteredUpdates.description !== undefined) {
+    const cleanDesc = String(filteredUpdates.description || "").trim();
+    if (cleanDesc.length > 4000) {
+      throw new HttpsError("invalid-argument", "La description ne peut dépasser 4000 caractères.");
+    }
+    filteredUpdates.description = cleanDesc;
+  }
+  if (filteredUpdates.price !== undefined && filteredUpdates.price !== null) {
+    const numPrice = Number(filteredUpdates.price);
+    if (isNaN(numPrice) || numPrice < 0) {
+      throw new HttpsError("invalid-argument", "Le prix doit être un nombre positif ou nul.");
+    }
+    filteredUpdates.price = numPrice;
   }
 
   const db = getFirestore();
@@ -111,8 +136,8 @@ export const resubmitAd = onCall(CALLABLE_OPTIONS, async (request) => {
     }
     const ad = adDoc.data() || {};
 
-    // Contrôle d'appartenance : seul le propriétaire authentifié peut réémettre son annonce
-    if (ad.userId && ad.userId !== request.auth!.uid) {
+    // Contrôle d'appartenance strict (F2) : seul le propriétaire authentifié peut réémettre son annonce
+    if (!ad.userId || ad.userId !== request.auth!.uid) {
       throw new HttpsError("permission-denied", "Vous n'êtes pas le propriétaire de cette annonce.");
     }
 
@@ -126,11 +151,19 @@ export const resubmitAd = onCall(CALLABLE_OPTIONS, async (request) => {
       delete filteredUpdates.videoUrl;
     }
 
+    // S16 : Verrouiller contactName après validation KYC
+    const userDoc = await tx.get(db.collection("users").doc(request.auth!.uid));
+    const userData = userDoc.exists ? userDoc.data() || {} : {};
+    if (userData.isKycVerified || userData.idVerificationStatus === "VERIFIED") {
+      filteredUpdates.contactName = userData.verifiedName || userData.name || ad.contactName;
+    }
+
     const nextPayload: Record<string, any> = {
       ...filteredUpdates,
       status: "PENDING_REVIEW",
       moderatedAt: FieldValue.delete(),
       moderationReason: FieldValue.delete(),
+      rejectionReason: FieldValue.delete(),
       updatedAt: nowIso,
       resubmittedAt: FieldValue.serverTimestamp(),
     };

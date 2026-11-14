@@ -57,17 +57,8 @@ function getTodayString(): string {
  * Numéros de téléphone de test déclarés dans Firebase Authentication
  * (Ces numéros ne consomment pas de SMS réels et sont 100% gratuits).
  */
-export const FIREBASE_TEST_PHONE_NUMBERS = [
-  '+24177905165',
-  '+24177000000',
-  '+24166000000',
-  '+24174000000',
-  '+24101010101',
-  '+24100000000',
-  '+24111111111',
-  '+24177112233',
-  '+24177452018',
-];
+// S1: Numéros de test Firebase Auth supprimés (fournisseur téléphone désactivé)
+export const FIREBASE_TEST_PHONE_NUMBERS: string[] = [];
 
 export function isFirebaseTestPhoneNumber(phone?: string): boolean {
   if (!phone) return false;

@@ -54,17 +54,23 @@ export const reportAd = onCall(CALLABLE_OPTIONS, async (request) => {
       throw new HttpsError("already-exists", "Vous avez déjà signalé cette annonce.");
     }
 
-    const now = FieldValue.serverTimestamp();
+    const adData = adDoc.data() || {};
+    const nowIso = new Date().toISOString();
+    const adTitle = adData.title || "Sans titre";
+    const adOwnerPhone = adData.contactPhone || adData.phoneNumber || null;
 
-    // 1. Création du rapport PENDING
+    // 1. Création du rapport PENDING (F4 : ajout adTitle, adOwnerPhone et createdAt formaté)
     tx.set(reportRef, {
       adId,
+      adTitle,
+      adOwnerPhone,
       reporterId: reporterUid,
       reporterPhone: String(reporterPhone || "").trim(),
       reason: cleanReason,
       details: cleanDetails,
       status: "PENDING",
-      createdAt: now,
+      createdAt: nowIso,
+      timestamp: FieldValue.serverTimestamp(),
     });
 
     // 2. Incrémentation sécurisée côté serveur du nombre de signalements sur l'annonce

@@ -103,7 +103,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-[10px] sm:text-[11px] font-black shrink-0">
                   {(currentUser.name || 'U').charAt(0).toUpperCase()}
                 </div>
-                <span className="max-w-[60px] sm:max-w-[75px] truncate font-bold text-[11px] sm:text-xs">{currentUser.name.split(' ')[0]}</span>
+                <span className="max-w-[60px] sm:max-w-[75px] truncate font-bold text-[11px] sm:text-xs">{(currentUser.name || 'Mon Espace').split(' ')[0]}</span>
               </button>
             ) : (
               <button

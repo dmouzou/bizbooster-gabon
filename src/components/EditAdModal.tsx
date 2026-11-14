@@ -1768,16 +1768,29 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                  <User className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Nom de l'annonceur / Contact :</span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Nom de l'annonceur / Contact :</span>
+                  </label>
+                  {ad.isOwnerVerified && (
+                    <span className="text-[10px] font-black text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                      Certifié KYC
+                    </span>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={contactName}
                   onChange={(e) => setContactName(e.target.value)}
                   placeholder="Ex: M. Ndong"
-                  className="w-full text-xs font-bold bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-slate-900 focus:outline-emerald-500"
+                  disabled={Boolean(ad.isOwnerVerified)}
+                  className={`w-full text-xs font-bold rounded-xl px-3.5 py-2.5 focus:outline-emerald-500 ${
+                    ad.isOwnerVerified
+                      ? 'bg-slate-100 border border-slate-200 text-slate-500 cursor-not-allowed'
+                      : 'bg-white border border-slate-200 text-slate-900'
+                  }`}
                   required
                 />
               </div>

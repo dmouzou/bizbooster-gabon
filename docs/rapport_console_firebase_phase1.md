@@ -44,11 +44,6 @@ Ce rapport documente les vérifications obligatoires et les configurations à ac
 
 ---
 
-### 7. Numéros de Téléphone de Test (White-list Firebase Auth)
-- Configurer les numéros de test fictifs directement dans *Authentication > Méthode de connexion > Téléphone > Numéros de téléphone de test*.
-- Exemples de numéros de test à configurer avec codes statiques (6 chiffres) :
-  - `+24167256341` ➔ Code: `555555`
-  - `+24167896902` ➔ Code: `111777`
-  - `+24177276895` ➔ Code: `777777`
-  - `+24177905165` ➔ Code: `000000`
-- Ces numéros fonctionnent avec le véritable appel `confirm()` de Firebase SDK, sans nécessiter de code codé en dur ni de contournement dans le code source du client React.
+### 7. Numéros de Téléphone de Test (Fournisseur Téléphone désactivé - S1)
+- Le fournisseur « Téléphone » de Firebase Auth doit être désactivé dans la console au profit exclusif de Twilio Verify v2.
+- Tous les numéros de test et codes statiques historiques ont été révoqués et supprimés.

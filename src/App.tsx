@@ -216,21 +216,10 @@ function useUserProfile() {
                 id: fbUser.uid,
               } as UserProfile);
             } else {
-              // Profil minimal sûr sans droits admin (B-16, S-16)
-              setCurrentUser({
-                id: fbUser.uid,
-                name: fbUser.displayName || 'Utilisateur',
-                phoneNumber: fbUser.phoneNumber || '',
-                contactPhone: fbUser.phoneNumber || '',
-                role: 'USER',
-                isVerified: false,
-                termsAccepted: true,
-                termsAcceptedAt: new Date().toISOString(),
-                createdAt: new Date().toISOString(),
-                subscriptionTier: 'STANDARD',
-                idVerificationStatus: 'NOT_SUBMITTED',
-                favoriteAdIds: [],
-              });
+              // T12 : Si users/{uid} n'existe pas encore (inscription incomplète interrompue),
+              // déconnecter la session et ne pas fabriquer de profil avec termsAccepted: true.
+              signOut(auth).catch(() => {});
+              setCurrentUser(null);
             }
           },
           (err) => {
@@ -248,8 +237,8 @@ function useUserProfile() {
                 contactPhone: fbUser.phoneNumber || '',
                 role: 'USER',
                 isVerified: false,
-                termsAccepted: true,
-                termsAcceptedAt: new Date().toISOString(),
+                termsAccepted: false,
+                termsAcceptedAt: '',
                 createdAt: new Date().toISOString(),
                 subscriptionTier: 'STANDARD',
                 idVerificationStatus: 'NOT_SUBMITTED',
@@ -1648,6 +1637,11 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
       }
     }
 
+    // S16 : Le nom ne peut plus être modifié par le client une fois le KYC vérifié
+    if (currentUser?.isKycVerified || currentUser?.idVerificationStatus === 'VERIFIED') {
+      delete filteredUpdate.name;
+    }
+
     try {
       if (Object.keys(filteredUpdate).length > 0) {
         await updateDoc(doc(db, 'users', uid), filteredUpdate);
@@ -2538,6 +2532,7 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
         onOpenSubscriptions={() => {
           setFrontendTab('user-dashboard');
         }}
+        onBoostAd={(ad) => handleBoostAd(ad.id)}
       />
 
       {/* 11. Bouton Retour en haut de page dans l'espace catalogue (Point 6) */}
@@ -2620,7 +2615,7 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
             )}
           </div>
           <span className="text-[10px] truncate max-w-[75px]">
-            {currentUser ? currentUser.name.split(' ')[0] : 'Mon Espace'}
+            {currentUser?.name ? currentUser.name.split(' ')[0] : 'Mon Espace'}
           </span>
         </button>
       </nav>
@@ -2718,13 +2713,18 @@ export default function App() {
   }
 
   return (
-    <PublicApp
-      currentUser={currentUser}
-      setCurrentUser={setCurrentUser}
-      authReady={authReady}
-      profileError={profileError}
-      setProfileError={setProfileError}
-      onSwitchToAdmin={isUserAdmin(currentUser) ? switchToAdmin : undefined}
-    />
+    <ErrorBoundary
+      fallbackTitle="Une anomalie d'affichage est survenue"
+      onReset={() => window.location.reload()}
+    >
+      <PublicApp
+        currentUser={currentUser}
+        setCurrentUser={setCurrentUser}
+        authReady={authReady}
+        profileError={profileError}
+        setProfileError={setProfileError}
+        onSwitchToAdmin={isUserAdmin(currentUser) ? switchToAdmin : undefined}
+      />
+    </ErrorBoundary>
   );
 }

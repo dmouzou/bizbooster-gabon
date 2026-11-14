@@ -114,15 +114,8 @@ export function getTodayString(d = new Date()): string {
  * (Ces numéros ne consomment pas de SMS réels et sont 100% gratuits).
  * Ne contient aucun code secret OTP.
  */
-export const FIREBASE_TEST_PHONE_NUMBERS = [
-  '+24167256341',
-  '+24167896902',
-  '+24177276895',
-  '+24177905165',
-  '+24177000000',
-  '+24166000000',
-  '+24174000000',
-];
+// S1: Numéros de test Firebase Auth supprimés (fournisseur téléphone désactivé)
+export const FIREBASE_TEST_PHONE_NUMBERS: string[] = [];
 
 export function isFirebaseTestPhoneNumber(phone?: string): boolean {
   if (!phone) return false;

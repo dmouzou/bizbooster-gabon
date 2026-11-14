@@ -66,5 +66,25 @@ describe('Phase 6: Migration backfill script logic', () => {
     expect(updatesNecro.necrologieData.deceasedName).toBe('Feu M. Dupont');
     expect(updatesNecro.necrologieData.ministry).toBe('Police nationale');
   });
+
+  it('D1 : démasque les annonces réelles marquées à tort isTest: true', async () => {
+    const { isExplicitTestAd } = await import('../functions/src/testAds');
+
+    // Annonce réelle qui avait isTest: true
+    const realAd = { id: 'ad-abc123xyz', userId: 'user-789xyz', isTest: true };
+    const updatesReal: any = {};
+    if (realAd.isTest === true && !isExplicitTestAd(realAd.id, realAd.userId)) {
+      updatesReal.isTest = false;
+    }
+    expect(updatesReal.isTest).toBe(false);
+
+    // Annonce explicite de test
+    const testAd = { id: 'test_ad_1', userId: 'user-789xyz', isTest: true };
+    const updatesTest: any = {};
+    if (testAd.isTest === true && !isExplicitTestAd(testAd.id, testAd.userId)) {
+      updatesTest.isTest = false;
+    }
+    expect(updatesTest.isTest).toBeUndefined();
+  });
 });
 

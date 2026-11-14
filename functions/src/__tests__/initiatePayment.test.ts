@@ -3,6 +3,7 @@ import {
   buildPriceContext,
   computeFrozenRemainingMs,
   singpayFetch,
+  validateAdTargetForPayment,
 } from "../index";
 
 describe("Initiation de paiement (Phase 3)", () => {
@@ -39,7 +40,7 @@ describe("Initiation de paiement (Phase 3)", () => {
       const ctx = buildPriceContext({
         subscriptionTier: "PRO",
         subscriptionExpiresAt: futureDate,
-        consumedFreeAdsCount: 2, // Quota PRO = 8
+        consumedFreeAdsCount: 2, // Quota PRO = 4
       });
       expect(ctx.hasFreeAdQuota).toBe(true);
     });
@@ -95,14 +96,98 @@ describe("Initiation de paiement (Phase 3)", () => {
 
   describe("singpayFetch", () => {
     it("déclenche un abandon par timeout si le serveur ne répond pas", async () => {
-      // Test avec un timeout très court (10ms) vers une URL factice
-      await expect(
-        singpayFetch(
-          "https://10.255.255.1",
-          { method: "POST" },
-          15
-        )
-      ).rejects.toThrow(/Délai d'attente SingPay dépassé/);
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_url: string, init?: RequestInit) => {
+        return new Promise((_resolve, reject) => {
+          if (init?.signal?.aborted) {
+            const err = new Error("This operation was aborted");
+            err.name = "AbortError";
+            return reject(err);
+          }
+          init?.signal?.addEventListener("abort", () => {
+            const abortErr = new Error("This operation was aborted");
+            abortErr.name = "AbortError";
+            reject(abortErr);
+          });
+        });
+      }) as any;
+
+      try {
+        await expect(
+          singpayFetch(
+            "https://10.255.255.1",
+            { method: "POST" },
+            15
+          )
+        ).rejects.toThrow(/Délai d'attente SingPay dépassé/);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("validateAdTargetForPayment (P0 Correctif AD_PUBLISH)", () => {
+    it("AD_PUBLISH avec adId inexistant : ne lève pas not-found, autorise l'initiation", () => {
+      const res = validateAdTargetForPayment(
+        "AD_PUBLISH",
+        "pre_generated_new_ad_id",
+        false, // doc.exists === false
+        null,
+        "caller_user_1",
+        false
+      );
+      expect(res.isValid).toBe(true);
+      expect(res.error).toBeUndefined();
+    });
+
+    it("AD_PUBLISH avec adId appartenant à un autre utilisateur : permission-denied", () => {
+      const res = validateAdTargetForPayment(
+        "AD_PUBLISH",
+        "ad_other_user",
+        true, // doc.exists === true
+        { userId: "other_user_999", status: "PENDING_PAYMENT" },
+        "caller_user_1",
+        false
+      );
+      expect(res.isValid).toBe(false);
+      expect(res.error?.code).toBe("permission-denied");
+    });
+
+    it("AD_PUBLISH avec adId d'une annonce ACTIVE : already-exists", () => {
+      const res = validateAdTargetForPayment(
+        "AD_PUBLISH",
+        "ad_already_active",
+        true,
+        { userId: "caller_user_1", status: "ACTIVE" },
+        "caller_user_1",
+        false
+      );
+      expect(res.isValid).toBe(false);
+      expect(res.error?.code).toBe("already-exists");
+    });
+
+    it("BOOST_SINGLE ou AD_EXTEND avec adId inexistant : not-found (comportement conservé)", () => {
+      const resBoost = validateAdTargetForPayment(
+        "BOOST_SINGLE",
+        "nonexistent_ad_id",
+        false,
+        null,
+        "caller_user_1",
+        false
+      );
+      expect(resBoost.isValid).toBe(false);
+      expect(resBoost.error?.code).toBe("not-found");
+
+      const resExtend = validateAdTargetForPayment(
+        "AD_EXTEND",
+        "nonexistent_ad_id",
+        false,
+        null,
+        "caller_user_1",
+        false
+      );
+      expect(resExtend.isValid).toBe(false);
+      expect(resExtend.error?.code).toBe("not-found");
     });
   });
 });

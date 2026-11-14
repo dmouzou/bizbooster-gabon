@@ -105,56 +105,6 @@ interface PublishAdModalProps {
   onUpdateUser?: (updated: Partial<UserProfile>) => Promise<void>;
 }
 
-// Preset photo options to easily populate realistic imagery
-const SAMPLE_IMAGE_PRESETS: Record<MainCategory, string[]> = {
-  IMMOBILIER: [
-    'https://images.unsplash.com/photo-1613977257363-707ba9348227?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?auto=format&fit=crop&w=1000&q=80',
-  ],
-  MATERIEL_ROULANT: [
-    'https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1601584115197-04ecc0da31d7?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1000&q=80',
-  ],
-  BRIC_A_BRAC: [
-    'https://images.unsplash.com/photo-1678685888221-cda773a3dcdb?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1000&q=80',
-  ],
-  EMPLOI: [
-    'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=1000&q=80',
-  ],
-  COURS_A_DOMICILE: [
-    'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=1000&q=80',
-  ],
-  NECROLOGIE: [
-    'https://images.unsplash.com/photo-1518895949257-7621c3c786d7?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=1000&q=80',
-  ],
-  AVIS_DE_RECHERCHE: [
-    'https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&w=1000&q=80',
-  ],
-  AUTRES_EMPLOIS: [
-    'https://images.unsplash.com/photo-1521791136064-7986c2920216?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1586281380349-632531db7ed4?auto=format&fit=crop&w=1000&q=80',
-  ],
-  EVENEMENTS: [
-    'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=1000&q=80',
-    'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?auto=format&fit=crop&w=1000&q=80',
-  ],
-};
-
 interface PhotoMediaItem {
   id: string;
   url: string;
@@ -225,7 +175,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
   const [propertyType, setPropertyType] = useState<PropertyType>('Villa');
   const [province, setProvince] = useState<string>(profileProvince || 'Estuaire');
   const [city, setCity] = useState<string>(profileCity || 'Libreville');
-  const [neighborhood, setNeighborhood] = useState<string>(profileNeighborhood || 'La Sablière');
+  const [neighborhood, setNeighborhood] = useState<string>(profileNeighborhood || '');
   const [saveNeighborhoodToProfile, setSaveNeighborhoodToProfile] = useState<boolean>(false);
 
   // Matériel Roulant specifics
@@ -338,7 +288,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
 
   // Step 2 Fields
   const [title, setTitle] = useState('');
-  const [price, setPrice] = useState<number | ''>(350000);
+  const [price, setPrice] = useState<number | ''>('');
   const [priceMax, setPriceMax] = useState<number | ''>('');
   const [priceUnit, setPriceUnit] = useState<'total' | 'mois' | 'jour' | 'trimestre' | 'an' | 'heure'>('mois');
   const [description, setDescription] = useState('');
@@ -352,11 +302,8 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     currentUser?.freeBoostsRemaining && currentUser.freeBoostsRemaining > 0
   );
   
-  // Media State: photos (max 5) with support for presets and local File uploads
-  const [photos, setPhotos] = useState<PhotoMediaItem[]>([
-    { id: 'preset-init', url: SAMPLE_IMAGE_PRESETS['IMMOBILIER'][0] },
-  ]);
-  const [customImageUrl, setCustomImageUrl] = useState('');
+  // Media State: photos (max 5) via local File uploads (U4, S8)
+  const [photos, setPhotos] = useState<PhotoMediaItem[]>([]);
 
   // Video State: max 1 video, ≤ 30s, ≤ 50 Mo
   const [hasVideo, setHasVideo] = useState(false);
@@ -372,7 +319,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
   const [contactName, setContactName] = useState(currentUser?.name || '');
   const [contactPhone, setContactPhone] = useState(accountRegisteredPhone || '');
   const [phoneChoice, setPhoneChoice] = useState<'ACCOUNT' | 'CUSTOM'>(accountRegisteredPhone ? 'ACCOUNT' : 'CUSTOM');
-  const [durationDays, setDurationDays] = useState<number>(15);
+  const [durationDays, setDurationDays] = useState<number>(30);
 
   // Modal body scroll reference for Step navigation (Point 3)
   const modalBodyRef = useRef<HTMLDivElement>(null);
@@ -552,17 +499,18 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     setNecroFuneralProgram('');
     setNecroFamilyContact('');
     setTitle('');
-    setPrice(350000);
+    setPrice('');
     setPriceUnit('mois');
     setDescription('');
-    setPhotos([{ id: 'preset-init', url: SAMPLE_IMAGE_PRESETS['IMMOBILIER'][0] }]);
+    setPhotos([]);
+    setNeighborhood(profileNeighborhood || '');
     setHasVideo(false);
     setVideoFile(null);
     setVideoPreviewUrl(null);
     setVideoDuration(null);
     setContactName(currentUser?.name || '');
     setContactPhone(currentUser?.contactPhone || '');
-    setDurationDays(15);
+    setDurationDays(30);
     setIsBoostFeatured(false);
     setMediaError(null);
   };
@@ -818,32 +766,6 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     });
   };
 
-  // Add sample preset photo (kept as requested by user)
-  const handleAddSampleImage = (img: string) => {
-    const maxPhotos = PRICING_CONFIG.maxImages || 10;
-    if (photos.length >= maxPhotos) {
-      setMediaError(`Limite atteinte : ${maxPhotos} photos maximum autorisées.`);
-      return;
-    }
-    if (!photos.some((p) => p.url === img)) {
-      setPhotos((prev) => [...prev, { id: `preset-${Date.now()}`, url: img }]);
-      setMediaError(null);
-    }
-  };
-
-  const handleAddCustomImage = () => {
-    const maxPhotos = PRICING_CONFIG.maxImages || 10;
-    if (photos.length >= maxPhotos) {
-      setMediaError(`Limite atteinte : ${maxPhotos} photos maximum autorisées.`);
-      return;
-    }
-    if (customImageUrl.trim()) {
-      setPhotos((prev) => [...prev, { id: `custom-${Date.now()}`, url: customImageUrl.trim() }]);
-      setCustomImageUrl('');
-      setMediaError(null);
-    }
-  };
-
   // (P11) Allow removing photos even down to 0 so preset photo isn't mandatory
   const handleRemovePhoto = (index: number) => {
     const removed = photos[index];
@@ -908,47 +830,32 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     setMediaError(null);
   };
 
-  // Switch image presets on category change
+  // Switch price units on category change (U5)
   const handleMainCategoryChange = (cat: MainCategory) => {
     setMainCategory(cat);
-    const hasUserFiles = photos.some((p) => p.file || p.url.startsWith('data:'));
-    if (!hasUserFiles) {
-      setPhotos([{ id: `preset-${Date.now()}`, url: SAMPLE_IMAGE_PRESETS[cat][0] }]);
-    }
     if (cat === 'IMMOBILIER') {
       setPriceUnit(transactionType === 'LOCATION' ? 'mois' : 'total');
-      if (price === 0 || price === '') setPrice(350000);
     } else if (cat === 'MATERIEL_ROULANT') {
       setPriceUnit(transactionType === 'LOCATION' ? 'jour' : 'total');
-      if (price === 0 || price === '') setPrice(5000000);
     } else if (cat === 'EMPLOI') {
       setPriceUnit('mois');
-      if (price === 0 || price === '') setPrice(120000);
       setTransactionType('EMPLOYER');
     } else if (cat === 'BRIC_A_BRAC') {
       setPriceUnit('total');
-      if (price === 0 || price === '') setPrice(25000);
       setTransactionType('VENTE');
     } else if (cat === 'COURS_A_DOMICILE') {
       setPriceUnit('mois');
-      if (price === 0 || price === '') setPrice(45000);
       setTransactionType('VENTE');
-    } else if (cat === 'NECROLOGIE') {
-      setPriceUnit('total');
-      setPrice(0);
-      setTransactionType('VENTE');
-    } else if (cat === 'AVIS_DE_RECHERCHE') {
+    } else if (cat === 'NECROLOGIE' || cat === 'AVIS_DE_RECHERCHE') {
       setPriceUnit('total');
       setPrice(0);
       setTransactionType('VENTE');
     } else if (cat === 'EVENEMENTS') {
-      // Prix d'entrée : 0 = entrée libre
       setPriceUnit('total');
       setPrice(0);
       setTransactionType('VENTE');
     } else if (cat === 'AUTRES_EMPLOIS') {
       setPriceUnit('mois');
-      if (price === 0 || price === '') setPrice(250000);
       setTransactionType(
         (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI')
           ? 'CHERCHE_EMPLOI'
@@ -1129,7 +1036,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
         priceMax: (mainCategory === 'EMPLOI' || mainCategory === 'AUTRES_EMPLOIS') && priceMax !== '' && Number(priceMax) > (Number(price) || 0) ? Number(priceMax) : undefined,
         priceUnit,
         description: description || 'Annonce vérifiée et publiée sur BIZBOOSTER Gabon.',
-        images: finalImageUrls.length > 0 ? finalImageUrls : [SAMPLE_IMAGE_PRESETS[mainCategory][0]],
+        images: finalImageUrls,
         videoUrl: finalVideoUrl,
         contactPhone: toE164(contactPhone.trim()),
         hasWhatsapp: true,
@@ -2801,58 +2708,10 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                       accept="image/*"
                       multiple
                       onChange={handlePhotoFilesSelect}
-                      disabled={photos.length >= (PRICING_CONFIG.maxImages || 10)}
+                      disabled={photos.length >= (PRICING_CONFIG.maxImages || 5)}
                       className="hidden"
                     />
                   </label>
-                </div>
-
-                {/* Presets to quickly pick test photos (kept as requested by user) */}
-                <div>
-                  <span className="text-[11px] text-slate-500 font-semibold block mb-1.5">
-                    Ou ajouter une photo test suggérée :
-                  </span>
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    {SAMPLE_IMAGE_PRESETS[mainCategory].map((sample, idx) => {
-                      const isAlreadySelected = photos.some((p) => p.url === sample);
-                      return (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => handleAddSampleImage(sample)}
-                          disabled={isAlreadySelected || photos.length >= (PRICING_CONFIG.maxImages || 10)}
-                          className={`w-14 h-12 rounded-lg overflow-hidden border shrink-0 transition-all ${
-                            isAlreadySelected
-                              ? 'opacity-30 border-emerald-500 cursor-not-allowed'
-                              : 'hover:scale-105 hover:border-emerald-600'
-                          }`}
-                          title={isAlreadySelected ? 'Déjà ajoutée' : 'Ajouter cette photo'}
-                        >
-                          <img src={sample} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Custom URL upload */}
-                <div className="flex gap-2 pt-1">
-                  <input
-                    type="url"
-                    value={customImageUrl}
-                    onChange={(e) => setCustomImageUrl(e.target.value)}
-                    placeholder="Ou collez l'URL d'une image..."
-                    className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-800"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddCustomImage}
-                    disabled={photos.length >= (PRICING_CONFIG.maxImages || 10)}
-                    className="bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Ajouter</span>
-                  </button>
                 </div>
 
                 {/* Short video option (Section C-a: courte vidéo descriptive ≤ 30s) */}
@@ -2955,16 +2814,29 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Votre Nom ou Agence *
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-slate-700">
+                        Votre Nom ou Agence *
+                      </label>
+                      {isOwnerVerified && (
+                        <span className="text-[10px] font-black text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                          Certifié KYC
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={contactName}
                       onChange={(e) => setContactName(e.target.value)}
                       placeholder="Ex: Jean-Marc ONDO ou Agence Prestige"
                       required
-                      className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                      disabled={isOwnerVerified}
+                      className={`w-full border rounded-xl px-3.5 py-2.5 text-xs font-bold ${
+                        isOwnerVerified
+                          ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                          : 'bg-white border-slate-300 text-slate-900 focus:ring-2 focus:ring-emerald-500'
+                      }`}
                       id="publish-name-input"
                     />
                   </div>
@@ -3094,12 +2966,19 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                 {/* Preview Mini Card */}
                 <div className="flex flex-col sm:flex-row gap-4 bg-slate-800/80 rounded-2xl p-3.5 border border-slate-700">
                   {/* Photo thumbnail */}
-                  <div className="w-full sm:w-28 sm:h-28 h-36 rounded-xl overflow-hidden bg-slate-950 shrink-0 relative border border-slate-600">
-                    <img
-                      src={photos[0]?.url || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=400&q=80'}
-                      alt="Aperçu"
-                      className="w-full h-full object-cover"
-                    />
+                  <div className="w-full sm:w-28 sm:h-28 h-36 rounded-xl overflow-hidden bg-slate-950 shrink-0 relative border border-slate-600 flex items-center justify-center">
+                    {photos[0]?.url ? (
+                      <img
+                        src={photos[0].url}
+                        alt="Aperçu"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="text-slate-500 flex flex-col items-center justify-center p-2 text-center">
+                        <Camera className="w-6 h-6 mb-1 text-slate-600" />
+                        <span className="text-[10px]">Sans photo</span>
+                      </div>
+                    )}
                     <span className="absolute bottom-1 right-1 bg-black/75 text-[10px] text-white px-1.5 py-0.2 rounded font-mono">
                       📷 {photos.length} photo{photos.length > 1 ? 's' : ''}
                       {hasVideo ? ' + 🎥' : ''}

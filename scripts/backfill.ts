@@ -17,6 +17,7 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import * as fs from 'fs';
 import * as path from 'path';
+import { isExplicitTestAd } from '../functions/src/testAds';
 
 // Initialisation Firebase Admin
 if (getApps().length === 0) {
@@ -139,6 +140,7 @@ export async function runBackfill(isCommit = false) {
   let statsBoost = 0;
   let statsVipCorner = 0;
   let statsViews = 0;
+  let statsIsTest = 0;
 
   // 4. Analyse et calcul des corrections pour chaque annonce
   for (const doc of adsSnap.docs) {
@@ -254,6 +256,14 @@ export async function runBackfill(isCommit = false) {
       reasons.push(`necrologieData structuré synchronisé depuis necro*`);
     }
 
+    // 6. D1 : Démasquage des annonces réelles marquées à tort isTest: true
+    if (adData.isTest === true && !isExplicitTestAd(adId, adData.userId)) {
+      original.isTest = adData.isTest;
+      updates.isTest = false;
+      reasons.push(`isTest réinitialisé à false (annonce réelle détectée sans préfixe test)`);
+      statsIsTest++;
+    }
+
     if (Object.keys(updates).length > 0) {
       recordsToUpdate.push({
         adId,
@@ -271,6 +281,7 @@ export async function runBackfill(isCommit = false) {
   console.log(` - Corrections de boost (expirés / orphelins / plafonnés) : ${statsBoost}`);
   console.log(` - Recalculs Coin VIP : ${statsVipCorner}`);
   console.log(` - Vues aberrantes réinitialisées : ${statsViews}`);
+  console.log(` - Annonces réelles démasquées (isTest: false, D1) : ${statsIsTest}`);
   console.log(`----------------------------------------------------------------\n`);
 
   // 5. Sauvegarde du fichier de journalisation / rollback

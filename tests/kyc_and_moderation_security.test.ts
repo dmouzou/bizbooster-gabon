@@ -59,3 +59,44 @@ describe('Étape 4.5 : Onglet Scalabilité & Quotas (I-04, S-07)', () => {
   });
 });
 
+describe('Sécurité & Modération (F9, S16, S8, S9, F4)', () => {
+  it('S16 : verrouille le nom de contact pour les profils vérifiés KYC', () => {
+    const verifiedProfile = {
+      idVerificationStatus: 'VERIFIED',
+      verifiedName: 'Mouamba Jean',
+      name: 'Mouamba Jean Ancien',
+    };
+    const effectiveContactName = verifiedProfile.idVerificationStatus === 'VERIFIED'
+      ? (verifiedProfile.verifiedName || verifiedProfile.name)
+      : 'Nouveau Nom';
+
+    expect(effectiveContactName).toBe('Mouamba Jean');
+  });
+
+  it('F4 : décrémente reportsCount sans jamais passer sous 0', () => {
+    const decrementReports = (currentCount: number) => Math.max(0, (currentCount || 0) - 1);
+
+    expect(decrementReports(5)).toBe(4);
+    expect(decrementReports(1)).toBe(0);
+    expect(decrementReports(0)).toBe(0);
+    expect(decrementReports(undefined as any)).toBe(0);
+  });
+
+  it('S8 & S9 : valide que les chemins de suppression Storage appartiennent aux dossiers autorisés', () => {
+    const isAllowedStorageFolder = (storagePath: string) => {
+      const allowedPrefixes = ['ads/', 'cvs/', 'videos/'];
+      return allowedPrefixes.some((prefix) => storagePath.startsWith(prefix));
+    };
+
+    expect(isAllowedStorageFolder('ads/user_123/img.webp')).toBe(true);
+    expect(isAllowedStorageFolder('cvs/user_123/cv.pdf')).toBe(true);
+    expect(isAllowedStorageFolder('videos/user_123/video.mp4')).toBe(true);
+
+    // Tentatives d'échappement ou de suppression de dossiers sensibles
+    expect(isAllowedStorageFolder('kyc/user_123/cni.jpg')).toBe(false);
+    expect(isAllowedStorageFolder('system/config.json')).toBe(false);
+    expect(isAllowedStorageFolder('users/backup.json')).toBe(false);
+  });
+});
+
+

@@ -481,8 +481,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setIsSavingProfile(true);
     setProfileSuccessMsg(null);
     try {
+      const isKycLocked = currentUser.isKycVerified || currentUser.idVerificationStatus === 'VERIFIED';
       await onUpdateUser({
-        name: profileName.trim(),
+        ...(isKycLocked ? {} : { name: profileName.trim() }),
         location: {
           province: profileProvince,
           city: profileCity,
@@ -1750,17 +1751,35 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
               <form onSubmit={handleSaveProfile} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Nom complet ou Nom de l'Agence
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Nom complet ou Nom de l'Agence
+                    </label>
+                    {(currentUser.isKycVerified || currentUser.idVerificationStatus === 'VERIFIED') && (
+                      <span className="text-[10px] font-black text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                        Certifié KYC
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={profileName}
                     onChange={(e) => setProfileName(e.target.value)}
                     placeholder="Ex: Paul OBAME ou Immobilier Gabon"
-                    className="w-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                    disabled={currentUser.isKycVerified || currentUser.idVerificationStatus === 'VERIFIED'}
+                    className={`w-full text-xs font-bold rounded-xl px-3 py-2.5 focus:outline-hidden ${
+                      currentUser.isKycVerified || currentUser.idVerificationStatus === 'VERIFIED'
+                        ? 'bg-slate-100 border border-slate-200 text-slate-500 cursor-not-allowed'
+                        : 'bg-slate-50 border border-slate-300 focus:bg-white focus:ring-2 focus:ring-emerald-500'
+                    }`}
                     required
                   />
+                  {(currentUser.isKycVerified || currentUser.idVerificationStatus === 'VERIFIED') && (
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      Nom officiel certifié par votre pièce d'identité. Pour le modifier, contactez l'administration.
+                    </span>
+                  )}
                 </div>
 
                 <div>

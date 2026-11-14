@@ -42,6 +42,7 @@ import {
   EyeOff,
   Save,
   Loader2,
+  Ban,
 } from 'lucide-react';
 import { signOut, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { doc, setDoc, onSnapshot, writeBatch } from 'firebase/firestore';
@@ -78,6 +79,7 @@ interface AdminPanelProps {
   onResolveReport?: (reportId: string, notes?: string) => Promise<void> | void;
   onDismissReport?: (reportId: string, notes?: string) => Promise<void> | void;
   onDeleteReportedAd?: (adId: string, reportId: string) => Promise<void> | void;
+  onBanUser?: (userId: string, reason?: string) => Promise<void> | void;
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
@@ -101,6 +103,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onResolveReport,
   onDismissReport,
   onDeleteReportedAd,
+  onBanUser,
 }) => {
   const isSuper = isUserSuperAdmin(currentUser);
 
@@ -1063,6 +1066,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     } finally {
       setBusy(reportId, false);
     }
+  };
+
+  const formatReportDate = (val: any) => {
+    if (!val) return '';
+    if (typeof val === 'string') {
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? val : d.toLocaleString('fr-FR');
+    }
+    if (val?.toDate && typeof val.toDate === 'function') return val.toDate().toLocaleString('fr-FR');
+    if (typeof val?.seconds === 'number') return new Date(val.seconds * 1000).toLocaleString('fr-FR');
+    return String(val);
   };
 
   // S-11 : Garde d'accès stricte dans AdminPanel (exécutée après tous les hooks pour respecter les règles de React)
@@ -2322,6 +2336,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     )}
                                   </>
                                 )}
+
+                                {/* F9 : Action de blocage permanent */}
+                                {onBanUser && (
+                                  <button
+                                    disabled={busyIds.has(u.id) || (u as any).isBanned}
+                                    onClick={() => {
+                                      setAlertModalConfig({
+                                        isOpen: true,
+                                        type: 'confirm',
+                                        title: 'Bloquer définitivement cet utilisateur ?',
+                                        message: `Êtes-vous certain de vouloir bloquer définitivement "${u.name || u.contactPhone}" ?\n\nCette action va :\n1. Désactiver son compte Firebase Auth\n2. Révoquer ses jetons de session\n3. Suspendre toutes ses annonces\n4. Ajouter ses coordonnées à la liste de blocage.`,
+                                        confirmLabel: 'Bloquer définitivement',
+                                        cancelLabel: 'Annuler',
+                                        onConfirm: async () => {
+                                          await onBanUser(u.id, "Non-respect des conditions d'utilisation");
+                                        },
+                                      });
+                                    }}
+                                    className={`p-1.5 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
+                                      (u as any).isBanned
+                                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                                        : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+                                    }`}
+                                    title={(u as any).isBanned ? 'Utilisateur déjà banni' : 'Bloquer définitivement cet utilisateur (F9)'}
+                                  >
+                                    <Ban className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </>
                             )}
                           </div>
@@ -2532,7 +2574,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </span>
 
                         <span className="text-[11px] text-slate-400">
-                          {report.createdAt ? new Date(report.createdAt).toLocaleString('fr-FR') : ''}
+                          {formatReportDate(report.createdAt)}
                         </span>
                       </div>
 
@@ -2555,9 +2597,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             Annonceur mis en cause : <strong className="text-slate-800">{report.adOwnerPhone}</strong>
                           </span>
                         )}
-                        {report.resolutionNotes && (
+                        {(report.resolutionNotes || (report as any).resolutionNote) && (
                           <span className="text-emerald-700 font-medium">
-                            Note de résolution : {report.resolutionNotes}
+                            Note de résolution : {report.resolutionNotes || (report as any).resolutionNote}
                           </span>
                         )}
                       </div>

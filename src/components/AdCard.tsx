@@ -360,7 +360,6 @@ export const AdCard: React.FC<AdCardProps> = ({
 
           {/* Title */}
           <h4
-            onClick={() => onSelectAd(ad)}
             className="font-bold text-slate-900 text-sm leading-snug line-clamp-2 hover:text-emerald-700 cursor-pointer transition-colors mb-1.5"
             title={ad.title}
           >
@@ -568,15 +567,25 @@ export const AdCard: React.FC<AdCardProps> = ({
               <span>{isNecrologie ? 'Condoléances' : isAvisRecherche ? 'Signaler' : 'WhatsApp'}</span>
             </a>
 
-            <a
-              href={`tel:${ad.contactPhone}`}
-              onClick={(e) => e.stopPropagation()}
-              className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs py-2 px-2.5 rounded-xl transition-colors"
-              id={`call-button-${ad.id}`}
-            >
-              <Phone className="w-3.5 h-3.5 text-slate-600" />
-              <span>{isNecrologie ? 'Famille' : isAvisRecherche ? 'Urgence' : 'Appeler'}</span>
-            </a>
+            {(() => {
+              const targetPhone = isNecrologie && (ad.necrologieData?.familyContact || ad.necroFamilyContact)
+                ? (ad.necrologieData?.familyContact || ad.necroFamilyContact)
+                : isAvisRecherche && (ad.avisRechercheData?.emergencyContact || ad.avisEmergencyContact)
+                ? (ad.avisRechercheData?.emergencyContact || ad.avisEmergencyContact)
+                : ad.contactPhone;
+
+              return (
+                <a
+                  href={`tel:${targetPhone}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs py-2 px-2.5 rounded-xl transition-colors"
+                  id={`call-button-${ad.id}`}
+                >
+                  <Phone className="w-3.5 h-3.5 text-slate-600" />
+                  <span>{isNecrologie ? 'Famille' : isAvisRecherche ? 'Urgence' : 'Appeler'}</span>
+                </a>
+              );
+            })()}
           </div>
         </div>
       </div>

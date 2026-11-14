@@ -90,6 +90,21 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
   const transactionRefRef = useRef<string>('');
   const stepRef = useRef<PaymentStep>('FORM');
   const isSuccessTriggeredRef = useRef<boolean>(false);
+  const mobileNumberRef = useRef(mobileNumber);
+  const operatorRef = useRef(operator);
+  const serverAmountRef = useRef(serverAmount);
+
+  useEffect(() => {
+    mobileNumberRef.current = mobileNumber;
+  }, [mobileNumber]);
+
+  useEffect(() => {
+    operatorRef.current = operator;
+  }, [operator]);
+
+  useEffect(() => {
+    serverAmountRef.current = serverAmount;
+  }, [serverAmount]);
 
   useEffect(() => {
     transactionRefRef.current = transactionRef;
@@ -165,13 +180,15 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
       });
     } catch {}
 
-    const digits = cleanDigits(mobileNumber);
+    const digits = cleanDigits(mobileNumberRef.current);
+    const finalOperator = operatorRef.current;
+    const finalAmount = paidAmt ?? serverAmountRef.current;
     setTimeout(() => {
       onSuccess({
-        operator,
+        operator: finalOperator,
         contactPhone: digits,
         transactionRef: ref,
-        amount: paidAmt ?? serverAmount,
+        amount: finalAmount,
       });
     }, 1800);
   };
@@ -184,7 +201,20 @@ export const MobilePaymentSimulator: React.FC<MobilePaymentSimulatorProps> = ({
     setFailureReason(reason);
   };
 
-  const handleFinalExpired = () => {
+  const handleFinalExpired = async () => {
+    // P2 : Interroger le statut final avant d'afficher EXPIRED (le paiement a pu aboutir au dernier moment)
+    if (transactionRefRef.current) {
+      try {
+        const res = await pollSingPayStatus({ reference: transactionRefRef.current });
+        if (res.status === 'SUCCESS') {
+          handleFinalSuccess(transactionRefRef.current, res.amount);
+          return;
+        }
+      } catch (e) {
+        console.warn('Vérification expiration:', e);
+      }
+    }
+
     if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
     if (unsubscribeSnapshotRef.current) unsubscribeSnapshotRef.current();
 

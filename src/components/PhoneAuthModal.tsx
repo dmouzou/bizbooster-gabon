@@ -12,7 +12,6 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
-import { trackSmsSent } from '../services/platformMetrics';
 import { sendTwilioOtp, verifyTwilioOtp } from '../services/twilioAuth';
 import {
   X,
@@ -313,11 +312,6 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
         country: selectedCountry,
       });
       const channelLabel = res.channel === 'whatsapp' ? 'WhatsApp' : 'SMS';
-      try {
-        await trackSmsSent(smsE164);
-      } catch (trackErr) {
-        console.warn('Erreur trackSmsSent (non bloquante):', trackErr);
-      }
       setSuccessNotice(`Code de confirmation ${channelLabel} envoyé au ${smsE164}.`);
       return true;
     } catch (err: any) {
@@ -1030,7 +1024,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                   maxLength={6}
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                  placeholder="Ex: 555555"
+                  placeholder="123456"
                   className="w-full tracking-widest text-center text-2xl font-black py-3 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                   autoFocus
                   required

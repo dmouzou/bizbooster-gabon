@@ -153,7 +153,7 @@ function createAdminSpecPDF(outputPath: string) {
   );
   addBullet(
     'Authentification Super-Admin / Opérateur',
-    'Connexion par identifiant sécurisé / email d\'entreprise avec mot de passe fort et/ou Code PIN Superviseur (ex: code 2410 en environnement de supervision).'
+    'Connexion par identifiant sécurisé / email d\'entreprise avec mot de passe fort et vérification de session renforcée.'
   );
   addBullet(
     'Session Guard & Persistance Sécurisée',

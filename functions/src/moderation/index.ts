@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
+import { getAuth } from "firebase-admin/auth";
 
 /**
  * Garde d'authentification et de rôle pour la modération côté serveur (Phase 3 - Étape 3.1)
@@ -169,7 +170,7 @@ export const rejectExtension = onCall(CALLABLE_OPTIONS, async (request) => {
         id: notifId,
         notifId,
         userId: ad.userId,
-        type: "AD_EXPIRING_SOON",
+        type: "AD_REJECTED",
         title: "Prolongation non accordée",
         message: `Votre demande d'extension pour l'annonce « ${ad.title || ""} » n'a pas été validée. Motif : ${cleanReason}. Votre annonce reste active jusqu'à son échéance initiale.`,
         adId,
@@ -222,9 +223,13 @@ export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
     });
   });
 
-  // B28: Résoudre les signalements associés en tâche de fond par lots <= 450
+  // B28: Résoudre les signalements associés en tâche de fond par lots <= 450 (uniquement PENDING pour ne pas écraser DISMISSED)
   try {
-    const reportsSnap = await db.collection("reports").where("adId", "==", adId).get();
+    const reportsSnap = await db
+      .collection("reports")
+      .where("adId", "==", adId)
+      .where("status", "==", "PENDING")
+      .get();
     const docs = reportsSnap.docs;
     const CHUNK_SIZE = 450;
     for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
@@ -234,6 +239,7 @@ export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
         batch.update(rep.ref, {
           status: "RESOLVED",
           resolutionNote: "Annonce supprimée par la modération.",
+          resolutionNotes: "Annonce supprimée par la modération.",
           resolvedAt: FieldValue.serverTimestamp(),
           resolvedBy: admin.uid,
         });
@@ -244,7 +250,7 @@ export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
     console.warn("[deleteAd] Résolution des rapports associée:", err);
   }
 
-  // B22: Nettoyage Storage des fichiers associés (photos, vidéo, CV)
+  // B22: Nettoyage Storage des fichiers associés (photos, vidéo, CV, jobDoc)
   if (deletedAdData) {
     try {
       const bucket = getStorage().bucket();
@@ -261,13 +267,31 @@ export const deleteAd = onCall(CALLABLE_OPTIONS, async (request) => {
       if (ad.cvUrl && typeof ad.cvUrl === "string") {
         filesToDelete.push(ad.cvUrl);
       }
+      if (ad.jobDocUrl && typeof ad.jobDocUrl === "string") {
+        filesToDelete.push(ad.jobDocUrl);
+      }
+      const autresEmplois = ad.autresEmploisData as Record<string, unknown> | undefined;
+      if (autresEmplois?.cvUrl && typeof autresEmplois.cvUrl === "string") {
+        filesToDelete.push(autresEmplois.cvUrl);
+      }
+      if (autresEmplois?.jobDocUrl && typeof autresEmplois.jobDocUrl === "string") {
+        filesToDelete.push(autresEmplois.jobDocUrl);
+      }
 
       for (const fileUrl of filesToDelete) {
         try {
           const decoded = decodeURIComponent(fileUrl);
           const match = decoded.match(/\/o\/([^?]+)/) || decoded.match(/storage\.googleapis\.com\/[^/]+\/(.+)/);
           if (match && match[1]) {
-            await bucket.file(match[1]).delete({ ignoreNotFound: true });
+            const objectPath = match[1];
+            // S9 : Vérifier que le chemin appartient bien aux répertoires applicatifs autorisés
+            if (
+              objectPath.startsWith("ads/") ||
+              objectPath.startsWith("cvs/") ||
+              objectPath.startsWith("videos/")
+            ) {
+              await bucket.file(objectPath).delete({ ignoreNotFound: true });
+            }
           }
         } catch (e) {
           console.warn("[deleteAd] Échec suppression fichier storage:", fileUrl, e);
@@ -334,6 +358,7 @@ export const approveKyc = onCall(CALLABLE_OPTIONS, async (request) => {
       isKycVerified: true,
       isVerified: true,
       idVerifiedAt: nowIso,
+      verifiedName: data.name || data.contactName || null,
       idRejectionReason: FieldValue.delete(),
       updatedAt: nowIso,
     });
@@ -406,6 +431,21 @@ export const rejectKyc = onCall(CALLABLE_OPTIONS, async (request) => {
       adminEmail: admin.email || null,
       reason: cleanReason,
       timestamp: FieldValue.serverTimestamp(),
+    });
+
+    // Notification utilisateur
+    const notifId = `kyc_rej_${uid}_${Date.now()}`;
+    const notifRef = db.collection("user_notifications").doc(`${uid}_${notifId}`);
+    tx.set(notifRef, {
+      id: notifId,
+      notifId,
+      userId: uid,
+      type: "AD_REJECTED",
+      title: "Vérification d'identité non validée",
+      message: `Votre document d'identité n'a pas pu être validé. Motif : ${cleanReason}`,
+      dispatchedAt: nowIso,
+      timestamp: Date.now(),
+      status: "DISPATCHED",
     });
   });
 
@@ -513,7 +553,7 @@ export const adjustBoosters = onCall(CALLABLE_OPTIONS, async (request) => {
 });
 
 /**
- * 7. resolveReport : Résolution de signalement côté serveur
+ * 7. resolveReport : Résolution de signalement côté serveur (F4)
  */
 export const resolveReport = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
@@ -522,6 +562,7 @@ export const resolveReport = onCall(CALLABLE_OPTIONS, async (request) => {
     throw new HttpsError("invalid-argument", "Identifiant de signalement requis.");
   }
 
+  const cleanNote = String(note || "").trim();
   const db = getFirestore();
   const reportRef = db.collection("reports").doc(reportId);
 
@@ -530,13 +571,27 @@ export const resolveReport = onCall(CALLABLE_OPTIONS, async (request) => {
     if (!repDoc.exists) {
       throw new HttpsError("not-found", "Signalement introuvable.");
     }
+    const reportData = repDoc.data() || {};
 
     tx.update(reportRef, {
       status: "RESOLVED",
-      resolutionNote: String(note || "").trim(),
+      resolutionNote: cleanNote,
+      resolutionNotes: cleanNote,
       resolvedAt: FieldValue.serverTimestamp(),
       resolvedBy: admin.uid,
     });
+
+    // F4: Décrémenter le compteur de signalements de l'annonce si le rapport était PENDING
+    if (reportData.status === "PENDING" && reportData.adId) {
+      const adRef = db.collection("ads").doc(reportData.adId);
+      const adDoc = await tx.get(adRef);
+      if (adDoc.exists) {
+        const currentCount = Number(adDoc.data()?.reportsCount || 0);
+        tx.update(adRef, {
+          reportsCount: Math.max(0, currentCount - 1),
+        });
+      }
+    }
 
     const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
@@ -544,7 +599,7 @@ export const resolveReport = onCall(CALLABLE_OPTIONS, async (request) => {
       targetId: reportId,
       adminId: admin.uid,
       adminEmail: admin.email || null,
-      note: note || "",
+      note: cleanNote,
       timestamp: FieldValue.serverTimestamp(),
     });
   });
@@ -553,7 +608,7 @@ export const resolveReport = onCall(CALLABLE_OPTIONS, async (request) => {
 });
 
 /**
- * 8. dismissReport : Rejet de signalement infondé côté serveur
+ * 8. dismissReport : Rejet de signalement infondé côté serveur (F4)
  */
 export const dismissReport = onCall(CALLABLE_OPTIONS, async (request) => {
   const admin = await assertAdmin(request.auth);
@@ -562,6 +617,7 @@ export const dismissReport = onCall(CALLABLE_OPTIONS, async (request) => {
     throw new HttpsError("invalid-argument", "Identifiant de signalement requis.");
   }
 
+  const cleanNote = String(note || "").trim();
   const db = getFirestore();
   const reportRef = db.collection("reports").doc(reportId);
 
@@ -570,13 +626,26 @@ export const dismissReport = onCall(CALLABLE_OPTIONS, async (request) => {
     if (!repDoc.exists) {
       throw new HttpsError("not-found", "Signalement introuvable.");
     }
+    const reportData = repDoc.data() || {};
 
     tx.update(reportRef, {
       status: "DISMISSED",
-      dismissalNote: String(note || "").trim(),
+      dismissalNote: cleanNote,
       dismissedAt: FieldValue.serverTimestamp(),
       dismissedBy: admin.uid,
     });
+
+    // F4: Décrémenter le compteur de signalements de l'annonce si le rapport était PENDING
+    if (reportData.status === "PENDING" && reportData.adId) {
+      const adRef = db.collection("ads").doc(reportData.adId);
+      const adDoc = await tx.get(adRef);
+      if (adDoc.exists) {
+        const currentCount = Number(adDoc.data()?.reportsCount || 0);
+        tx.update(adRef, {
+          reportsCount: Math.max(0, currentCount - 1),
+        });
+      }
+    }
 
     const logRef = db.collection("moderation_logs").doc();
     tx.set(logRef, {
@@ -584,7 +653,7 @@ export const dismissReport = onCall(CALLABLE_OPTIONS, async (request) => {
       targetId: reportId,
       adminId: admin.uid,
       adminEmail: admin.email || null,
-      note: note || "",
+      note: cleanNote,
       timestamp: FieldValue.serverTimestamp(),
     });
   });
@@ -673,5 +742,126 @@ export const logKycView = onCall(CALLABLE_OPTIONS, async (request) => {
   });
 
   return { success: true };
+});
+
+/**
+ * 11. banUser (F9) : Fonction de blocage permanent d'un utilisateur par un administrateur.
+ * - Désactive le compte Firebase Auth et révoque ses jetons.
+ * - Marque le document utilisateur comme isBanned: true.
+ * - Suspend immédiatement toutes ses annonces (ACTIVE / PENDING_REVIEW -> SUSPENDED).
+ * - Enregistre ses numéros et email dans la collection 'blocklist'.
+ * - Journalise l'action dans 'moderation_logs'.
+ */
+export const banUser = onCall(CALLABLE_OPTIONS, async (request) => {
+  const admin = await assertAdmin(request.auth);
+  const { targetUserId, reason } = request.data || {};
+  if (!targetUserId || typeof targetUserId !== "string") {
+    throw new HttpsError("invalid-argument", "Identifiant utilisateur cible requis.");
+  }
+
+  if (targetUserId === admin.uid) {
+    throw new HttpsError("failed-precondition", "Impossible de vous bannir vous-même.");
+  }
+
+  const cleanReason = String(reason || "Non-respect grave des conditions d'utilisation").trim();
+  const db = getFirestore();
+  const authAdmin = getAuth();
+  const userRef = db.collection("users").doc(targetUserId);
+
+  // 1. Interdire le ban d'un administrateur
+  const targetDoc = await userRef.get();
+  if (targetDoc.exists) {
+    const targetData = targetDoc.data() || {};
+    const targetRole = String(targetData.role || "").toUpperCase().replace(/[\s_-]+/g, "");
+    if (targetRole === "ADMIN" || targetRole === "SUPERADMIN" || targetData.isSuperAdmin) {
+      throw new HttpsError("permission-denied", "Impossible de bannir un compte administrateur.");
+    }
+  }
+
+  // 2. Désactiver le compte Auth et révoquer les tokens
+  try {
+    await authAdmin.updateUser(targetUserId, { disabled: true });
+    await authAdmin.revokeRefreshTokens(targetUserId);
+  } catch (err: any) {
+    console.warn(`[banUser] Avertissement désactivation Auth (${targetUserId}):`, err?.message);
+  }
+
+  const nowIso = new Date().toISOString();
+  const userData = targetDoc.exists ? targetDoc.data() || {} : {};
+  const phoneNumbersToBlock: string[] = [];
+  if (userData.phoneNumber) phoneNumbersToBlock.push(String(userData.phoneNumber).trim());
+  if (userData.contactPhone) phoneNumbersToBlock.push(String(userData.contactPhone).trim());
+  const emailToBlock = userData.email ? String(userData.email).trim().toLowerCase() : null;
+
+  await db.runTransaction(async (tx) => {
+    tx.set(
+      userRef,
+      {
+        isBanned: true,
+        bannedAt: nowIso,
+        banReason: cleanReason,
+        bannedBy: admin.uid,
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+
+    for (const phone of phoneNumbersToBlock) {
+      const cleanDigits = phone.replace(/\D/g, "");
+      if (cleanDigits) {
+        const blockRef = db.collection("blocklist").doc(`phone_${cleanDigits}`);
+        tx.set(blockRef, {
+          type: "PHONE",
+          value: phone,
+          userId: targetUserId,
+          reason: cleanReason,
+          bannedBy: admin.uid,
+          createdAt: nowIso,
+        });
+      }
+    }
+    if (emailToBlock) {
+      const blockRef = db.collection("blocklist").doc(`email_${emailToBlock.replace(/[^a-z0-9]/g, "_")}`);
+      tx.set(blockRef, {
+        type: "EMAIL",
+        value: emailToBlock,
+        userId: targetUserId,
+        reason: cleanReason,
+        bannedBy: admin.uid,
+        createdAt: nowIso,
+      });
+    }
+
+    const logRef = db.collection("moderation_logs").doc();
+    tx.set(logRef, {
+      action: "BAN_USER",
+      targetId: targetUserId,
+      adminId: admin.uid,
+      adminEmail: admin.email || null,
+      reason: cleanReason,
+      timestamp: FieldValue.serverTimestamp(),
+    });
+  });
+
+  try {
+    const userAdsSnap = await db.collection("ads").where("userId", "==", targetUserId).get();
+    const batch = db.batch();
+    userAdsSnap.docs.forEach((adDocSnap) => {
+      const ad = adDocSnap.data();
+      if (ad.status === "ACTIVE" || ad.status === "PENDING_REVIEW") {
+        batch.update(adDocSnap.ref, {
+          status: "SUSPENDED",
+          suspensionReason: "COMPTE_BLOQUE",
+          suspendedAt: nowIso,
+          updatedAt: nowIso,
+        });
+      }
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn(`[banUser] Erreur lors de la suspension des annonces de ${targetUserId}:`, err);
+  }
+
+  return { success: true, targetUserId };
 });
 

@@ -435,6 +435,20 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
     });
   };
 
+  const handleBanUser = async (targetUserId: string, reason?: string) => {
+    try {
+      const banCallable = httpsCallable<{ targetUserId: string; reason?: string }, { success: boolean }>(
+        functions,
+        'banUser'
+      );
+      await banCallable({ targetUserId, reason });
+      showAlert('Utilisateur bloqué définitivement et annonces suspendues.', 'success');
+    } catch (e: any) {
+      console.error(e);
+      showAlert('Erreur lors du blocage permanent : ' + (e?.message || 'Erreur.'), 'error');
+    }
+  };
+
   // Étape 4.2 & S-18 : Modération sur les annonces réelles uniquement (pas de démo en production)
   const allAds = useMemo(() => mergeAdViewCounts(ads, counterViews), [ads, counterViews]);
 
@@ -586,6 +600,7 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
         onDismissReport={handleDismissReport}
         onDeleteReportedAd={handleDeleteReportedAd}
         onLogKycView={handleLogKycView}
+        onBanUser={handleBanUser}
       />
       <AdDetailModal
         ad={selectedAd ? allAds.find((a) => a.id === selectedAd.id) || selectedAd : null}

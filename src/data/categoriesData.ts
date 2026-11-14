@@ -110,7 +110,7 @@ export const PRICING_CONFIG = {
   ],
   includedImages: 3, // 3 premières photos incluses sans supplément en Standard/Pro (4 en Élite, 5 en Business)
   pricePerExtraImage: 500, // 500 FCFA par photo supplémentaire
-  maxImages: 10, // Plafond maximal de photos par annonce
+  maxImages: 5, // Plafond maximal de photos par annonce (3 Standard/Pro, 4 Élite, 5 Business)
   videoPrice: 2000, // FCFA pour courte vidéo descriptive (30s max)
-  maxCharLength: 1000 // Limite de caractères du descriptif (1000 caractères max pour toutes les catégories)
+  maxCharLength: 4000 // Limite de caractères du descriptif (4000 caractères max aligné sur firestore.rules)
 };

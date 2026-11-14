@@ -19,7 +19,10 @@ export const VerifiedAdvertiserModal: React.FC<VerifiedAdvertiserModalProps> = (
   return createPortal(
     <div
       className="fixed inset-0 z-[150] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
-      onClick={onClose}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClose();
+      }}
     >
       <div
         className="bg-white rounded-3xl max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 overflow-hidden my-auto animate-in zoom-in-95"
@@ -28,7 +31,10 @@ export const VerifiedAdvertiserModal: React.FC<VerifiedAdvertiserModalProps> = (
         {/* Header with emerald gradient */}
         <div className="bg-gradient-to-r from-emerald-800 to-teal-900 text-white p-6 relative">
           <button
-            onClick={onClose}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
             className="absolute right-4 top-4 p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
