@@ -231,7 +231,7 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 
 ## [Phase 7] : Compte Utilisateur & Feuilles Mobiles (Account & Sheets)
 - **Date** : 14 novembre 2026
-- **Commit** : à pousser
+- **Commit** : `c78f2d0`
 - **Ce qui est livré** :
   - Refonte mobile de `UserDashboard` (Espace Annonceur) :
     - Transformation des onglets de navigation en contrôle segmenté responsive (`grid grid-cols-2 sm:flex sm:flex-nowrap`, fond `bg-slate-100`, coins arrondis `rounded-2xl`, cibles tactiles garanties `>= 44px`).
@@ -255,8 +255,40 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
   - ✅ Aucun texte interactif en dessous de 12 px (10 px proscrit).
   - ✅ Aucun em dash dans le code, les commentaires ou les textes.
   - ✅ Marché Gabon, FCFA.
+
+---
+
+## [Phase 8] : Optimisation Backend, Alertes & Indexation (Backend Tuning)
+- **Date** : 14 novembre 2026
+- **Commit** : à pousser
+- **Ce qui est livré** :
+  - Indexation composite Firestore (`firestore.indexes.json`) :
+    - Ajout de l'index composite additif pour requêtes paginées par catégorie avec tri antéchronologique : collection `ads`, champs `status` (ASC), `mainCategory` (ASC), `publishedAt` (DESC).
+  - Réduction des démarrages à froid (Cold-Start Reduction) dans Cloud Functions :
+    - Configuration de `minInstances: 1` sur les callables critiques à haute disponibilité : `initiateSingPayPayment`, `approveAd`, et `resubmitAd`.
+  - Observabilité et alertes de facturation structurées :
+    - Journalisation JSON structurée (`severity: "ERROR"`, `alert: "PAYMENT_FAILURE"`) en cas d'échec de paiement SingPay.
+    - Journalisation JSON structurée (`severity: "WARNING"`, `alert: "PAYMENT_NEEDS_REVIEW"`) pour toute anomalie nécessitant examen humain (montant reçu divergent, absence d'userId, annonce non prolongeable ou suspendue).
+  - Recherche Phase 1 (Recherche par mots-clés normalisés) :
+    - Implémentation de la fonction d'extraction serveur `generateSearchKeywords` : nettoyage des accents, minuscules, découpage en jetons alphabétiques et déduplication.
+    - Mise à jour automatique de `searchKeywords` dans les déclencheurs Firestore `onAdCreated` et `onAdStatusUpdated` (si titre, description, catégorie ou localisation modifiés).
+  - Script d'enrichissement rétroactif des médias (`scripts/backfill-thumbs.ts`) :
+    - Outil d'administration avec mode simulation `--dry-run` et application `--commit` pour initialiser `dominantColor`, `thumbUrl` et `mediumUrl` sur les annonces historiques sans re-téléchargement coûteux.
+  - Suite de tests unitaires dédiée `functions/src/__tests__/backend_tuning.test.ts` (3 tests passés).
+- **Résultats des tests & validations locales** :
+  - `npm --prefix functions run lint` : 🟢 0 erreur.
+  - `npm --prefix functions run build` : 🟢 0 erreur.
+  - `npx vitest run src/__tests__/backend_tuning.test.ts` : 🟢 3/3 tests unitaires passés.
+  - `npm run lint` (`tsc --noEmit`) : 🟢 0 erreur.
+- **Vérification des contraintes dures (Section 2 du brief)** :
+  - ✅ Commit backend (`functions/`, index) strictement séparé des commits UI.
+  - ✅ Aucune modification sur la logique des quotas ni des prix SingPay (0 / 4 / 7 / 10).
+  - ✅ Changements strictement additifs sur Firestore et Storage.
+  - ✅ Pas d'em dash dans le code, les commentaires ou les textes.
+  - ✅ Marché Gabon, FCFA.
 - **Prochaine étape** :
-  - **Phase 8 (Backend Tuning & Pagination)** : Optimisations serveur, réduction des lectures, fonction Storage Trigger de miniatures WebP, cold-start `minInstances: 1` sur les callables critiques (dans un commit backend dédié).
+  - **Phase 9 (Hardening & Final CI Gates)** : Configuration Firestore offline cache (`persistentLocalCache`), nettoyage de code mort, rapport final de performance et validation des cibles de la section 1.
+
 
 
 

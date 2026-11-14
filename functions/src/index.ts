@@ -949,6 +949,24 @@ export async function settlePayment(
       if (outcome.errorReason) updates.errorReason = outcome.errorReason;
       if (outcome.amountReceived !== undefined) updates.amountReceived = outcome.amountReceived;
 
+      if (outcome.status === "FAILED") {
+        console.error(JSON.stringify({
+          severity: "ERROR",
+          alert: "PAYMENT_FAILURE",
+          paymentRef: paymentRefOrId,
+          errorReason: outcome.errorReason,
+          singpayStatus: outcome.singpayStatus,
+        }));
+      } else if (outcome.status === "NEEDS_REVIEW") {
+        console.warn(JSON.stringify({
+          severity: "WARNING",
+          alert: "PAYMENT_NEEDS_REVIEW",
+          paymentRef: paymentRefOrId,
+          errorReason: outcome.errorReason,
+          singpayStatus: outcome.singpayStatus,
+        }));
+      }
+
       tx.set(paymentDocRef, updates, { merge: true });
       return { success: true, status: outcome.status, attributed: false };
     }
@@ -1517,6 +1535,7 @@ export function validateAdTargetForPayment(
 export const initiateSingPayPayment = onCall(
   {
     cors: true,
+    minInstances: 1,
     secrets: [
       singpayClientId,
       singpayClientSecret,
@@ -2674,6 +2693,36 @@ export async function resolveAdPayment(
 }
 
 /**
+ * Phase 8 : Génère des mots-clés normalisés (sans accents, minuscules) pour la recherche serveur.
+ */
+export function generateSearchKeywords(adData: Record<string, unknown>): string[] {
+  const parts: string[] = [
+    String(adData.title || ""),
+    String(adData.description || ""),
+    String(adData.mainCategory || ""),
+    String(adData.propertyType || ""),
+    String((adData.location as any)?.city || ""),
+    String((adData.location as any)?.province || ""),
+    String((adData.location as any)?.neighborhood || ""),
+    String(adData.contactName || ""),
+  ];
+  const vehicleData = adData.vehicleData as any;
+  if (vehicleData?.brand) parts.push(String(vehicleData.brand));
+  if (vehicleData?.model) parts.push(String(vehicleData.model));
+
+  const rawText = parts.join(" ").toLowerCase();
+  const normalized = rawText.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const tokens = normalized.split(/[^a-z0-9]+/);
+  const keywordsSet = new Set<string>();
+  for (const t of tokens) {
+    if (t.length >= 2 && t.length <= 30) {
+      keywordsSet.add(t);
+    }
+  }
+  return Array.from(keywordsSet).slice(0, 100);
+}
+
+/**
  * Phase 6.1 onAdCreated : Initialisation serveur des annonces.
  * Pose ownerTier, isOwnerVip, isOwnerVerified, isVipCorner, vérifie le paiement
  * ou applique le quota gratuit côté serveur.
@@ -2713,6 +2762,7 @@ export const onAdCreated = onDocumentCreated(
       isOwnerVerified: effective.isOwnerVerified,
       isVipCorner: isVip,
       isTest,
+      searchKeywords: generateSearchKeywords(adData),
       updatedAt: new Date().toISOString(),
     };
 
@@ -2841,6 +2891,7 @@ export const onAdStatusUpdated = onDocumentUpdated(
   async (event) => {
     const before = event.data?.before?.data() || {};
     const after = event.data?.after?.data() || {};
+    const updates: Record<string, unknown> = {};
 
     if (
       before.status === "ACTIVE" &&
@@ -2848,10 +2899,21 @@ export const onAdStatusUpdated = onDocumentUpdated(
       after.isFeatured
     ) {
       if (!after.featuredPausedAt) {
-        await event.data?.after?.ref.update({
-          featuredPausedAt: new Date().toISOString(),
-        });
+        updates.featuredPausedAt = new Date().toISOString();
       }
+    }
+
+    if (
+      before.title !== after.title ||
+      before.description !== after.description ||
+      before.mainCategory !== after.mainCategory ||
+      JSON.stringify(before.location) !== JSON.stringify(after.location)
+    ) {
+      updates.searchKeywords = generateSearchKeywords(after);
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await event.data?.after?.ref.update(updates);
     }
   }
 );
@@ -2861,7 +2923,10 @@ export const onAdStatusUpdated = onDocumentUpdated(
  * Démarre le compteur de validité et le boost de 7 jours à la validation.
  */
 export const approveAd = onCall(
-  {cors: true},
+  {
+    cors: true,
+    minInstances: 1,
+  },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Authentification requise.");
