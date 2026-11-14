@@ -159,7 +159,7 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
   - ✅ Marché Gabon, FCFA.
 ## [Phase 5] : Tiroir de Filtrage Mobile Unifié & Puces Actives
 - **Date** : 14 novembre 2026
-- **Commit** : En cours de validation P5 (UI)
+- **Commit** : `bd2b7e3`
 - **Ce qui est livré** :
   - Composant tiroir de filtrage mobile unifié `src/components/FilterSheet.tsx` basé sur le primitif accessible `Sheet` (Drawer coulissant avec swipe down et respect de la zone de sécurité) :
     - Piloté dynamiquement selon la catégorie active (Immobilier, Matériel Roulant, Emploi, Cours à Domicile, Nécrologie, Avis de Recherche, Autres Métiers, Événements, Global).
@@ -184,5 +184,49 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
   - ✅ Pas d'em dash dans le code, les commentaires ou les textes.
   - ✅ Marché Gabon, FCFA.
 - **Prochaine étape** :
-  - **Phase 6 (Publish Stepper Refactoring)** : Refonte de `PublishAdModal` en assistant par étapes plein écran sur mobile avec schéma de données par catégorie (`src/features/publish/schemas/*`), sauvegarde automatique de brouillon dans `localStorage` avec invite de restauration, quotas stricts de photos (3 Standard/Pro, 4 Élite, 5 Business), et conservation intégrale du flux de validation de paiement PIN USSD push.
+  - **Phase 6 (Publish Stepper Refactoring)** : Complétée.
+
+---
+
+## [Phase 6] : Assistant de Publication Mobile par Étapes (Publish Stepper)
+- **Date** : 14 novembre 2026
+- **Commit** : à pousser
+- **Ce qui est livré** :
+  - Refonte complète de `PublishAdModal` en assistant modulaire à 6 étapes (+ confirmation) :
+    - Étape 1 : Catégorie & Localisation spatiale au Gabon (8 catégories principales, nature de transaction Vente vs Location pour Immobilier et Véhicules, 9 provinces, villes et quartiers détaillés avec quartier habituel du profil).
+    - Étape 2 : Galerie Photos & Médias (compression WebP côté client max 1280px qualité 0.82 via `compressImageForUpload`, réorganisation des photos gauche/droite, suppression avec libération mémoire URL blob, option vidéo descriptive <= 30s <= 50 Mo, et attachement obligatoire de CV en .pdf, .docx ou .md pour les demandeurs d'emploi).
+    - Étape 3 : Détails & Caractéristiques pilotés par schémas de catégories dédiés (`src/features/publish/schemas/*`), génération automatique assistée du titre, description obligatoire avec décompte en direct (min 50 caractères), et nom de l'annonceur strictement verrouillé si le compte est vérifié KYC.
+    - Étape 4 : Prix, Durée & Options (validation du salaire pour les catégories d'emploi, gratuité automatique pour Nécrologie, Avis de recherche et Événements entrée libre, durées 15 ou 30 jours, détection automatique de l'éligibilité au Coin VIP, option Boost En tête de liste 7 jours avec utilisation prioritaire des boosts offerts, et devis officiel en direct avec garde de disponibilité `quoteReady`).
+    - Étape 5 : Aperçu avant validation (reproduction fidèle du rendu en carte de flux mobile avec badges de transaction, localisation, photo principale, et lien vers les CGU).
+    - Étape 6 : Facturation & Paiement Mobile (validation instantanée en 1 clic pour les comptes partenaires VIP exonérés ou annonces gratuites, simulateur `MobilePaymentSimulator` avec attente de validation du code PIN USSD sur le téléphone de l'annonceur sans restriction sur le numéro payeur).
+    - Étape 7 : Confirmation et transmission à la modération (carte récapitulative, statut en cours d'examen, accès direct au suivi dans Mon Espace Annonceur ou retour au catalogue).
+  - Architecture modulaire dans `src/features/publish/` :
+    - Schémas par catégorie (`schemas/types.ts`, `immobilier.ts`, `vehicules.ts`, `emploi.ts`, `cours.ts`, `necrologie.ts`, `avisRecherche.ts`, `evenements.ts`, `bricABrac.ts`, `autresEmplois.ts`).
+    - Constructeur de charge utile canonique `payloadBuilder.ts` garantissant une structure de document strictement identique et conforme aux règles de sécurité Firestore.
+    - Composants d'étapes ciblés : `PublishHeader.tsx`, `PublishFooter.tsx`, `Step1Category.tsx`, `Step2Photos.tsx`, `Step3Details.tsx`, `Step4Pricing.tsx`, `Step5Preview.tsx`, `Step6Payment.tsx`, `Step7Confirmation.tsx`.
+  - Application stricte des quotas de photos depuis le serveur :
+    - Standard / Pro : 3 photos maximum.
+    - Élite : 4 photos maximum.
+    - Business : 5 photos maximum.
+  - Sauvegarde automatique du brouillon dans `localStorage` (`bizbooster_publish_draft_${userId}`) avec invite de restauration fluide ou de réinitialisation complète au lancement.
+  - Présentation ergonomique plein écran sur mobile (`< 640px`) avec pied de page collant sécurisé (`env(safe-area-inset-bottom)`) et modale centrée élégante sur grand écran (`>= 640px`).
+  - Suite de tests unitaires et de cohérence de charge utile `tests/publish_stepper.test.ts` (12 nouveaux tests unitaires).
+- **Résultats des tests & validations locales** :
+  - `npm run lint` (`tsc --noEmit`) : 🟢 0 erreur.
+  - `npm test` : 🟢 26 fichiers testés, 159/159 tests unitaires passés (+12 tests).
+  - `npm run build` : 🟢 0 erreur (`dist-frontend` et `dist-admin`).
+  - Le poids de `PublishAdModal.js` est passé de **187 KB raw** à **90.55 KB raw** (**22.16 KB gzip**).
+  - Poids du chunk initial `index.js` maintenu à **77.37 KB gzip** (très inférieur au budget de 150 KB).
+- **Vérification des contraintes dures (Section 2 du brief)** :
+  - ✅ Commits UI strictement séparés du code backend (`functions/` et règles inchangées).
+  - ✅ Plafonds d'annonces stricts (10 max absolu, forfaits respectés) et aucun calcul de gratuité côté client.
+  - ✅ Quotas photos stricts (3 Standard/Pro, 4 Élite, 5 Business).
+  - ✅ Nom d'annonceur (`contactName`) verrouillé pour les utilisateurs vérifiés KYC.
+  - ✅ Paiement USSD PIN sans contrainte de correspondance avec le numéro de compte.
+  - ✅ Pas d'em dash dans le code, les commentaires ou les textes.
+  - ✅ Cibles tactiles `>= 44x44 px`.
+  - ✅ Marché Gabon, FCFA.
+- **Prochaine étape** :
+  - **Phase 7 (Account & Sheets)** : Passer en revue `UserDashboard` pour mobile (contrôle segmenté des onglets, cartes compactes), et convertir les modales listées (`PhoneAuthModal`, `KycUploadModal`, `ExtendAdModal`, `ReactivateAdModal`, `SubscriptionUpgradeModal`, `UserPreferencesModal`, `CguModal`, `ReportAdModal`, `ShareAdModal`) en tiroirs `Sheet` coulissants sur mobile.
+
 

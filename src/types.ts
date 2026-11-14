@@ -181,6 +181,8 @@ export type AdStatus = (typeof AD_STATUSES)[number];
 export const EXTENDABLE_AD_STATUSES = ['ACTIVE', 'EXPIRED'] as const;
 export type ExtendableAdStatus = (typeof EXTENDABLE_AD_STATUSES)[number];
 
+export type PriceUnit = 'total' | 'mois' | 'jour' | 'heure' | 'trimestre' | 'an';
+
 export interface Ad {
   id: string;
   title: string;
