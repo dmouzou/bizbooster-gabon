@@ -397,15 +397,12 @@ function PublicApp({
     const unsub = onSnapshot(
       doc(db, 'settings', 'public_config'),
       (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (typeof data.showTestAds === 'boolean') {
-            setShowTestAds(data.showTestAds);
-            try {
-              localStorage.setItem('bizbooster_show_test_ads', String(data.showTestAds));
-            } catch {}
-          }
-        }
+        // Document ou champ absent = OFF (même règle que le panneau admin), jamais de repli sur un localStorage périmé.
+        const value = snap.exists() && snap.data()?.showTestAds === true;
+        setShowTestAds(value);
+        try {
+          localStorage.setItem('bizbooster_show_test_ads', String(value));
+        } catch {}
       },
       (err) => console.warn('public_config listener error:', err)
     );

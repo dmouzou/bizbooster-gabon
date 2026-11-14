@@ -45,7 +45,7 @@ import {
   Ban,
 } from 'lucide-react';
 import { signOut, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../services/firebase';
 import { Ad, AdReport, MainCategory, SubscriptionTier, UserProfile, isUserAdmin, isUserSuperAdmin } from '../types';
@@ -116,21 +116,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     return false;
   });
 
+  // Source unique de vérité : settings/public_config (le même document que lit le site public).
+  // Document ou champ absent = OFF, exactement comme côté public, pour qu'ils ne puissent pas diverger.
   useEffect(() => {
     const unsub = onSnapshot(
-      doc(db, 'settings', 'system_config'),
+      doc(db, 'settings', 'public_config'),
       (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (typeof data.showTestAds === 'boolean') {
-            setShowTestAds(data.showTestAds);
-            try {
-              localStorage.setItem('bizbooster_show_test_ads', String(data.showTestAds));
-            } catch {}
-          }
-        }
+        const value = snap.exists() && snap.data()?.showTestAds === true;
+        setShowTestAds(value);
+        try {
+          localStorage.setItem('bizbooster_show_test_ads', String(value));
+        } catch {}
       },
-      (err) => console.warn('AdminPanel system_config listener error:', err)
+      (err) => console.warn('AdminPanel public_config listener error:', err)
     );
     return () => unsub();
   }, []);
@@ -164,11 +162,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
     const nextVal = !showTestAds;
     try {
-      const batch = writeBatch(db);
-      const iso = new Date().toISOString();
-      batch.set(doc(db, 'settings', 'public_config'), { showTestAds: nextVal, updatedAt: iso }, { merge: true });
-      batch.set(doc(db, 'settings', 'system_config'), { showTestAds: nextVal, updatedAt: iso }, { merge: true });
-      await batch.commit();
+      // Un seul document écrit : plus de copie dans system_config qui pourrait se désynchroniser.
+      await setDoc(
+        doc(db, 'settings', 'public_config'),
+        { showTestAds: nextVal, updatedAt: new Date().toISOString() },
+        { merge: true }
+      );
 
       setShowTestAds(nextVal);
       try {
