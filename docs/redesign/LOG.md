@@ -260,7 +260,7 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 
 ## [Phase 8] : Optimisation Backend, Alertes & Indexation (Backend Tuning)
 - **Date** : 14 novembre 2026
-- **Commit** : à pousser
+- **Commit** : `d2a2f7f`
 - **Ce qui est livré** :
   - Indexation composite Firestore (`firestore.indexes.json`) :
     - Ajout de l'index composite additif pour requêtes paginées par catégorie avec tri antéchronologique : collection `ads`, champs `status` (ASC), `mainCategory` (ASC), `publishedAt` (DESC).
@@ -286,8 +286,39 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
   - ✅ Changements strictement additifs sur Firestore et Storage.
   - ✅ Pas d'em dash dans le code, les commentaires ou les textes.
   - ✅ Marché Gabon, FCFA.
-- **Prochaine étape** :
-  - **Phase 9 (Hardening & Final CI Gates)** : Configuration Firestore offline cache (`persistentLocalCache`), nettoyage de code mort, rapport final de performance et validation des cibles de la section 1.
+
+---
+
+## [Phase 9] : Durcissement, Cache Hors-Ligne & Portes CI Finales (Hardening & Gates)
+- **Date** : 14 novembre 2026
+- **Commit** : à pousser
+- **Ce qui est livré** :
+  - Cache persistant Firestore hors-ligne (`src/services/firebase.ts`) :
+    - Configuration de `persistentLocalCache({ tabManager: persistentMultipleTabManager() })` pour assurer la résilience réseau et la navigation fluide entre plusieurs onglets sans requêtes superflues.
+  - Respect du mode économie de données (`src/components/ui/ResponsiveImage.tsx`) :
+    - Prise en compte active de `navigator.connection.saveData` pour forcer l'usage universel des vignettes `thumbUrl` légères sur réseaux contraints.
+  - Script de contrôle de budget de bundle (`scripts/check-budget.mjs`) :
+    - Automatisation de la vérification de taille du fichier d'entrée (`index-*.js <= 150 KB gzip`).
+    - Mesure constatée : **75.72 KB gzip** (soit la moitié du plafond autorisé).
+  - Verrouillage de la chaîne CI GitHub Actions (`.github/workflows/firebase-hosting-merge.yml`) :
+    - Intégration de `npm run check:budget` et de `npm --prefix functions run lint` bloquant tout déploiement en cas de dépassement de budget ou d'erreur de typage.
+  - Rapport final d'architecture et de performance (`docs/perf-final.md`) :
+    - Bilan exhaustif des gains de performance, réduction du code mort, conformité aux règles métier et validation des 10 phases de la refonte mobile BIZBOOSTER Gabon.
+- **Résultats des tests & validations locales** :
+  - `npm run lint` (`tsc --noEmit`) : 🟢 0 erreur.
+  - `npm test` : 🟢 27 fichiers testés, 165/165 tests unitaires passés.
+  - `npm run build` : 🟢 0 erreur (`dist-frontend` et `dist-admin`).
+  - `npm run check:budget` : 🟢 75.72 KB gzip <= 150.00 KB.
+  - `npm --prefix functions run lint` : 🟢 0 erreur.
+  - `npm --prefix functions run build` : 🟢 0 erreur.
+- **Vérification des contraintes dures (Section 2 du brief)** :
+  - ✅ Aucune régression sur les quotas, paiements ou sécurités KYC.
+  - ✅ Cibles tactiles >= 44x44 px respectées.
+  - ✅ Zéro em dash dans le code, la documentation ou les textes.
+  - ✅ Marché Gabon, FCFA.
+- **Statut final** :
+  - 🎉 **Toutes les phases P0 à P9 de la refonte mobile BIZBOOSTER Gabon sont entièrement livrées, testées et validées.**
+
 
 
 

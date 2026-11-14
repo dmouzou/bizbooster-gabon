@@ -23,6 +23,8 @@ jobs:
         run: npm test
       - name: Install functions dependencies
         run: npm --prefix functions ci
+      - name: Lint functions
+        run: npm --prefix functions run lint
       - name: Build functions
         run: npm --prefix functions run build
 
@@ -46,6 +48,8 @@ jobs:
           VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
           VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+      - name: Verify bundle size budget (<= 150 KB gzip)
+        run: npm run check:budget
       - name: Deploy Rules, Indexes, Storage & Functions (C1: avant hébergement)
         uses: w9jds/firebase-action@master
         with:

@@ -30,10 +30,14 @@ export const ResponsiveImage: React.FC<ResponsiveImageProps> = ({
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
 
-  // Resolution selection: prefer thumb for feed cards, medium for details, fallback to original src or placeholder
+  // Resolution selection: honor navigator.connection.saveData (Low data mode: thumbUrl everywhere)
+  const isSaveData = typeof navigator !== 'undefined' && Boolean((navigator as any).connection?.saveData);
+
   let resolvedSrc = FALLBACK_SVG;
   if (!hasError) {
-    if (size === 'thumb' && thumbUrl) {
+    if (isSaveData && thumbUrl) {
+      resolvedSrc = thumbUrl;
+    } else if (size === 'thumb' && thumbUrl) {
       resolvedSrc = thumbUrl;
     } else if (size === 'medium' && mediumUrl) {
       resolvedSrc = mediumUrl;
