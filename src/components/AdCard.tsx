@@ -16,7 +16,9 @@ interface AdCardProps {
   onToggleFavorite?: (adId: string) => void;
 }
 
-export const AdCard: React.FC<AdCardProps> = ({
+const PLACEHOLDER_IMAGE = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 250' width='400' height='250'%3E%3Crect width='100%25' height='100%25' fill='%23DCE3EA'/%3E%3Cpath d='M180 110l20 25 15-18 25 33h-80z' fill='%2394A3B8'/%3E%3Ccircle cx='185' cy='95' r='8' fill='%2394A3B8'/%3E%3C/svg%3E";
+
+const AdCardComponent: React.FC<AdCardProps> = ({
   ad,
   onSelectAd,
   onOpenExtendModal,
@@ -32,7 +34,7 @@ export const AdCard: React.FC<AdCardProps> = ({
 
   const images = ad.images && ad.images.length > 0
     ? ad.images
-    : ['https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=800&q=80'];
+    : [PLACEHOLDER_IMAGE];
   const hasMultipleImages = images.length > 1;
 
   const handlePrevImage = (e?: React.MouseEvent) => {
@@ -135,27 +137,17 @@ export const AdCard: React.FC<AdCardProps> = ({
           )}
         </div>
       )}
-      {/* Image container: Affichage intégral sans recadrage agressif (Point 2) */}
+      {/* Image container: Affichage intégral sans recadrage agressif */}
       <div
-        className="relative aspect-16/10 bg-slate-950 overflow-hidden select-none group/img"
+        className="relative aspect-16/10 bg-slate-900 overflow-hidden select-none group/img"
+        style={{ backgroundColor: ad.dominantColor || undefined }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Fond d'ambiance flouté pour harmoniser les marges sans bandes vides */}
+        {/* Photo intégrale non rognée (object-contain) */}
         <img
-          src={images[activeImageIndex]}
-          alt=""
-          aria-hidden="true"
-          className="absolute inset-0 w-full h-full object-cover blur-md scale-110 opacity-30 select-none pointer-events-none z-0"
-          referrerPolicy="no-referrer"
-          loading="lazy"
-          decoding="async"
-        />
-
-        {/* Photo intégrale non rognée (object-contain) au niveau z-0 */}
-        <img
-          src={images[activeImageIndex]}
+          src={activeImageIndex === 0 && ad.thumbUrl ? ad.thumbUrl : images[activeImageIndex]}
           alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
           className="relative z-0 w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-300 drop-shadow-xs"
           referrerPolicy="no-referrer"
@@ -510,7 +502,6 @@ export const AdCard: React.FC<AdCardProps> = ({
                     onClick={(e) => {
                       e.stopPropagation();
                       if (isExpired) {
-                        alert("Cette annonce est expirée. Conformément aux règles, vous devez la prolonger au préalable pour pouvoir la modifier.");
                         if (onOpenExtendModal) onOpenExtendModal(ad);
                         return;
                       }
@@ -600,3 +591,15 @@ export const AdCard: React.FC<AdCardProps> = ({
     </div>
   );
 };
+
+export const AdCard = React.memo<AdCardProps>(AdCardComponent, (prev, next) => {
+  return (
+    prev.ad.id === next.ad.id &&
+    prev.ad.updatedAt === next.ad.updatedAt &&
+    prev.ad.viewsCount === next.ad.viewsCount &&
+    prev.ad.status === next.ad.status &&
+    prev.ad.isFeatured === next.ad.isFeatured &&
+    prev.isFavorite === next.isFavorite &&
+    prev.isOwner === next.isOwner
+  );
+});

@@ -311,7 +311,8 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
       setErrorMsg(null);
       const { blob, mimeType } = await compressImageForUpload(file);
       const cleanName = file.name.replace(/\.[^/.]+$/, '');
-      const storagePath = `ads/${auth.currentUser.uid}/${Date.now()}_${cleanName}.jpg`;
+      const ext = mimeType === 'image/webp' ? 'webp' : 'jpg';
+      const storagePath = `ads/${auth.currentUser.uid}/${Date.now()}_${cleanName}.${ext}`;
       const storageRef = ref(storage, storagePath);
       await uploadBytes(storageRef, blob, {
         contentType: mimeType,
@@ -645,7 +646,7 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
               <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
               <div>
                 <strong className="block font-black text-rose-900 text-sm mb-0.5">
-                  Annonce refusée par la modération — Correction requise
+                  Annonce refusée par la modération - Correction requise
                 </strong>
                 {ad.moderationReason ? (
                   <p className="mb-1.5 text-rose-900 font-semibold bg-rose-100/80 p-2 rounded-xl border border-rose-200">
@@ -1605,7 +1606,7 @@ const EditAdModalContent: React.FC<EditAdModalContentProps> = ({
                             Fourchette / Tranche de salaire (Optionnel) :
                           </label>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs text-slate-500 font-semibold shrink-0">De {price ? `${Number(price).toLocaleString('fr-FR')} FCFA` : '—'} à</span>
+                            <span className="text-xs text-slate-500 font-semibold shrink-0">De {price ? `${Number(price).toLocaleString('fr-FR')} FCFA` : '-'} à</span>
                             <input
                               type="number"
                               value={priceMax}

@@ -8,8 +8,9 @@ import { ReportAdModal } from './ReportAdModal';
 import { ShareAdModal } from './ShareAdModal';
 import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
 import { trackDownloadRequest } from '../services/platformMetrics';
+import { showToast } from './ui/Toast';
 
-export const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1000&q=80';
+export const FALLBACK_IMAGE = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 250' width='400' height='250'%3E%3Crect width='100%25' height='100%25' fill='%23DCE3EA'/%3E%3Cpath d='M180 110l20 25 15-18 25 33h-80z' fill='%2394A3B8'/%3E%3Ccircle cx='185' cy='95' r='8' fill='%2394A3B8'/%3E%3C/svg%3E";
 
 /**
  * Validation d'origine de médias (S-14)
@@ -279,26 +280,16 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
           <div className="space-y-2.5">
             <div
               className="relative aspect-16/10 sm:aspect-16/9 rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center select-none group/gallery cursor-pointer"
+              style={{ backgroundColor: ad.dominantColor || undefined }}
               onTouchStart={handleTouchStart}
               onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
               onClick={() => setIsLightboxOpen(true)}
               title="Cliquer pour afficher la photo en grand écran"
             >
-              {/* Fond d'ambiance flouté pour harmoniser les marges et éliminer les bandes vides */}
-              <img
-                src={currentImage}
-                alt=""
-                aria-hidden="true"
-                className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-35 select-none pointer-events-none z-0"
-                referrerPolicy="no-referrer"
-                loading="lazy"
-                onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_IMAGE; }}
-              />
-
               {/* Photo intégrale non rognée (object-contain) */}
               <img
-                src={currentImage}
+                src={activeImageIndex === 0 && ad.mediumUrl ? ad.mediumUrl : currentImage}
                 alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
                 className="relative z-10 w-full h-full object-contain drop-shadow-md select-none transition-transform duration-300 group-hover/gallery:scale-[1.01]"
                 referrerPolicy="no-referrer"
@@ -470,7 +461,7 @@ export const AdDetailModal: React.FC<AdDetailModalProps> = ({
                     <button
                       onClick={() => {
                         if (isExpired) {
-                          alert("Cette annonce est expirée. Conformément aux règles, vous devez la prolonger au préalable pour pouvoir la modifier.");
+                          showToast("Cette annonce est expirée. Conformément aux règles, vous devez la prolonger au préalable pour pouvoir la modifier.", "error");
                           onOpenExtendModal(ad);
                           return;
                         }

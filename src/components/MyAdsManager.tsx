@@ -2,6 +2,7 @@ import React from 'react';
 import { RefreshCw, Clock, Eye, AlertCircle, PlusCircle, Calendar, ShieldCheck, Edit3 } from 'lucide-react';
 import { Ad } from '../types';
 import { formatFCFA, formatRemainingTime, getAdTransactionBadge } from '../utils/formatters';
+import { showToast } from './ui/Toast';
 
 interface MyAdsManagerProps {
   ads: Ad[];
@@ -126,7 +127,7 @@ export const MyAdsManager: React.FC<MyAdsManagerProps> = ({
                     onClick={() => {
                       const isExpired = ad.status === 'EXPIRED' || (ad.expiresAt && new Date(ad.expiresAt).getTime() <= Date.now());
                       if (isExpired) {
-                        alert("Cette annonce est expirée. Vous devez d'abord la prolonger pour pouvoir la modifier.");
+                        showToast("Cette annonce est expirée. Vous devez d'abord la prolonger pour pouvoir la modifier.", "error");
                         onOpenExtendModal(ad);
                         return;
                       }

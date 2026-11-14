@@ -20,6 +20,7 @@ import {
   TestTwilioOtpResponse,
 } from '../services/twilioAuth';
 import { COUNTRIES, SupportedCountry } from '../utils/phone';
+import { showToast } from './ui/Toast';
 
 interface TwilioAdminPanelProps {
   isSuper: boolean;
@@ -120,7 +121,7 @@ export const TwilioAdminPanel: React.FC<TwilioAdminPanelProps> = ({ isSuper, onS
       if (onShowAlert) {
         onShowAlert(`Erreur: ${msg}`, 'error', 'Configuration Twilio');
       } else {
-        alert(`Erreur: ${msg}`);
+        showToast(`Erreur: ${msg}`, 'error');
       }
     } finally {
       setIsSaving(false);

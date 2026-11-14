@@ -109,3 +109,4 @@ Mesures reproductibles via la commande : `npm run analyze` (générant `dist-fro
 1. **Lighthouse CI** : Configuration officielle dans `lighthouserc.cjs` ciblant le profil mobile Slow 4G avec seuils d'alerte stricts.
 2. **Visualiseur de Bundle** : Script `npm run analyze` générant la cartographie interactive `dist-frontend/stats.html`.
 3. **Core Web Vitals** : Module `src/services/vitals.ts` branché dans `src/main.tsx` instrumentant `CLS`, `INP`, `LCP`, `FCP` et `TTFB`.
+

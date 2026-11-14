@@ -116,8 +116,9 @@ interface PhotoMediaItem {
 async function uploadAdImage(file: File): Promise<string> {
   const { blob, mimeType } = await compressImageForUpload(file);
   const cleanName = file.name.replace(/\.[^/.]+$/, '');
+  const ext = mimeType === 'image/webp' ? 'webp' : 'jpg';
   const uid = auth.currentUser?.uid || 'user';
-  const path = `ads/${uid}/${Date.now()}_${cleanName}.jpg`;
+  const path = `ads/${uid}/${Date.now()}_${cleanName}.${ext}`;
   const storageRef = ref(storage, path);
   await uploadBytes(storageRef, blob, {
     contentType: mimeType,
@@ -2370,7 +2371,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
                           Fourchette / Tranche de salaire (Optionnel) :
                         </label>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500 font-semibold shrink-0">De {price ? `${Number(price).toLocaleString('fr-FR')} FCFA` : '—'} à</span>
+                          <span className="text-xs text-slate-500 font-semibold shrink-0">De {price ? `${Number(price).toLocaleString('fr-FR')} FCFA` : '-'} à</span>
                           <input
                             type="number"
                             value={priceMax === '' ? '' : priceMax}

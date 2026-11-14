@@ -40,6 +40,7 @@ import { ConfirmEditOnlineModal } from './components/ConfirmEditOnlineModal';
 import { LogoutConfirmModal } from './components/LogoutConfirmModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ToastContainer } from './components/ui/Toast';
 
 // Lazy-loaded heavy modal components for bundle optimization (F3)
 const AdDetailModal = React.lazy(() => import('./components/AdDetailModal').then((m) => ({ default: m.AdDetailModal })));
@@ -1925,7 +1926,7 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="text-sm sm:text-base font-black text-amber-950 tracking-tight">
-                          Coin VIP — Biens d'Exception au Gabon
+                          Coin VIP - Biens d'Exception au Gabon
                         </h3>
                         <span className="bg-amber-500 text-slate-950 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
                           Placement 100% Gratuit
@@ -2708,23 +2709,27 @@ export default function App() {
         >
           <AdminApp currentUser={currentUser} onSwitchToFrontend={switchToFrontend} />
         </React.Suspense>
+        <ToastContainer />
       </ErrorBoundary>
     );
   }
 
   return (
-    <ErrorBoundary
-      fallbackTitle="Une anomalie d'affichage est survenue"
-      onReset={() => window.location.reload()}
-    >
-      <PublicApp
-        currentUser={currentUser}
-        setCurrentUser={setCurrentUser}
-        authReady={authReady}
-        profileError={profileError}
-        setProfileError={setProfileError}
-        onSwitchToAdmin={isUserAdmin(currentUser) ? switchToAdmin : undefined}
-      />
-    </ErrorBoundary>
+    <>
+      <ErrorBoundary
+        fallbackTitle="Une anomalie d'affichage est survenue"
+        onReset={() => window.location.reload()}
+      >
+        <PublicApp
+          currentUser={currentUser}
+          setCurrentUser={setCurrentUser}
+          authReady={authReady}
+          profileError={profileError}
+          setProfileError={setProfileError}
+          onSwitchToAdmin={isUserAdmin(currentUser) ? switchToAdmin : undefined}
+        />
+      </ErrorBoundary>
+      <ToastContainer />
+    </>
   );
 }

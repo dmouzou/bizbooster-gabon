@@ -229,6 +229,9 @@ export interface Ad {
 
   description: string; // limited character text (<= 1000 chars)
   images?: string[];
+  thumbUrl?: string;
+  mediumUrl?: string;
+  dominantColor?: string;
   videoUrl?: string;
   
   contactPhone: string; // Gabon telephone (+241 ...)

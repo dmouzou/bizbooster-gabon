@@ -45,23 +45,45 @@ export async function compressImageForUpload(
           return;
         }
 
-        // Fond blanc propre pour les éventuelles transparences PNG converties en JPEG
+        // Fond blanc propre pour les éventuelles transparences PNG
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
 
-        canvas.toBlob(
-          (blob) => {
-            if (blob && blob.size < file.size) {
-              resolve({ blob, mimeType: 'image/jpeg' });
-            } else {
-              // Si le fichier d'origine était déjà plus léger
-              resolve({ blob: file, mimeType: file.type });
-            }
-          },
-          'image/jpeg',
-          quality
-        );
+        const tryJpeg = () => {
+          canvas.toBlob(
+            (blob) => {
+              if (blob && blob.size < file.size) {
+                resolve({ blob, mimeType: 'image/jpeg' });
+              } else {
+                resolve({ blob: file, mimeType: file.type });
+              }
+            },
+            'image/jpeg',
+            quality
+          );
+        };
+
+        // Priorité au WebP (plus compact à qualité égale) avec fallback JPEG
+        try {
+          canvas.toBlob(
+            (blob) => {
+              if (blob && blob.type === 'image/webp') {
+                if (blob.size < file.size) {
+                  resolve({ blob, mimeType: 'image/webp' });
+                } else {
+                  resolve({ blob: file, mimeType: file.type });
+                }
+              } else {
+                tryJpeg();
+              }
+            },
+            'image/webp',
+            quality
+          );
+        } catch {
+          tryJpeg();
+        }
       };
 
       img.onerror = () => {

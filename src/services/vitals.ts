@@ -17,3 +17,4 @@ export function initWebVitals(onReport?: (metric: Metric) => void) {
     console.warn('Failed to initialize web-vitals:', err);
   }
 }
+
