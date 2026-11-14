@@ -66,3 +66,4 @@ export const immobilierSchema: CategorySchema<ImmobilierFormValues> = {
     return `${op} - ${values.propertyType}${locationText ? ` à ${locationText}` : ''}`;
   },
 };
+

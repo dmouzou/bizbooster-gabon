@@ -79,3 +79,4 @@ export const evenementsSchema: CategorySchema<EvenementsFormValues> = {
     return `${values.eventType} - ${values.eventVenue || 'Événement'}`;
   },
 };
+

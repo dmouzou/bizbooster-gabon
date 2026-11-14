@@ -53,3 +53,4 @@ export const ActiveFilterChips: React.FC<ActiveFilterChipsProps> = ({
     </div>
   );
 };
+

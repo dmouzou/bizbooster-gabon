@@ -216,3 +216,4 @@ export function buildAdPayload(params: BuildAdPayloadParams): Ad {
     paymentReference: params.paymentReference,
   };
 }
+

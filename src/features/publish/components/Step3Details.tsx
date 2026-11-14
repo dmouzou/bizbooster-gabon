@@ -818,3 +818,4 @@ export const Step3Details: React.FC<Step3DetailsProps> = ({
     </div>
   );
 };
+

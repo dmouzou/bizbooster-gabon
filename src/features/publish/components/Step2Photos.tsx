@@ -359,3 +359,4 @@ export const Step2Photos: React.FC<Step2PhotosProps> = ({
     </div>
   );
 };
+

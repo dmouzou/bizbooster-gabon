@@ -133,3 +133,4 @@ export const Step6Payment: React.FC<Step6PaymentProps> = ({
     </div>
   );
 };
+

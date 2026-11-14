@@ -1535,7 +1535,6 @@ export function validateAdTargetForPayment(
 export const initiateSingPayPayment = onCall(
   {
     cors: true,
-    minInstances: 1,
     secrets: [
       singpayClientId,
       singpayClientSecret,
@@ -2923,10 +2922,7 @@ export const onAdStatusUpdated = onDocumentUpdated(
  * Démarre le compteur de validité et le boost de 7 jours à la validation.
  */
 export const approveAd = onCall(
-  {
-    cors: true,
-    minInstances: 1,
-  },
+  {cors: true},
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Authentification requise.");

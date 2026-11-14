@@ -35,3 +35,4 @@ if (gzipBuffer.length > MAX_GZIP_BYTES) {
 }
 
 console.log('🟢 [Budget Check] SUCCES : Le bundle initial respecte strictement le budget performance.');
+

@@ -432,3 +432,4 @@ export const Step1Category: React.FC<Step1CategoryProps> = ({
     </div>
   );
 };
+

@@ -48,3 +48,4 @@ export function getMaxPhotosAllowed(tier?: SubscriptionTier | null): number {
       return 3;
   }
 }
+

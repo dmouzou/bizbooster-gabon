@@ -95,3 +95,4 @@ export const Step7Confirmation: React.FC<Step7ConfirmationProps> = ({
     </div>
   );
 };
+

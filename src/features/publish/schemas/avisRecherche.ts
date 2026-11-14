@@ -82,3 +82,4 @@ export const avisRechercheSchema: CategorySchema<AvisRechercheFormValues> = {
     return `Avis de Recherche - ${values.avisCategory}: ${values.avisTargetName}`;
   },
 };
+

@@ -82,3 +82,4 @@ runBackfillThumbs().catch((err) => {
   console.error('[Backfill Thumbs] Erreur fatale :', err);
   process.exit(1);
 });
+

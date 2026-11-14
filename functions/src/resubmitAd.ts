@@ -4,7 +4,6 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 const CALLABLE_OPTIONS = {
   region: process.env.FUNCTION_REGION || "us-central1",
   maxInstances: 10,
-  minInstances: 1,
   memory: "256MiB" as const,
   timeoutSeconds: 20,
   cors: true,

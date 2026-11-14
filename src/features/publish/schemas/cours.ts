@@ -60,3 +60,4 @@ export const coursSchema: CategorySchema<CoursFormValues> = {
     return `${prefix} - ${values.tutoringSubject} (${values.tutoringLevel})`;
   },
 };
+

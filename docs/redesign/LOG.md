@@ -264,8 +264,8 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 - **Ce qui est livré** :
   - Indexation composite Firestore (`firestore.indexes.json`) :
     - Ajout de l'index composite additif pour requêtes paginées par catégorie avec tri antéchronologique : collection `ads`, champs `status` (ASC), `mainCategory` (ASC), `publishedAt` (DESC).
-  - Réduction des démarrages à froid (Cold-Start Reduction) dans Cloud Functions :
-    - Configuration de `minInstances: 1` sur les callables critiques à haute disponibilité : `initiateSingPayPayment`, `approveAd`, et `resubmitAd`.
+  - Mode Scale-to-Zero sans frais fixes (0 FCFA / 0 $ par mois) :
+    - Maintien de `minInstances: 0` (par défaut) sur les callables Cloud Functions pour éviter la facture plancher de 19,08 $/mois, avec couverture complète par le quota gratuit Google Cloud.
   - Observabilité et alertes de facturation structurées :
     - Journalisation JSON structurée (`severity: "ERROR"`, `alert: "PAYMENT_FAILURE"`) en cas d'échec de paiement SingPay.
     - Journalisation JSON structurée (`severity: "WARNING"`, `alert: "PAYMENT_NEEDS_REVIEW"`) pour toute anomalie nécessitant examen humain (montant reçu divergent, absence d'userId, annonce non prolongeable ou suspendue).

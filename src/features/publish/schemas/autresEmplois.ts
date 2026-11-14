@@ -68,3 +68,4 @@ export const autresEmploisSchema: CategorySchema<AutresEmploisFormValues> = {
     return `${prefix} - ${values.autresEmploisProfession || 'Poste à pourvoir'}`;
   },
 };
+

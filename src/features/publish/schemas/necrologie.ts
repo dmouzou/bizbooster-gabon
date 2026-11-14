@@ -77,3 +77,4 @@ export const necrologieSchema: CategorySchema<NecrologieFormValues> = {
     return `Nécrologie - ${values.necroDeceasedName || 'Avis de décès'} (${values.necroMinistry})`;
   },
 };
+

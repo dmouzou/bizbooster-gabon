@@ -44,3 +44,4 @@ export const bricABracSchema: CategorySchema<BricABracFormValues> = {
     return `À Vendre - ${values.bricCategory}`;
   },
 };
+

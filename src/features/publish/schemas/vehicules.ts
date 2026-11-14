@@ -106,3 +106,4 @@ export const vehiculesSchema: CategorySchema<VehiculesFormValues> = {
     return `${op} - ${brandModel || values.vehicleCategory}`;
   },
 };
+

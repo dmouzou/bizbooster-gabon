@@ -58,3 +58,4 @@ export const emploiSchema: CategorySchema<EmploiFormValues> = {
     return `${prefix} - ${values.domesticJobType}`;
   },
 };
+

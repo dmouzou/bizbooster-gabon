@@ -74,3 +74,4 @@ export const PublishFooter: React.FC<PublishFooterProps> = ({
     </footer>
   );
 };
+

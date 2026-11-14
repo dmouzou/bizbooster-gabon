@@ -21,7 +21,7 @@ Profil de mesure : Mobile Android Mid-Range (360x640, 390x844, 412x915), Réseau
 | **Taille minimale des cibles tactiles** | Boutons 28-36 px (favoris, tags) | **Strictement >= 44 x 44 px** | Confort tactile universel sur smartphone | 🟢 WCAG 2.1 AA |
 | **Taille minimale de typographie** | Textes secondaires à 10-11 px | **>= 12 px (corps 14 px)** | Lisibilité plein soleil garantie | 🟢 Lisible |
 | **Présentation des modales sur mobile** | Boîtes de dialogue centrées rigides | **Feuilles inférieures coulissantes (Sheets)** | 13 modales adaptées au geste du pouce | 🟢 Ergonomie native |
-| **Démarrage à froid Cloud Functions (Cold Start)** | Sans instance réservée (~2.5-4s) | **`minInstances: 1` sur les callables clés** | Latence paiement et modération divisée | 🟢 Haute réactivité |
+| **Coût d'inactivité Cloud Functions** | Facturation plancher 19,08 $/mois | **0 $ / 0 FCFA par mois (Scale-to-Zero)** | Quota gratuit Google Cloud préservé | 🟢 Économique |
 | **Persistance locale Firestore** | Mémoire vive volatile | **`persistentLocalCache` multi-onglets** | Consultation hors-ligne et reprise rapide | 🟢 Mode hors-ligne actif |
 | **Recherche textuelle (Phase 1)** | Filtre brut insensible côté client | **Mots-clés normalisés serveur (`searchKeywords`)** | Nettoyage des accents et indexation rapide | 🟢 Recherche robuste |
 | **Porte CI / Budget de Bundle** | Aucune vérification automatisée | **Script de contrôle CI `check:budget`** | Échec build si `index-*.js` > 150 KB gzip | 🟢 Régression bloquée |
@@ -76,7 +76,7 @@ dist-frontend/assets/vendor-firebase-CRrlkP1S.js          828.72 kB │ gzip: 20
 - **Phase 5** : Tiroir de filtrage unifié (`FilterSheet`) avec sections repliables et navigation géographique en cascade spécifique au Gabon, complété par les puces de filtres actifs amovibles (`ActiveFilterChips`).
 - **Phase 6** : Assistant de publication par étapes (`PublishAdModal`) piloté par schémas modulaires (`src/features/publish/schemas/*`), compression WebP côté client, quotas de photos stricts (3 Standard/Pro, 4 Élite, 5 Business), sauvegarde automatique du brouillon dans `localStorage` et paiement USSD PIN fluide.
 - **Phase 7** : Refonte de `UserDashboard` avec sélecteur segmenté responsive, cartes compactes avec actions propriétaire complètes (>= 44px) et passage de toutes les modales applicatives en feuilles coulissantes inférieures sur mobile.
-- **Phase 8** : Index composite Firestore additif pour requêtes paginées par catégorie, suppression des démarrages à froid via `minInstances: 1` sur les callables critiques, alertes de paiement structurées, recherche par mots-clés normalisés, et script d'enrichissement `scripts/backfill-thumbs.ts`.
+- **Phase 8** : Index composite Firestore additif pour requêtes paginées par catégorie, mode Scale-to-Zero (0 FCFA/mois de frais fixes), alertes de paiement structurées, recherche par mots-clés normalisés, et script d'enrichissement `scripts/backfill-thumbs.ts`.
 - **Phase 9** : Activation du cache persistant Firestore multi-onglets, respect de `navigator.connection.saveData`, verrouillage du budget de bundle dans la CI GitHub Actions, et rapport final.
 
 ---
