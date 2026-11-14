@@ -1,12 +1,32 @@
-import React, { useState, useRef } from 'react';
-import { MapPin, Phone, MessageSquare, Clock, ArrowUpRight, Eye, Calendar, RefreshCw, Edit3, Sparkles, CheckCircle2, ShieldCheck, Heart, ChevronLeft, ChevronRight } from 'lucide-react';
+import React from 'react';
+import {
+  MapPin,
+  Phone,
+  MessageCircle,
+  Clock,
+  ShieldCheck,
+  Heart,
+  Crown,
+  Calendar,
+  AlertCircle,
+  Camera,
+} from 'lucide-react';
 import { Ad } from '../types';
-import { formatFCFA, formatRemainingTime, getWhatsAppUrl, formatPriceDisplay, formatAdPrice, formatEventDate, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
+import {
+  formatAdPrice,
+  formatPriceUnit,
+  formatRemainingTime,
+  getWhatsAppUrl,
+  getAdTransactionBadge,
+  formatEventDate,
+  isJobAd,
+} from '../utils/formatters';
 import { isAdBoostFeatured, recordAdInteraction } from '../utils/personalization';
 import { isAdVipCornerEligible } from '../utils/vipCorner';
-import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
+import { ResponsiveImage } from './ui/ResponsiveImage';
+import { Pill } from './ui/Pill';
 
-interface AdCardProps {
+export interface AdCardProps {
   ad: Ad;
   onSelectAd: (ad: Ad) => void;
   onOpenExtendModal?: (ad: Ad) => void;
@@ -16,590 +36,287 @@ interface AdCardProps {
   onToggleFavorite?: (adId: string) => void;
 }
 
-const PLACEHOLDER_IMAGE = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 250' width='400' height='250'%3E%3Crect width='100%25' height='100%25' fill='%23DCE3EA'/%3E%3Cpath d='M180 110l20 25 15-18 25 33h-80z' fill='%2394A3B8'/%3E%3Ccircle cx='185' cy='95' r='8' fill='%2394A3B8'/%3E%3C/svg%3E";
+const FALLBACK_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 250' width='400' height='250'%3E%3Crect width='100%25' height='100%25' fill='%23DCE3EA'/%3E%3Cpath d='M180 110l20 25 15-18 25 33h-80z' fill='%2394A3B8'/%3E%3Ccircle cx='185' cy='95' r='8' fill='%2394A3B8'/%3E%3C/svg%3E";
 
 const AdCardComponent: React.FC<AdCardProps> = ({
   ad,
   onSelectAd,
-  onOpenExtendModal,
-  onEditAd,
-  isOwner = false,
   isFavorite = false,
   onToggleFavorite,
 }) => {
-  const [showVerifiedModal, setShowVerifiedModal] = useState(false);
-  const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const touchStartXRef = useRef<number | null>(null);
-  const touchEndXRef = useRef<number | null>(null);
-
-  const images = ad.images && ad.images.length > 0
-    ? ad.images
-    : [PLACEHOLDER_IMAGE];
-  const hasMultipleImages = images.length > 1;
-
-  const handlePrevImage = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setActiveImageIndex((prev) => (prev > 0 ? prev - 1 : images.length - 1));
-  };
-
-  const handleNextImage = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setActiveImageIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0));
-  };
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartXRef.current = e.targetTouches[0].clientX;
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    touchEndXRef.current = e.targetTouches[0].clientX;
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartXRef.current !== null && touchEndXRef.current !== null) {
-      const diffX = touchStartXRef.current - touchEndXRef.current;
-      if (diffX > 35) {
-        e.stopPropagation();
-        handleNextImage();
-      } else if (diffX < -35) {
-        e.stopPropagation();
-        handlePrevImage();
-      }
-    }
-    touchStartXRef.current = null;
-    touchEndXRef.current = null;
-  };
-
-  const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
   const isBoosted = isAdBoostFeatured(ad);
   const isVerified = Boolean(ad.isOwnerVerified || ad.isOwnerVip);
-  const isVip = isAdVipCornerEligible(ad) && (ad.mainCategory === 'IMMOBILIER' || ad.mainCategory === 'MATERIEL_ROULANT');
+  const isVip = isAdVipCornerEligible(ad);
+  const { isExpired, label: remainingTimeLabel } = formatRemainingTime(ad.expiresAt);
 
   const isNecrologie = ad.mainCategory === 'NECROLOGIE';
   const isAvisRecherche = ad.mainCategory === 'AVIS_DE_RECHERCHE';
   const isEvenement = ad.mainCategory === 'EVENEMENTS' && !!ad.eventData;
 
-  // Point 4: Description limitée au maximum à 300 caractères avec césure propre
-  const displayDescription = React.useMemo(() => {
-    if (!ad.description) return '';
-    const trimmed = ad.description.trim();
-    if (trimmed.length <= 300) return trimmed;
-    const sliced = trimmed.slice(0, 300);
-    const lastSpace = sliced.lastIndexOf(' ');
-    return (lastSpace > 240 ? sliced.slice(0, lastSpace) : sliced) + '...';
-  }, [ad.description]);
+  const images = ad.images && ad.images.length > 0 ? ad.images : [FALLBACK_SVG];
+  const photoCount = images.length;
 
   const handleCardClick = () => {
     recordAdInteraction(ad);
     onSelectAd(ad);
   };
 
+  const handleWhatsAppClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const url = getWhatsAppUrl(ad.contactPhone || '', ad.title || 'Annonce');
+    if (url) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  const handleCallClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (ad.contactPhone) {
+      window.location.href = `tel:${ad.contactPhone}`;
+    }
+  };
+
+  const handleFavoriteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onToggleFavorite) {
+      onToggleFavorite(ad.id);
+    }
+  };
+
+  const locationText =
+    [ad.location?.neighborhood, ad.location?.city, ad.location?.province]
+      .filter(Boolean)
+      .join(' · ') || 'Gabon';
+
+  const priceText = formatAdPrice(ad);
+  const unitText = formatPriceUnit(ad.priceUnit, isJobAd(ad));
+  const transactionBadge = getAdTransactionBadge(ad);
+
   return (
-    <div
+    <article
       onClick={handleCardClick}
-      className={`group cursor-pointer bg-white rounded-2xl border transition-all duration-200 overflow-hidden flex flex-col hover:shadow-xl hover:-translate-y-0.5 ${
-        isNecrologie
-          ? 'border-slate-800 ring-1 ring-slate-800/30 shadow-md bg-white hover:border-slate-900'
-          : isAvisRecherche
-          ? 'border-red-400 ring-2 ring-red-400/20 shadow-md bg-white hover:border-red-500'
-          : isBoosted
-          ? 'border-amber-400 ring-2 ring-amber-400/20 shadow-md'
-          : isExpired
-          ? 'border-red-200 opacity-75 bg-slate-50/70'
-          : 'border-slate-200 hover:border-emerald-300'
-      }`}
       id={`ad-card-${ad.id}`}
+      className={`group cursor-pointer bg-white rounded-2xl border transition-all duration-200 overflow-hidden flex flex-col hover:shadow-lg active:scale-[0.99] select-none ${
+        isNecrologie
+          ? 'border-slate-800 shadow-md'
+          : isAvisRecherche
+          ? 'border-red-400 ring-1 ring-red-400/20 shadow-md'
+          : isBoosted
+          ? 'border-amber-400 ring-2 ring-amber-400/30 shadow-md'
+          : isExpired
+          ? 'border-red-200 opacity-80 bg-slate-50/70'
+          : 'border-slate-200/90 hover:border-emerald-300'
+      }`}
     >
-      {/* Ribbon distinctif Nécrologie (Point 3) */}
+      {/* Ribbon distinctif Nécrologie */}
       {isNecrologie && (
-        <div className="bg-slate-950 text-amber-300 text-[11px] font-black uppercase px-3 py-1.5 flex items-center justify-between tracking-wide border-b border-slate-800">
+        <div className="bg-slate-950 text-amber-300 text-xs font-black uppercase px-3.5 py-1.5 flex items-center justify-between tracking-wide border-b border-slate-800">
           <span className="flex items-center gap-1.5">
-            <span>🕊️</span>
             <span>Avis d'Obsèques & Hommage</span>
           </span>
-          <span className="text-[10px] text-slate-300 font-semibold lowercase">diffusion nationale</span>
+          <span className="text-[11px] text-slate-300 font-semibold lowercase">diffusion nationale</span>
         </div>
       )}
 
-      {/* Ribbon distinctif Avis de Recherche (Point 3) */}
+      {/* Ribbon distinctif Avis de Recherche */}
       {isAvisRecherche && (
-        <div className="bg-gradient-to-r from-red-600 to-rose-700 text-white text-[11px] font-black uppercase px-3 py-1.5 flex items-center justify-between tracking-wide shadow-xs">
+        <div className="bg-gradient-to-r from-red-600 to-rose-700 text-white text-xs font-black uppercase px-3.5 py-1.5 flex items-center justify-between tracking-wide">
           <span className="flex items-center gap-1.5">
-            <span>🚨</span>
             <span>Avis de Recherche & Vigilance</span>
           </span>
           {ad.avisRechercheData?.hasReward && ad.avisRechercheData?.rewardAmount ? (
-            <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-1.5 py-0.2 rounded-sm">
-              💰 Récompense
+            <span className="bg-amber-400 text-slate-950 text-[11px] font-black px-1.5 py-0.5 rounded-sm">
+              Récompense
             </span>
           ) : (
-            <span className="text-[10px] text-red-100 font-semibold">signalement actif</span>
+            <span className="text-[11px] text-red-100 font-semibold">signalement actif</span>
           )}
         </div>
       )}
-      {/* Image container: Affichage intégral sans recadrage agressif */}
-      <div
-        className="relative aspect-16/10 bg-slate-900 overflow-hidden select-none group/img"
-        style={{ backgroundColor: ad.dominantColor || undefined }}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-      >
-        {/* Photo intégrale non rognée (object-contain) */}
-        <img
-          src={activeImageIndex === 0 && ad.thumbUrl ? ad.thumbUrl : images[activeImageIndex]}
-          alt={`${ad.title || 'Annonce'} - Photo ${activeImageIndex + 1}`}
-          className="relative z-0 w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-300 drop-shadow-xs"
-          referrerPolicy="no-referrer"
-          loading="lazy"
-          decoding="async"
+
+      {/* 1. Photo container: 16:10 aspect ratio */}
+      <div className="relative aspect-16/10 bg-slate-100 overflow-hidden">
+        <ResponsiveImage
+          thumbUrl={ad.thumbUrl}
+          mediumUrl={ad.mediumUrl}
+          src={images[0]}
+          dominantColor={ad.dominantColor || '#DCE3EA'}
+          alt={ad.title || 'Annonce'}
+          aspectRatio="16/10"
+          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
         />
 
-        {/* PC Arrows: Left and Right (Point 6) au niveau z-30 */}
-        {hasMultipleImages && (
-          <>
-            <button
-              type="button"
-              onClick={handlePrevImage}
-              aria-label="Photo précédente"
-              title="Photo précédente"
-              className="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white items-center justify-center opacity-0 group-hover:opacity-100 group-hover/img:opacity-100 transition-all duration-200 shadow-md backdrop-blur-xs z-30 hover:scale-110 cursor-pointer"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={handleNextImage}
-              aria-label="Photo suivante"
-              title="Photo suivante"
-              className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-slate-950/70 hover:bg-slate-950 text-white items-center justify-center opacity-0 group-hover:opacity-100 group-hover/img:opacity-100 transition-all duration-200 shadow-md backdrop-blur-xs z-30 hover:scale-110 cursor-pointer"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-
-            {/* Pagination Dots indicator */}
-            <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1 z-20 pointer-events-none">
-              {images.map((_, idx) => (
-                <span
-                  key={idx}
-                  className={`h-1.5 rounded-full transition-all ${
-                    idx === activeImageIndex ? 'bg-white w-3 shadow-xs' : 'bg-white/50 w-1.5'
-                  }`}
-                />
-              ))}
-            </div>
-          </>
+        {/* Overlay Top-Left: Transaction Badge */}
+        {!isNecrologie && !isAvisRecherche && transactionBadge.label && (
+          <div className="absolute top-2.5 left-2.5 z-10 pointer-events-none">
+            <span className="bg-white/95 backdrop-blur-xs text-slate-900 text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm border border-slate-200/60">
+              {transactionBadge.label}
+            </span>
+          </div>
         )}
 
-        {/* Top Badges overlay: z-20 impératif pour flotter au-dessus de la photo */}
-        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-start justify-between gap-1 pointer-events-none z-20">
-          {/* Transaction Type: VENTE, LOCATION or À EMPLOYER */}
-          <div className="flex flex-col gap-1">
-            {isVip && (
-              <span className="text-[10px] font-black tracking-wide uppercase px-2 py-0.5 rounded-lg shadow-sm bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 flex items-center gap-1 border border-amber-300">
-                👑 VIP
+        {/* Overlay Top-Right: Favorite Button (Strictly >= 44x44 px bounding box) */}
+        {onToggleFavorite && (
+          <button
+            type="button"
+            onClick={handleFavoriteClick}
+            aria-label={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+            className="absolute top-2 right-2 z-10 w-11 h-11 rounded-full bg-slate-950/50 hover:bg-slate-950/80 active:bg-slate-950 text-white flex items-center justify-center transition-all cursor-pointer backdrop-blur-xs shadow-md"
+          >
+            <Heart
+              className={`w-5 h-5 transition-transform ${
+                isFavorite ? 'fill-rose-500 text-rose-500 scale-110' : 'text-white'
+              }`}
+            />
+          </button>
+        )}
+
+        {/* Overlay Bottom-Right: Photo Counter Pill */}
+        {photoCount > 1 && (
+          <div className="absolute bottom-2.5 right-2.5 z-10 pointer-events-none bg-slate-950/75 backdrop-blur-xs text-white text-xs font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm">
+            <Camera className="w-3.5 h-3.5 text-slate-300" />
+            <span>{photoCount}</span>
+          </div>
+        )}
+      </div>
+
+      {/* 2. Body (padding 14px, gap 8px) */}
+      <div className="p-3.5 flex flex-col gap-2 flex-1 justify-between">
+        <div className="space-y-1.5">
+          {/* Price & Badges row */}
+          <div className="flex items-center justify-between gap-2 min-h-[26px]">
+            {isNecrologie ? (
+              <span className="text-sm font-black text-slate-800 uppercase tracking-wide">
+                À la mémoire de
               </span>
+            ) : isAvisRecherche ? (
+              <span className="text-sm font-black text-rose-700 uppercase tracking-wide">
+                Personne / Bien recherché
+              </span>
+            ) : (
+              <div className="flex items-baseline gap-1">
+                <span className="text-[21px] font-extrabold text-emerald-800 tracking-tight leading-none">
+                  {priceText}
+                </span>
+                {unitText && (
+                  <span className="text-sm font-semibold text-slate-500 lowercase">
+                    {unitText}
+                  </span>
+                )}
+              </div>
             )}
 
-            {(() => {
-              const badge = getAdTransactionBadge(ad);
-              return (
-                <span
-                  className={`text-[11px] font-black tracking-wide uppercase px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-xs ${badge.cardBadgeClass}`}
-                >
-                  {badge.label}
-                </span>
-              );
-            })()}
-
-            {ad.propertyType && (
-              <span className="text-[10px] font-bold bg-slate-900/85 text-slate-100 px-2 py-0.5 rounded-md shadow-xs">
-                {ad.propertyType}
-              </span>
-            )}
-            {ad.vehicleData?.category && (
-              <span className="text-[10px] font-bold bg-blue-900/85 text-blue-100 px-2 py-0.5 rounded-md shadow-xs">
-                {ad.vehicleData.category}
-              </span>
-            )}
-            {ad.domesticJobType && (
-              <span className="text-[10px] font-bold bg-purple-900/85 text-purple-100 px-2 py-0.5 rounded-md shadow-xs">
-                {ad.domesticJobType}
-              </span>
-            )}
-            {ad.tutoringData?.subject && (
-              <span className="text-[10px] font-bold bg-indigo-900/90 text-indigo-100 px-2 py-0.5 rounded-md shadow-xs">
-                {ad.tutoringData.subject}
-              </span>
-            )}
-            {ad.necrologieData?.ministry && (
-              <span className="text-[10px] font-bold bg-slate-900/90 text-amber-300 px-2 py-0.5 rounded-md shadow-xs">
-                {ad.necrologieData.ministry}
-              </span>
-            )}
-            {ad.avisRechercheData?.category && (
-              <span className="text-[10px] font-bold bg-red-950/90 text-red-100 px-2 py-0.5 rounded-md shadow-xs">
-                {ad.avisRechercheData.category}
-              </span>
-            )}
-            {ad.autresEmploisData?.profession && (
-              <span className="text-[10px] font-bold bg-teal-950/90 text-teal-100 px-2 py-0.5 rounded-md shadow-xs">
-                {ad.autresEmploisData.profession}
-              </span>
-            )}
-            {(ad.cvUrl || ad.cvFileName || ad.jobDocUrl || ad.autresEmploisData?.jobDocUrl) && (() => {
-              const isSeeker = ad.autresEmploisData?.subCategory === "Demandeur d'emploi" || ad.transactionType === 'CHERCHE_EMPLOI';
-              const ext = (ad.jobDocFileType || ad.autresEmploisData?.jobDocFileType || ad.cvFileType || 'doc').toLowerCase();
-              return (
-                <span className="text-[10px] font-bold bg-indigo-700/90 text-white px-2 py-0.5 rounded-md shadow-xs flex items-center gap-1">
-                  📄 {isSeeker ? `CV .${ext}` : `Fiche poste .${ext}`}
-                </span>
-              );
-            })()}
+            {/* Badges in body (Sponsorisée / VIP) */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {isVip && (
+                <Pill variant="vip" icon={<Crown className="w-3 h-3 text-amber-950" />}>
+                  VIP
+                </Pill>
+              )}
+              {isBoosted && (
+                <Pill variant="warning">
+                  Sponsorisée
+                </Pill>
+              )}
+            </div>
           </div>
 
-          {/* Right badges: Expiration Countdown and Favorite button */}
-          <div className="flex flex-col items-end gap-1.5 pointer-events-auto">
-            <div
-              className={`text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1 shadow-sm backdrop-blur-xs ${
-                isExpired
-                  ? 'bg-red-600 text-white'
-                  : 'bg-slate-950/80 text-white border border-white/20'
-              }`}
-            >
-              <Clock className="w-3 h-3 text-amber-300" />
+          {/* Title: 15/700, 2 lines */}
+          <h2 className="text-[15px] font-bold text-slate-900 line-clamp-2 leading-snug group-hover:text-emerald-700 transition-colors">
+            {ad.title}
+          </h2>
+
+          {/* Location line with map-pin icon */}
+          <div className="flex items-center gap-1.5 text-xs text-slate-500 pt-0.5">
+            <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="truncate">{locationText}</span>
+          </div>
+
+          {/* Category specific chips (moved into the body) */}
+          {(ad.propertyType || ad.vehicleData?.category || ad.domesticJobType || ad.tutoringData?.subject) && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {ad.propertyType && (
+                <span className="text-xs bg-slate-100 text-slate-700 font-semibold px-2 py-0.5 rounded-md">
+                  {ad.propertyType}
+                </span>
+              )}
+              {ad.vehicleData?.category && (
+                <span className="text-xs bg-slate-100 text-slate-700 font-semibold px-2 py-0.5 rounded-md">
+                  {ad.vehicleData.category}
+                </span>
+              )}
+              {ad.domesticJobType && (
+                <span className="text-xs bg-slate-100 text-slate-700 font-semibold px-2 py-0.5 rounded-md">
+                  {ad.domesticJobType}
+                </span>
+              )}
+              {ad.tutoringData?.subject && (
+                <span className="text-xs bg-slate-100 text-slate-700 font-semibold px-2 py-0.5 rounded-md">
+                  {ad.tutoringData.subject}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Meta row: Vérifié pill left, remaining time right */}
+          <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 text-xs">
+            <div>
+              {isVerified ? (
+                <Pill variant="verified" icon={<ShieldCheck className="w-3 h-3 text-emerald-700" />}>
+                  Vérifié
+                </Pill>
+              ) : (
+                <span className="text-xs text-slate-400">Annonceur particulier</span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1 text-slate-500 font-medium">
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
               <span>{remainingTimeLabel}</span>
             </div>
-
-            {onToggleFavorite && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleFavorite(ad.id);
-                }}
-                className={`p-2 rounded-full backdrop-blur-md transition-all duration-200 shadow-md cursor-pointer ${
-                  isFavorite
-                    ? 'bg-rose-500 text-white hover:bg-rose-600 scale-105 ring-2 ring-white/60'
-                    : 'bg-slate-950/60 hover:bg-slate-950/85 text-white hover:text-rose-400 border border-white/20'
-                }`}
-                title={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
-                aria-label={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
-                id={`favorite-btn-${ad.id}`}
-              >
-                <Heart className={`w-3.5 h-3.5 transition-transform duration-200 ${isFavorite ? 'fill-current scale-110' : ''}`} />
-              </button>
-            )}
           </div>
         </div>
 
-        {/* Media indicators (Photo count / Video badge) */}
-        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 pointer-events-none z-20">
-          {hasMultipleImages && (
-            <span className="bg-black/75 text-white text-[10px] font-bold px-2 py-0.5 rounded-md backdrop-blur-xs shadow-xs">
-              📷 {activeImageIndex + 1}/{images.length}
-            </span>
-          )}
-          {ad.videoUrl && (
-            <span className="bg-emerald-600/90 text-white text-[10px] font-semibold px-2 py-0.5 rounded-md backdrop-blur-xs">
-              ▶ Vidéo
-            </span>
-          )}
-        </div>
-
-        {/* Views counter */}
-        <div className="absolute bottom-2.5 right-2.5 bg-black/60 text-white/90 text-[10px] font-medium px-2 py-0.5 rounded-md flex items-center gap-1 backdrop-blur-xs z-20">
-          <Eye className="w-3 h-3" />
-          <span>{ad.viewsCount || 0} vue{(ad.viewsCount || 0) > 1 ? 's' : ''}</span>
-        </div>
-      </div>
-
-      {/* Card Body */}
-      <div className="p-4 flex-1 flex flex-col justify-between">
-        <div>
-          {/* Spatial breadcrumb + Annonceur Vérifié in card content */}
-          <div className="flex items-center justify-between gap-1 mb-2 flex-wrap">
-            {ad.location && (
-              <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-800 bg-emerald-50 px-2 py-1 rounded-md w-fit">
-                <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
-                <span className="truncate">
-                  {ad.location.province} • {ad.location.city} • <strong className="text-slate-900">{ad.location.neighborhood}</strong>
-                </span>
-              </div>
-            )}
-            {isVerified && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowVerifiedModal(true);
-                }}
-                className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-800 bg-emerald-100/90 hover:bg-emerald-200 border border-emerald-300 px-2 py-0.5 rounded-md shrink-0 transition-colors cursor-pointer group/badge"
-                title="En savoir plus sur la vérification KYC de l'annonceur"
-              >
-                <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0 group-hover/badge:scale-110 transition-transform" />
-                <span>Annonceur Vérifié</span>
-              </button>
-            )}
-          </div>
-
-          {/* Vehicle specific: Marque & Modèle */}
-          {ad.vehicleData?.brand && (
-            <div className="text-[11px] font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded-md mb-2 w-fit">
-              🚗 {ad.vehicleData.brand} {ad.vehicleData.model ? `• ${ad.vehicleData.model}` : ''}
-            </div>
-          )}
-
-          {/* Title */}
-          <h4
-            className="font-bold text-slate-900 text-sm leading-snug line-clamp-2 hover:text-emerald-700 cursor-pointer transition-colors mb-1.5"
-            title={ad.title}
-          >
-            {ad.title}
-          </h4>
-
-          {/* Description : limitée à un maximum de 300 caractères avec espacement aéré garanti (Point 4) */}
-          {displayDescription && (
-            <p className="text-xs text-slate-600 line-clamp-4 leading-relaxed mb-3 whitespace-pre-line">
-              {displayDescription}
-            </p>
-          )}
-
-          {/* Point 3: Informations Nécrologie visibles sur l'annonce en ligne */}
-          {isNecrologie && (
-            <div className="bg-slate-900 text-white rounded-xl p-3 border border-slate-700 space-y-1.5 text-xs mb-3 shadow-xs">
-              {(ad.necrologieData?.deceasedName || ad.necroDeceasedName) && (
-                <div className="font-black text-amber-300 text-sm flex items-center gap-1.5">
-                  <span>🕊️</span>
-                  <span className="line-clamp-1">{ad.necrologieData?.deceasedName || ad.necroDeceasedName}</span>
-                </div>
-              )}
-              {(ad.necrologieData?.ministry || ad.necroMinistry) && (
-                <div className="text-[11px] text-slate-300 font-semibold flex items-center gap-1">
-                  <span>🏛️</span>
-                  <span>Corps / Ministère : <strong>{ad.necrologieData?.ministry || ad.necroMinistry}</strong></span>
-                </div>
-              )}
-              {(ad.necrologieData?.ceremonyLocation || ad.necroCeremonyLocation) && (
-                <div className="text-[11px] text-slate-300 flex items-start gap-1">
-                  <span className="shrink-0">📍</span>
-                  <span className="line-clamp-1"><strong>Lieu / Veillée :</strong> {ad.necrologieData?.ceremonyLocation || ad.necroCeremonyLocation}</span>
-                </div>
-              )}
-              {(ad.necrologieData?.ceremonyDate || ad.necroCeremonyDate) && (
-                <div className="text-[11px] text-slate-300 flex items-center gap-1">
-                  <span>📅</span>
-                  <span><strong>Date :</strong> {ad.necrologieData?.ceremonyDate || ad.necroCeremonyDate}</span>
-                </div>
-              )}
-              {(ad.necrologieData?.funeralProgram || ad.necroFuneralProgram) && (
-                <div className="text-[11px] text-slate-400 pt-1 border-t border-slate-800 line-clamp-2 leading-relaxed">
-                  <strong className="text-slate-200">Programme sommaire :</strong> {ad.necrologieData?.funeralProgram || ad.necroFuneralProgram}
-                </div>
-              )}
-            </div>
-          )}
-
-          {isEvenement && ad.eventData && (
-            <div className="bg-fuchsia-50 text-slate-900 rounded-xl p-3 border border-fuchsia-200 space-y-1 text-[11px] mb-3 shadow-xs">
-              <div className="font-black text-fuchsia-900 text-xs flex items-center gap-1.5">
-                <span>🎉</span>
-                <span className="line-clamp-1">{ad.eventData.eventType}</span>
-              </div>
-              <div className="text-slate-700 flex items-start gap-1">
-                <span className="shrink-0">📅</span>
-                <span className="capitalize-first">
-                  {formatEventDate(ad.eventData.eventDate)}
-                  {ad.eventData.eventTime ? ` à ${ad.eventData.eventTime}` : ''}
-                </span>
-              </div>
-              {ad.eventData.venue && (
-                <div className="text-slate-700 flex items-start gap-1">
-                  <span className="shrink-0">📍</span>
-                  <span className="line-clamp-1">{ad.eventData.venue}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Point 3: Informations Avis de recherche visibles sur l'annonce en ligne */}
-          {isAvisRecherche && (
-            <div className="bg-red-50 text-slate-900 rounded-xl p-3 border border-red-200 space-y-1.5 text-xs mb-3 shadow-xs">
-              {(ad.avisRechercheData?.targetName || ad.title) && (
-                <div className="font-black text-red-900 text-sm flex items-center gap-1.5">
-                  <span>🚨</span>
-                  <span className="line-clamp-1">{ad.avisRechercheData?.targetName || ad.title}</span>
-                </div>
-              )}
-              {ad.avisRechercheData?.category && (
-                <div className="text-[11px] font-bold text-red-800">
-                  📌 Type : {ad.avisRechercheData.category}
-                </div>
-              )}
-              {(ad.avisRechercheData?.lastSeenLocation || ad.avisRechercheData?.lastSeenDate) && (
-                <div className="text-[11px] text-slate-700 flex items-start gap-1">
-                  <span className="shrink-0">📍</span>
-                  <span className="line-clamp-1">
-                    <strong>Vu à :</strong> {ad.avisRechercheData?.lastSeenLocation || 'Non précisé'}
-                    {ad.avisRechercheData?.lastSeenDate ? ` (${ad.avisRechercheData.lastSeenDate})` : ''}
-                  </span>
-                </div>
-              )}
-              {ad.avisRechercheData?.rewardAmount ? (
-                <div className="text-emerald-800 font-extrabold text-[11px] bg-emerald-100/90 p-1.5 rounded-lg border border-emerald-300 flex items-center gap-1">
-                  <span>💰 Récompense promise :</span>
-                  <span>{ad.avisRechercheData.rewardAmount.toLocaleString('fr-FR')} FCFA</span>
-                </div>
-              ) : null}
-            </div>
-          )}
-        </div>
-
-        <div>
-          {/* Price Tag or Rubrique Header (NO price for Avis de recherche & Nécrologie - Point 3) */}
-          <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between gap-2 mb-3">
-            {isNecrologie ? (
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                  🕊️ Recueillement
-                </span>
-                <span className="text-xs font-black text-slate-900">
-                  Diffusion Nationale
-                </span>
-              </div>
-            ) : isAvisRecherche ? (
-              <div>
-                <span className="text-[10px] uppercase font-bold text-red-600 block">
-                  🚨 Signalement
-                </span>
-                <span className="text-xs font-black text-slate-900">
-                  {ad.avisRechercheData?.category || 'Avis Actif'}
-                </span>
-              </div>
-            ) : (
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                  {getPriceOrSalaryLabel(ad)}
-                </span>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-base sm:text-lg font-black tracking-tight text-emerald-700">
-                    {formatAdPrice(ad)}
-                  </span>
-                  {ad.priceUnit && ad.priceUnit !== 'total' && (
-                    <span className="text-xs font-semibold text-slate-500">
-                      {formatPriceUnit(ad.priceUnit, isJobAd(ad))}
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Owner action buttons */}
-            {isOwner && (
-              <div className="flex items-center gap-1.5">
-                {onEditAd && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isExpired) {
-                        if (onOpenExtendModal) onOpenExtendModal(ad);
-                        return;
-                      }
-                      onEditAd(ad);
-                    }}
-                    className={`text-[11px] font-bold px-2 py-1 rounded-lg flex items-center gap-1 transition-colors ${
-                      isExpired
-                        ? 'text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed'
-                        : 'text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
-                    }`}
-                    title={isExpired ? "Prolongez d'abord l'annonce pour la modifier" : "Modifier cette annonce"}
-                    id={`edit-button-${ad.id}`}
-                  >
-                    <Edit3 className="w-3 h-3 text-emerald-700" />
-                    <span>Modifier</span>
-                  </button>
-                )}
-
-                {onOpenExtendModal && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenExtendModal(ad);
-                    }}
-                    className="text-[11px] font-bold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
-                    title="Prolonger la durée de votre annonce"
-                    id={`extend-button-${ad.id}`}
-                  >
-                    <RefreshCw className="w-3 h-3 text-amber-600" />
-                    <span>Prolonger</span>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Action buttons: WhatsApp & Tel (Contextualized for Necrologie and Avis de recherche) */}
-          <div className="grid grid-cols-2 gap-2">
-            <a
-              href={getWhatsAppUrl(ad.contactPhone, ad.title)}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className={`flex items-center justify-center gap-1.5 font-bold text-xs py-2 px-2.5 rounded-xl transition-colors shadow-xs ${
-                isNecrologie
-                  ? 'bg-slate-900 hover:bg-slate-800 text-amber-300'
-                  : isAvisRecherche
-                  ? 'bg-red-600 hover:bg-red-700 text-white'
-                  : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-              }`}
-              id={`whatsapp-button-${ad.id}`}
+        {/* 3. Actions: WhatsApp button (flex 1, 48px high) + 48px square call button */}
+        <div className="pt-2 flex items-center gap-2">
+          {ad.hasWhatsapp !== false ? (
+            <button
+              type="button"
+              onClick={handleWhatsAppClick}
+              className="flex-1 min-h-[48px] bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-xs cursor-pointer"
             >
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span>{isNecrologie ? 'Condoléances' : isAvisRecherche ? 'Signaler' : 'WhatsApp'}</span>
-            </a>
+              <MessageCircle className="w-5 h-5 text-white" />
+              <span>WhatsApp</span>
+            </button>
+          ) : (
+            <div className="flex-1 min-h-[48px] bg-slate-100 text-slate-600 font-bold text-sm px-4 py-2.5 rounded-xl flex items-center justify-center gap-2">
+              <span>Contact direct</span>
+            </div>
+          )}
 
-            {(() => {
-              const targetPhone = isNecrologie && (ad.necrologieData?.familyContact || ad.necroFamilyContact)
-                ? (ad.necrologieData?.familyContact || ad.necroFamilyContact)
-                : isAvisRecherche && (ad.avisRechercheData?.contactEmergency || ad.avisRechercheData?.emergencyContact || ad.avisEmergencyContact || ad.avisContactEmergency)
-                ? (ad.avisRechercheData?.contactEmergency || ad.avisRechercheData?.emergencyContact || ad.avisEmergencyContact || ad.avisContactEmergency)
-                : ad.contactPhone;
-
-              return (
-                <a
-                  href={`tel:${targetPhone}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs py-2 px-2.5 rounded-xl transition-colors"
-                  id={`call-button-${ad.id}`}
-                >
-                  <Phone className="w-3.5 h-3.5 text-slate-600" />
-                  <span>{isNecrologie ? 'Famille' : isAvisRecherche ? 'Urgence' : 'Appeler'}</span>
-                </a>
-              );
-            })()}
-          </div>
+          {ad.contactPhone && (
+            <button
+              type="button"
+              onClick={handleCallClick}
+              aria-label={`Appeler ${ad.contactName || "l'annonceur"}`}
+              title="Appeler par téléphone"
+              className="w-12 h-12 min-h-[48px] min-w-[48px] rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 border border-slate-200 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+            >
+              <Phone className="w-5 h-5 text-slate-700" />
+            </button>
+          )}
         </div>
       </div>
-
-      {showVerifiedModal && (
-        <VerifiedAdvertiserModal
-          isOpen={showVerifiedModal}
-          onClose={() => setShowVerifiedModal(false)}
-          advertiserName={ad.contactName}
-        />
-      )}
-    </div>
+    </article>
   );
 };
 
-export const AdCard = React.memo<AdCardProps>(AdCardComponent, (prev, next) => {
-  return (
+export const AdCard = React.memo(
+  AdCardComponent,
+  (prev, next) =>
     prev.ad.id === next.ad.id &&
-    prev.ad.updatedAt === next.ad.updatedAt &&
-    prev.ad.viewsCount === next.ad.viewsCount &&
     prev.ad.status === next.ad.status &&
-    prev.ad.isFeatured === next.ad.isFeatured &&
-    prev.isFavorite === next.isFavorite &&
-    prev.isOwner === next.isOwner
-  );
-});
+    prev.ad.viewsCount === next.ad.viewsCount &&
+    prev.ad.expiresAt === next.ad.expiresAt &&
+    prev.isFavorite === next.isFavorite
+);

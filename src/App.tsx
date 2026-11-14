@@ -22,6 +22,8 @@ import {
   ArrowUp,
   AlertCircle,
   PartyPopper,
+  List,
+  Heart,
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CategoryBar } from './components/CategoryBar';
@@ -35,6 +37,9 @@ import { NecrologieFilterBar } from './components/NecrologieFilterBar';
 import { EmploiFilterBar } from './components/EmploiFilterBar';
 import { CguModal } from './components/CguModal';
 import { AdCard } from './components/AdCard';
+import { AdCardCompact } from './components/AdCardCompact';
+import { BottomTabBar, BottomNavTab } from './components/navigation/BottomTabBar';
+import { CategoryChipsRow } from './components/navigation/CategoryChipsRow';
 import { ExtendAdModal } from './components/ExtendAdModal';
 import { ConfirmEditOnlineModal } from './components/ConfirmEditOnlineModal';
 import { LogoutConfirmModal } from './components/LogoutConfirmModal';
@@ -523,6 +528,8 @@ function PublicApp({
   // Filter States for Frontend
   const [activeCategory, setActiveCategory] = useState<MainCategory | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isFavoritesOnly, setIsFavoritesOnly] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'compact'>('grid');
 
   // Immobilier specific filters
   const [immoProvince, setImmoProvince] = useState('');
@@ -936,6 +943,11 @@ function PublicApp({
         }
       }
 
+      // Filtre Annonces Favorites
+      if (isFavoritesOnly && !activeFavoriteIds.includes(ad.id)) {
+        return false;
+      }
+
       // 1. Main Category filter
       if (activeCategory !== 'ALL' && ad.mainCategory !== activeCategory) {
         return false;
@@ -1147,9 +1159,17 @@ function PublicApp({
     emploiProvince,
     emploiCity,
     activeFavoriteIds,
+    isFavoritesOnly,
     personalizationTick,
     showTestAds,
   ]);
+
+  const currentBottomTab: BottomNavTab = useMemo(() => {
+    if (frontendTab === 'user-dashboard') return 'account';
+    if (isFavoritesOnly) return 'favorites';
+    if (searchQuery.trim().length > 0) return 'search';
+    return 'home';
+  }, [frontendTab, isFavoritesOnly, searchQuery]);
 
   // Handle open publish flow with mandatory auth check
   const handleTriggerPublish = () => {
@@ -1906,14 +1926,25 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
                 </button>
               </div>
 
-              {/* Main Categories Bar */}
-              <CategoryBar
-                activeCategory={activeCategory}
-                onSelectCategory={handleSelectCategory}
-                setActiveCategory={handleSelectCategory}
-                categoryCounts={categoryCounts}
-                onOpenMobileCategoryMenu={() => setIsMobileArcMenuOpen(true)}
-              />
+              {/* Main Categories Bar (Desktop) */}
+              <div className="hidden md:block">
+                <CategoryBar
+                  activeCategory={activeCategory}
+                  onSelectCategory={handleSelectCategory}
+                  setActiveCategory={handleSelectCategory}
+                  categoryCounts={categoryCounts}
+                  onOpenMobileCategoryMenu={() => setIsMobileArcMenuOpen(true)}
+                />
+              </div>
+
+              {/* Category Chips Row (Mobile, Section 5.1) */}
+              <div className="md:hidden -mx-4 pt-1">
+                <CategoryChipsRow
+                  selectedCategory={activeCategory}
+                  onSelectCategory={handleSelectCategory}
+                  categoryCounts={categoryCounts}
+                />
+              </div>
             </div>
 
             {/* Explanatory Banner when user enters the VIP Coin (Point 4) */}
@@ -2258,8 +2289,37 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
                   </select>
                 </div>
 
+                {/* View Mode Switcher: Grid vs Compact List (Brief 5.3) */}
+                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('grid')}
+                    aria-label="Affichage en grille"
+                    className={`p-1.5 rounded-lg transition-colors cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center ${
+                      viewMode === 'grid'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Grid className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('compact')}
+                    aria-label="Affichage compact en liste"
+                    className={`p-1.5 rounded-lg transition-colors cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center ${
+                      viewMode === 'compact'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <List className="w-4 h-4" />
+                  </button>
+                </div>
+
                 {(searchQuery ||
                   activeCategory !== 'ALL' ||
+                  isFavoritesOnly ||
                   immoProvince ||
                   immoCity ||
                   immoNeighborhood ||
@@ -2272,6 +2332,7 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
                       setSearchQuery('');
                       setActiveCategory('ALL');
                       setGlobalTransaction('ALL');
+                      setIsFavoritesOnly(false);
                     }}
                     className="text-xs text-emerald-700 hover:text-emerald-800 font-bold underline cursor-pointer px-2 py-1"
                   >
@@ -2281,25 +2342,59 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
               </div>
             </div>
 
-            {/* Listings Grid */}
+            {/* Banner Annonces Favorites si activé */}
+            {isFavoritesOnly && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-950 p-4 rounded-2xl flex items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-2.5">
+                  <Heart className="w-5 h-5 text-rose-600 fill-rose-600 shrink-0" />
+                  <div>
+                    <h3 className="text-sm font-bold">Vos Annonces Favorites</h3>
+                    <p className="text-xs text-rose-700">{filteredAds.length} annonce(s) enregistrée(s)</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsFavoritesOnly(false)}
+                  className="bg-white hover:bg-rose-100 text-rose-800 font-bold text-xs px-3 py-1.5 rounded-xl border border-rose-200 transition-colors cursor-pointer"
+                >
+                  Voir tout le catalogue
+                </button>
+              </div>
+            )}
+
+            {/* Listings Grid or Compact List */}
             {filteredAds.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
-                {filteredAds.map((ad) => {
-                  const isOwner = isAdOwner(ad, currentUser);
-                  return (
-                    <AdCard
+              viewMode === 'compact' ? (
+                <div className="space-y-3 max-w-3xl mx-auto">
+                  {filteredAds.map((ad) => (
+                    <AdCardCompact
                       key={ad.id}
                       ad={ad}
-                      isOwner={isOwner}
                       isFavorite={activeFavoriteIds.includes(ad.id)}
                       onToggleFavorite={handleToggleFavorite}
                       onSelectAd={(selected) => handleSelectAdDetail(selected)}
-                      onOpenExtendModal={isOwner ? () => handleTriggerExtend(ad) : undefined}
-                      onEditAd={isOwner ? () => handleTriggerEdit(ad) : undefined}
                     />
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+                  {filteredAds.map((ad) => {
+                    const isOwner = isAdOwner(ad, currentUser);
+                    return (
+                      <AdCard
+                        key={ad.id}
+                        ad={ad}
+                        isOwner={isOwner}
+                        isFavorite={activeFavoriteIds.includes(ad.id)}
+                        onToggleFavorite={handleToggleFavorite}
+                        onSelectAd={(selected) => handleSelectAdDetail(selected)}
+                        onOpenExtendModal={isOwner ? () => handleTriggerExtend(ad) : undefined}
+                        onEditAd={isOwner ? () => handleTriggerEdit(ad) : undefined}
+                      />
+                    );
+                  })}
+                </div>
+              )
             ) : (
               <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 shadow-xs max-w-md mx-auto space-y-4">
                 <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
@@ -2550,47 +2645,28 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
         </button>
       )}
 
-      {/* 6. Native Mobile Bottom Navigation Bar (Optimized for quick thumb reach) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 px-4 py-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-2xl flex items-center justify-around">
-        {/* Tab 1: Catalogue */}
-        <button
-          onClick={() => {
-            if (frontendTab !== 'catalog') {
-              setFrontendTab('catalog');
+      {/* 6. Native Mobile Bottom Navigation Bar (5 tabs, 56px center button, safe area aware) */}
+      <BottomTabBar
+        activeTab={currentBottomTab}
+        onTabChange={(tab) => {
+          if (tab === 'home') {
+            setIsFavoritesOnly(false);
+            setFrontendTab('catalog');
+            scrollToTopInstant();
+          } else if (tab === 'search') {
+            setIsFavoritesOnly(false);
+            setFrontendTab('catalog');
+            const searchInput = document.querySelector('input[type="search"]') as HTMLInputElement | null;
+            if (searchInput) {
+              searchInput.focus();
+              searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
-          }}
-          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
-            frontendTab === 'catalog'
-              ? 'text-emerald-700 font-black'
-              : 'text-slate-500 font-semibold hover:text-slate-800'
-          }`}
-          id="mobile-nav-catalog"
-        >
-          <div className={`p-1.5 rounded-xl transition-colors ${frontendTab === 'catalog' ? 'bg-emerald-100/80 text-emerald-700' : 'text-slate-500'}`}>
-            <Grid className="w-5 h-5" />
-          </div>
-          <span className="text-[10px]">Catalogue</span>
-        </button>
-
-        {/* Tab 2: Publier (Central Elevated Action Button) */}
-        <button
-          onClick={handleTriggerPublish}
-          className="flex flex-col items-center -mt-5 group cursor-pointer"
-          id="mobile-nav-publish"
-        >
-          <div className="w-13 h-13 rounded-full bg-gradient-to-tr from-emerald-600 via-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-700/30 group-hover:scale-105 active:scale-95 transition-all border-4 border-white">
-            <PlusCircle className="w-6 h-6 stroke-[2.5]" />
-          </div>
-          <span className="text-[10px] font-black text-emerald-800 mt-0.5">Publier</span>
-        </button>
-
-        {/* Tab 3: Mon Espace */}
-        <button
-          onClick={() => {
+          } else if (tab === 'favorites') {
+            setIsFavoritesOnly(true);
+            setFrontendTab('catalog');
+            scrollToTopInstant();
+          } else if (tab === 'account') {
             if (currentUser) {
-              if (frontendTab === 'catalog') {
-                catalogScrollPosRef.current = window.scrollY;
-              }
               setFrontendTab('user-dashboard');
               scrollToTopInstant();
             } else {
@@ -2602,25 +2678,12 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
               setAuthTriggerPurpose('DASHBOARD');
               setIsPhoneAuthOpen(true);
             }
-          }}
-          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
-            frontendTab === 'user-dashboard'
-              ? 'text-emerald-700 font-black'
-              : 'text-slate-500 font-semibold hover:text-slate-800'
-          }`}
-          id="mobile-nav-user"
-        >
-          <div className={`p-1.5 rounded-xl transition-colors relative ${frontendTab === 'user-dashboard' ? 'bg-emerald-100/80 text-emerald-700' : 'text-slate-500'}`}>
-            <User className="w-5 h-5" />
-            {currentUser && (
-              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white animate-pulse" />
-            )}
-          </div>
-          <span className="text-[10px] truncate max-w-[75px]">
-            {currentUser?.name ? currentUser.name.split(' ')[0] : 'Mon Espace'}
-          </span>
-        </button>
-      </nav>
+          }
+        }}
+        onPublishClick={handleTriggerPublish}
+        favoritesCount={activeFavoriteIds.length}
+        isLoggedIn={Boolean(currentUser)}
+      />
     </div>
   );
 }

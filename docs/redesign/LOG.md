@@ -58,7 +58,7 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 
 ## [Phase 2] — Design Foundation & Primitives UI Accessibles
 - **Date** : 14 novembre 2026
-- **Commit** : En cours de validation P2 (UI)
+- **Commit** : `2ea9b5d`
 - **Ce qui est livré** :
   - Jetons de design dans `@theme` (`src/index.css`) via Tailwind v4 : couleurs de marque (`--color-brand-primary: #047857`, hover `#059669`, surface `#ecfdf5`), accents (`--color-accent-primary: #f59e0b`, hover `#fbbf24`), canevas `#f8fafc`, surface carte `#ffffff`, police `Inter` avec pile système robuste, et rayons d'arrondis calibrés.
   - Ensemble complet de composants primitifs réutilisables dans `src/components/ui/` :
@@ -82,6 +82,43 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
   - ✅ Aucun texte interactif en dessous de 12 px (10 px proscrit).
   - ✅ Cibles tactiles strictement `>= 44x44 px`.
   - ✅ Aucun em dash dans le code ou les libellés.
+
+---
+
+## [Phase 3] — Shell Mobile & Refonte Complète du Flux d'Annonces
+- **Date** : 14 novembre 2026
+- **Commit** : En cours de validation P3 (UI)
+- **Ce qui est livré** :
+  - Nouvelle carte de flux grand public (`src/components/AdCard.tsx`) conforme à la spécification 5.2 :
+    - Format d'image optimisé 16:10 avec `ResponsiveImage` (placeholder solide `#DCE3EA` sans décalage de mise en page).
+    - Cibles tactiles certifiées : bouton favori 44x44 px en incrustation haute, bouton WhatsApp de 48px de hauteur, bouton d'appel direct de 48x48 px.
+    - Suppression intégrale du bloc de description de 300 caractères (réservé désormais à la fiche détail).
+    - Migration des puces de sous-catégories (type de bien, marque véhicule, métier) dans le corps de carte.
+    - Prise en charge des variantes catégorielles (ruban d'obsèques Nécrologie avec diffusion nationale, bandeau Avis de recherche avec badge récompense, badge VIP, bordure et pilule Sponsorisée).
+    - Mémorisation `React.memo` avec comparateur ciblé (`id`, `status`, `viewsCount`, `expiresAt`, `isFavorite`).
+  - Nouvelle carte compacte en ligne (`src/components/AdCardCompact.tsx`) pour les résultats de recherche et la liste des favoris :
+    - Vignette carrée de 104x104 px à gauche avec `ResponsiveImage`.
+    - Colonne droite avec prix en 17px/800, titre sur 2 lignes, localisation avec épingle, badge Vérifié et bouton d'action WhatsApp 44px.
+    - Bouton bascule Grille / Liste (`Grid` vs `List`) intégré dans le catalogue.
+  - Barre de navigation mobile inférieure fixe (`src/components/navigation/BottomTabBar.tsx`) :
+    - 5 onglets tactiles conformes à la zone d'atteinte du pouce : Accueil, Recherche, bouton central circulaire surélevé de 56px pour Publier, Favoris (avec badge dynamique de compteur), et Compte.
+    - Respect des zones de sécurité mobile (`env(safe-area-inset-bottom)`).
+  - Rangée de puces de catégories défilante (`src/components/navigation/CategoryChipsRow.tsx`) :
+    - Ordre officiel : Tout, Immobilier, Véhicules, Emploi, Événements, Bric-à-brac, Cours & Soutien, Autres Métiers, Nécrologie, Avis de Recherche.
+    - Défilement horizontal fluide avec point d'accroche (`snap-x`), scrollbar masquée et état actif teinté de couleur primaire.
+  - Barre supérieure mobile (`src/components/navigation/TopBar.tsx`) et ligne de recherche avec debounce 250ms (`src/components/navigation/SearchRow.tsx`).
+  - Suite de tests unitaires et d'accessibilité dédiée `tests/feed_and_shell.test.ts` (8 nouveaux tests).
+- **Résultats des tests & validations locales** :
+  - `npm run lint` (`tsc --noEmit`) : 🟢 0 erreur.
+  - `npm test` : 🟢 23 fichiers testés, 132/132 tests unitaires passés (+8 tests).
+  - `npm run build` : 🟢 0 erreur (`dist-frontend` et `dist-admin`).
+  - Poids du chunk initial `index.js` maintenu à **75.74 KB gzip** (très inférieur au budget de 150 KB).
+- **Vérification des contraintes dures (Section 2 du brief)** :
+  - ✅ Commits UI strictement séparés du code backend (`functions/` et règles inchangées).
+  - ✅ Aucun texte interactif en dessous de 12 px (10 px proscrit).
+  - ✅ Cibles tactiles strictement `>= 44x44 px`.
+  - ✅ Navigation et grille desktop (>= 1024px) parfaitement préservées.
+  - ✅ Aucun em dash dans les textes ou commentaires.
 - **Prochaine étape** :
-  - **Phase 3 (Shell & Feed)** : Barre supérieure (wordmark + notifications), ligne de recherche (debounce 250ms + bouton filtres), chips de catégories avec défilement snap horizontal, barre d'onglets inférieure fixe (Accueil, Recherche, Publier 56px centré, Favoris, Compte), nouvelle carte `AdCard` et variante `AdCardCompact`.
+  - **Phase 4 (Detail Page & Routing)** : Fiche détaillée d'annonce optimisée mobile avec liens profonds (`#ad-<id>`), galerie d'images par swipe CSS scroll-snap sans gestionnaire JS bloquant, barre d'actions flottante sécurisée en bas d'écran (WhatsApp + Appeler) et restauration de la position de défilement du flux.
 
