@@ -570,8 +570,8 @@ export const AdCard: React.FC<AdCardProps> = ({
             {(() => {
               const targetPhone = isNecrologie && (ad.necrologieData?.familyContact || ad.necroFamilyContact)
                 ? (ad.necrologieData?.familyContact || ad.necroFamilyContact)
-                : isAvisRecherche && (ad.avisRechercheData?.emergencyContact || ad.avisEmergencyContact)
-                ? (ad.avisRechercheData?.emergencyContact || ad.avisEmergencyContact)
+                : isAvisRecherche && (ad.avisRechercheData?.contactEmergency || ad.avisRechercheData?.emergencyContact || ad.avisEmergencyContact || ad.avisContactEmergency)
+                ? (ad.avisRechercheData?.contactEmergency || ad.avisRechercheData?.emergencyContact || ad.avisEmergencyContact || ad.avisContactEmergency)
                 : ad.contactPhone;
 
               return (

@@ -107,6 +107,7 @@ export interface AvisRechercheData {
   hasReward?: boolean;
   rewardAmount?: number;
   contactEmergency?: string;
+  emergencyContact?: string;
 }
 
 // Point 2: Autres Emplois
@@ -276,6 +277,9 @@ export interface Ad {
   necroCeremonyLocation?: string;
   necroFamilyContact?: string;
   necroFuneralProgram?: string;
+
+  avisContactEmergency?: string;
+  avisEmergencyContact?: string;
 
   tutoringKind?: TutoringAdKind;
   tutoringSubject?: TutoringSubject | string;

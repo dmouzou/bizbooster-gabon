@@ -143,6 +143,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   );
   const [alertModalConfig, setAlertModalConfig] = useState<AlertModalConfig | null>(null);
 
+  const showAlert = (message: string, type: 'success' | 'error' | 'info' = 'info', title?: string) => {
+    setAlertModalConfig({
+      isOpen: true,
+      type: type || 'info',
+      title: title || (type === 'error' ? 'Erreur' : 'Information'),
+      message,
+    });
+  };
+
   const handleToggleTestAds = async () => {
     if (!isSuper) {
       setAlertModalConfig({

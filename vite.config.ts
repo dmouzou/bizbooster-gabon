@@ -2,10 +2,26 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig } from 'vite';
+import { visualizer } from 'rollup-plugin-visualizer';
 
 export default defineConfig(() => {
+  const isAnalyze = process.env.ANALYZE === 'true';
+
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      ...(isAnalyze
+        ? [
+            visualizer({
+              filename: 'dist-frontend/stats.html',
+              open: false,
+              gzipSize: true,
+              brotliSize: true,
+            }),
+          ]
+        : []),
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

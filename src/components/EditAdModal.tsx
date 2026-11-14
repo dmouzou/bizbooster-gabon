@@ -25,6 +25,7 @@ import {
   FileText,
   Download,
   PartyPopper,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   Ad,
