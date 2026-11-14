@@ -616,13 +616,13 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
       {/* Conteneur unique invisible pour reCAPTCHA monté à la racine du modal */}
       <div id="recaptcha-wrapper">
         <div id="recaptcha-container" />
       </div>
 
-      <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative my-auto">
+      <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative max-h-[92dvh] sm:max-h-none sm:my-auto pb-[env(safe-area-inset-bottom)] sm:pb-0 animate-in slide-in-from-bottom-6 sm:zoom-in-95">
         {/* En-tête */}
         <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white p-6 relative">
           <button

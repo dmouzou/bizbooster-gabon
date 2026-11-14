@@ -18,14 +18,14 @@ export const VerifiedAdvertiserModal: React.FC<VerifiedAdvertiserModalProps> = (
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[150] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-[150] bg-slate-950/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-150"
       onClick={(e) => {
         e.stopPropagation();
         onClose();
       }}
     >
       <div
-        className="bg-white rounded-3xl max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 overflow-hidden my-auto animate-in zoom-in-95"
+        className="bg-white rounded-t-3xl sm:rounded-3xl max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 overflow-hidden my-0 sm:my-auto animate-in zoom-in-95 pb-[env(safe-area-inset-bottom)] sm:pb-0"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header with emerald gradient */}

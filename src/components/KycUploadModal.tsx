@@ -121,8 +121,8 @@ const KycUploadModalContent: React.FC<KycUploadModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
+    <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+      <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden max-h-[92dvh] sm:max-h-none sm:my-auto pb-[env(safe-area-inset-bottom)] sm:pb-0 animate-in slide-in-from-bottom-6 sm:zoom-in-95">
         {/* Header */}
         <div className="bg-gradient-to-r from-emerald-950 to-slate-900 text-white p-5 flex items-center justify-between border-b border-emerald-900">
           <div className="flex items-center gap-2.5">

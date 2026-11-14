@@ -104,9 +104,9 @@ const ShareAdModalContent: React.FC<{ ad: Ad; onClose: () => void }> = ({ ad, on
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-60 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-60 bg-slate-950/70 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-150">
       <div
-        className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative my-auto animate-in zoom-in-95"
+        className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative max-h-[92dvh] sm:max-h-none sm:my-auto pb-[env(safe-area-inset-bottom)] sm:pb-0 animate-in slide-in-from-bottom-6 sm:zoom-in-95"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

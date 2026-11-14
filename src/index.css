@@ -52,7 +52,7 @@ html, body {
   }
 }
 
-/* Responsive mobile-safe modal wrapper to prevent modals from fusing with the phone status bar/notch */
+/* Responsive mobile bottom sheet / desktop dialog modal wrapper */
 .app-modal-overlay {
   position: fixed;
   inset: 0;
@@ -62,16 +62,17 @@ html, body {
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  padding-left: 0.75rem;
-  padding-right: 0.75rem;
-  padding-top: max(3.25rem, calc(env(safe-area-inset-top, 0px) + 2.25rem));
-  padding-bottom: max(2rem, calc(env(safe-area-inset-bottom, 0px) + 1.25rem));
+  padding-left: 0;
+  padding-right: 0;
+  padding-top: max(2rem, env(safe-area-inset-top, 0px));
+  padding-bottom: 0;
 }
 
 @media (min-width: 640px) {
   .app-modal-overlay {
+    align-items: center;
     padding-top: 2rem;
     padding-bottom: 2rem;
     padding-left: 1.5rem;
@@ -81,14 +82,22 @@ html, body {
 
 .app-modal-dialog {
   width: 100%;
-  max-height: calc(100dvh - 6.5rem);
+  max-height: calc(92dvh);
   margin-top: auto;
-  margin-bottom: auto;
+  margin-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-top-left-radius: 1.5rem;
+  border-top-right-radius: 1.5rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
 }
 
 @media (min-width: 640px) {
   .app-modal-dialog {
     max-height: 90vh;
+    margin-bottom: auto;
+    border-radius: 1.5rem;
+    padding-bottom: 0;
   }
 }
 

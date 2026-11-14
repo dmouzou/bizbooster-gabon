@@ -116,8 +116,8 @@ export const SubscriptionUpgradeModal: React.FC<SubscriptionUpgradeModalProps> =
   const info = TIER_DETAILS[tier];
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
-      <div className="relative bg-slate-900 border border-slate-700/80 rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl text-white my-8">
+    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+      <div className="relative bg-slate-900 border border-slate-700/80 rounded-t-3xl sm:rounded-3xl sm:max-w-lg w-full max-h-[92dvh] sm:max-h-none sm:my-8 overflow-hidden shadow-2xl text-white pb-[env(safe-area-inset-bottom)] sm:pb-0 animate-in slide-in-from-bottom-6 sm:zoom-in-95">
         {/* Top Hero Header with Tier Gradient */}
         <div className={`p-6 sm:p-8 bg-gradient-to-br ${info.heroGradient} relative overflow-hidden`}>
           <button

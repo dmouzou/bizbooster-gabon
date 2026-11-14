@@ -190,7 +190,7 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 
 ## [Phase 6] : Assistant de Publication Mobile par Étapes (Publish Stepper)
 - **Date** : 14 novembre 2026
-- **Commit** : à pousser
+- **Commit** : `aa1fb10`
 - **Ce qui est livré** :
   - Refonte complète de `PublishAdModal` en assistant modulaire à 6 étapes (+ confirmation) :
     - Étape 1 : Catégorie & Localisation spatiale au Gabon (8 catégories principales, nature de transaction Vente vs Location pour Immobilier et Véhicules, 9 provinces, villes et quartiers détaillés avec quartier habituel du profil).
@@ -226,7 +226,37 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
   - ✅ Pas d'em dash dans le code, les commentaires ou les textes.
   - ✅ Cibles tactiles `>= 44x44 px`.
   - ✅ Marché Gabon, FCFA.
+
+---
+
+## [Phase 7] : Compte Utilisateur & Feuilles Mobiles (Account & Sheets)
+- **Date** : 14 novembre 2026
+- **Commit** : à pousser
+- **Ce qui est livré** :
+  - Refonte mobile de `UserDashboard` (Espace Annonceur) :
+    - Transformation des onglets de navigation en contrôle segmenté responsive (`grid grid-cols-2 sm:flex sm:flex-nowrap`, fond `bg-slate-100`, coins arrondis `rounded-2xl`, cibles tactiles garanties `>= 44px`).
+    - Présentation des annonces sous forme de cartes compactes optimisées pour smartphone : vignette carrée (80x80 px sur mobile, 96x96 px sur écran large), titre, prix, date et localisation clairs sans encombrement.
+    - Badges de statut conformes aux spécifications de la Section 4 : `PENDING_PAYMENT` ("Paiement en attente"), `PENDING_REVIEW` ("En attente de modération"), `SUSPENDED` ("En pause (Forfait)"), `ACTIVE` ("En ligne"), `REJECTED` ("Rejetée"), `EXPIRED` ("Expirée"), sans emojis.
+    - Actions propriétaire complètes et ergonomiques avec zones de contact tactiles `>= 44x44 px` : Aperçu, Modifier (avec avertissement si en ligne), Réactiver (selon jours gelés), Forfait (accès aux abonnements), Booster (en tête de liste), Prolonger (jusqu'au plafond de 365 jours), Supprimer.
+    - Réduction du poids du composant `UserDashboard.js` de **123 KB raw** à **96.58 KB raw** (**21.75 KB gzip**).
+  - Transformation de l'ensemble des modales applicatives en feuilles inférieures coulissantes (Bottom Sheets) sur mobile :
+    - `src/index.css` : règles responsives `.app-modal-overlay` (`items-end sm:items-center`, `p-0 sm:p-4`) et `.app-modal-dialog` (`rounded-t-3xl sm:rounded-3xl`, `max-h-[92dvh]`, `pb-[env(safe-area-inset-bottom)]`).
+    - Modales mises à niveau : `ReportAdModal`, `ShareAdModal`, `UserPreferencesModal`, `PhoneAuthModal`, `KycUploadModal`, `SubscriptionUpgradeModal`, `ConfirmEditOnlineModal`, `DeleteConfirmModal`, `LogoutConfirmModal`, `VerifiedAdvertiserModal`, `ExtendAdModal`, `ReactivateAdModal`, `CguModal`.
+    - Aucune modification de logique métier ni de hooks d'authentification ou de vérification.
+  - Suite de tests unitaires dédiée `tests/account_and_sheets.test.ts` (6 nouveaux tests unitaires).
+- **Résultats des tests & validations locales** :
+  - `npm run lint` (`tsc --noEmit`) : 🟢 0 erreur.
+  - `npm test` : 🟢 27 fichiers testés, 165/165 tests unitaires passés (+6 tests).
+  - `npm run build` : 🟢 0 erreur (`dist-frontend` et `dist-admin`).
+  - Poids du chunk initial `index.js` maintenu à **77.47 KB gzip**.
+- **Vérification des contraintes dures (Section 2 du brief)** :
+  - ✅ Commits UI strictement séparés du code backend (`functions/` et règles inchangées).
+  - ✅ Cibles tactiles `>= 44x44 px`.
+  - ✅ Aucun texte interactif en dessous de 12 px (10 px proscrit).
+  - ✅ Aucun em dash dans le code, les commentaires ou les textes.
+  - ✅ Marché Gabon, FCFA.
 - **Prochaine étape** :
-  - **Phase 7 (Account & Sheets)** : Passer en revue `UserDashboard` pour mobile (contrôle segmenté des onglets, cartes compactes), et convertir les modales listées (`PhoneAuthModal`, `KycUploadModal`, `ExtendAdModal`, `ReactivateAdModal`, `SubscriptionUpgradeModal`, `UserPreferencesModal`, `CguModal`, `ReportAdModal`, `ShareAdModal`) en tiroirs `Sheet` coulissants sur mobile.
+  - **Phase 8 (Backend Tuning & Pagination)** : Optimisations serveur, réduction des lectures, fonction Storage Trigger de miniatures WebP, cold-start `minInstances: 1` sur les callables critiques (dans un commit backend dédié).
+
 
 

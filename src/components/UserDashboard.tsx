@@ -833,60 +833,60 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         </div>
       </div>
 
-      {/* Advertiser Space Tabs (Exclusively visible inside advertiser dashboard) */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto no-scrollbar flex-nowrap py-1">
+      {/* Advertiser Space Tabs (Responsive Segmented Control) */}
+      <div className="bg-slate-100 p-1.5 rounded-2xl border border-slate-200/80 grid grid-cols-2 sm:flex sm:flex-nowrap gap-1.5 overflow-x-auto no-scrollbar">
         <button
           onClick={() => setDashboardTab('ADS')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+          className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[44px] ${
             dashboardTab === 'ADS'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              ? 'bg-slate-950 text-white shadow-xs font-black'
+              : 'text-slate-700 hover:text-slate-950 hover:bg-white/60'
           }`}
         >
-          <Building2 className="w-4 h-4" />
-          <span>Mes Annonces ({myAds.length})</span>
+          <Building2 className="w-4 h-4 shrink-0" />
+          <span className="truncate">Mes Annonces ({myAds.length})</span>
         </button>
 
         <button
           onClick={() => setDashboardTab('FAVORITES')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+          className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[44px] ${
             dashboardTab === 'FAVORITES'
-              ? 'bg-rose-600 text-white shadow-sm'
-              : 'bg-white text-slate-700 hover:bg-rose-50 border border-slate-200'
+              ? 'bg-rose-600 text-white shadow-xs font-black'
+              : 'text-slate-700 hover:text-rose-700 hover:bg-white/60'
           }`}
           id="tab-user-favorites"
         >
-          <Heart className={`w-4 h-4 ${dashboardTab === 'FAVORITES' ? 'fill-current text-white' : 'text-rose-500'}`} />
-          <span>Mes Favoris ({favoriteAds.length})</span>
+          <Heart className={`w-4 h-4 shrink-0 ${dashboardTab === 'FAVORITES' ? 'fill-current text-white' : 'text-rose-500'}`} />
+          <span className="truncate">Favoris ({favoriteAds.length})</span>
         </button>
 
         <button
           onClick={() => setDashboardTab('SUBSCRIPTIONS')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+          className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[44px] ${
             dashboardTab === 'SUBSCRIPTIONS'
-              ? 'bg-amber-500 text-slate-950 shadow-sm'
-              : 'bg-white text-slate-700 hover:bg-amber-50 border border-slate-200'
+              ? 'bg-amber-500 text-slate-950 shadow-xs font-black'
+              : 'text-slate-700 hover:text-amber-800 hover:bg-white/60'
           }`}
         >
-          <Crown className="w-4 h-4 text-amber-500 fill-amber-500" />
-          <span>Abonnements Pro, Élite & Business</span>
+          <Crown className={`w-4 h-4 shrink-0 ${dashboardTab === 'SUBSCRIPTIONS' ? 'fill-slate-950' : 'text-amber-600'}`} />
+          <span className="truncate">Forfaits</span>
           {currentTier !== 'STANDARD' && (
-            <span className="bg-slate-950 text-white text-[9px] px-1.5 py-0.5 rounded-sm uppercase">
-              Actif: {currentTier}
+            <span className="bg-slate-950 text-white text-[9px] px-1.5 py-0.2 rounded-sm uppercase ml-1 shrink-0">
+              {currentTier}
             </span>
           )}
         </button>
 
         <button
           onClick={() => setDashboardTab('PROFILE')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+          className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[44px] ${
             dashboardTab === 'PROFILE'
-              ? 'bg-emerald-600 text-white shadow-sm'
-              : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+              ? 'bg-emerald-600 text-white shadow-xs font-black'
+              : 'text-slate-700 hover:text-emerald-800 hover:bg-white/60'
           }`}
         >
-          <User className="w-4 h-4 text-emerald-500" />
-          <span>Mes Informations & Sécurité</span>
+          <User className="w-4 h-4 shrink-0 text-emerald-600" />
+          <span className="truncate">Profil</span>
         </button>
       </div>
 
@@ -1225,68 +1225,83 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         </div>
                       )}
 
-                      {/* Header badges */}
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {(() => {
-                            const badge = getAdTransactionBadge(ad);
-                            return (
-                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${badge.badgeClass}`}>
-                                {badge.label}
-                              </span>
-                            );
-                          })()}
-                          {ad.mainCategory !== 'EVENEMENTS' && ad.mainCategory !== 'AVIS_DE_RECHERCHE' && (
-                            <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-sm">
-                              {ad.mainCategory}
-                            </span>
-                          )}
-                        </div>
-
-                        <span
-                          className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${
-                            ad.status === 'PENDING_PAYMENT'
-                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                              : ad.status === 'SUSPENDED'
-                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                              : isPending
-                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                              : isActive
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              : isRejected
-                              ? 'bg-red-100 text-red-800 border border-red-300'
-                              : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          {ad.status === 'PENDING_PAYMENT'
-                            ? '💳 Paiement en attente'
-                            : ad.status === 'SUSPENDED'
-                            ? '⏸️ En pause (Forfait)'
-                            : isPending
-                            ? 'En attente'
-                            : isActive
-                            ? 'En ligne'
-                            : isRejected
-                            ? 'Rejetée'
-                            : 'Expirée'}
-                        </span>
-                      </div>
-
-                      <h3
-                        onClick={() => onSelectAdDetail(ad)}
-                        className="font-black text-slate-900 text-base hover:text-emerald-700 cursor-pointer line-clamp-1 mb-1"
-                      >
-                        {ad.title}
-                      </h3>
-
-                      <div className="text-emerald-700 font-black text-sm mb-3">
-                        <span className="text-[10px] text-slate-400 block font-normal">
-                          {getPriceOrSalaryLabel(ad)} :
-                        </span>
-                        {formatAdPrice(ad)}
-                        {ad.priceUnit && (
-                          <span className="text-xs text-slate-500 font-medium">/{formatPriceUnit(ad.priceUnit, isJobAd(ad))}</span>
+                      {/* Header row with thumbnail & details */}
+                      <div className="flex gap-3 mb-3">
+                        {ad.images?.[0] ? (
+                          <img
+                            src={ad.images[0]}
+                            alt=""
+                            className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] text-slate-400 font-bold shrink-0">
+                            Sans photo
+                          </div>
                         )}
+
+                        <div className="flex-1 min-w-0">
+                          {/* Header badges */}
+                          <div className="flex items-center justify-between gap-1.5 mb-1.5 flex-wrap">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {(() => {
+                                const badge = getAdTransactionBadge(ad);
+                                return (
+                                  <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm ${badge.badgeClass}`}>
+                                    {badge.label}
+                                  </span>
+                                );
+                              })()}
+                              {ad.mainCategory !== 'EVENEMENTS' && ad.mainCategory !== 'AVIS_DE_RECHERCHE' && (
+                                <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-sm">
+                                  {ad.mainCategory}
+                                </span>
+                              )}
+                            </div>
+
+                            <span
+                              className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${
+                                ad.status === 'PENDING_PAYMENT'
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                  : ad.status === 'SUSPENDED'
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                  : isPending
+                                  ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                                  : isActive
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                  : isRejected
+                                  ? 'bg-red-100 text-red-800 border border-red-300'
+                                  : 'bg-slate-100 text-slate-700 border border-slate-300'
+                              }`}
+                            >
+                              {ad.status === 'PENDING_PAYMENT'
+                                ? 'Paiement en attente'
+                                : ad.status === 'SUSPENDED'
+                                ? 'En pause (Forfait)'
+                                : isPending
+                                ? 'En attente de modération'
+                                : isActive
+                                ? 'En ligne'
+                                : isRejected
+                                ? 'Rejetée'
+                                : 'Expirée'}
+                            </span>
+                          </div>
+
+                          <h3
+                            onClick={() => onSelectAdDetail(ad)}
+                            className="font-black text-slate-900 text-sm sm:text-base hover:text-emerald-700 cursor-pointer line-clamp-1 mb-1"
+                          >
+                            {ad.title}
+                          </h3>
+
+                          <div className="text-emerald-700 font-black text-sm">
+                            {formatAdPrice(ad)}
+                            {ad.priceUnit && (
+                              <span className="text-xs text-slate-500 font-medium">/{formatPriceUnit(ad.priceUnit, isJobAd(ad))}</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
 
                       {/* Motif de rejet si annonce rejetée (Point 11) */}
@@ -1303,14 +1318,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                       )}
 
                       {/* Details */}
-                      <div className="space-y-1 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 mb-4">
+                      <div className="space-y-1 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 mb-3">
                         {ad.location && (
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 truncate">
                             <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span>{ad.location.city}, quartier {ad.location.neighborhood} ({ad.location.province})</span>
+                            <span className="truncate">{ad.location.city}, quartier {ad.location.neighborhood} ({ad.location.province})</span>
                           </div>
                         )}
-                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-200/60">
+                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-200/60 flex-wrap gap-2">
                           <span className="font-bold text-blue-700 flex items-center gap-1">
                             <Eye className="w-3 h-3 text-blue-600" />
                             {ad.viewsCount || 0} vue{(ad.viewsCount || 0) > 1 ? 's' : ''}
@@ -1333,10 +1348,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
                     {/* Card Actions */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <button
                           onClick={() => onSelectAdDetail(ad)}
-                          className="text-xs font-bold text-slate-700 hover:text-slate-900 flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                          className="min-h-[44px] px-3 py-2 text-xs font-bold text-slate-700 hover:text-slate-900 flex items-center gap-1.5 rounded-xl hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>Aperçu</span>
@@ -1351,7 +1366,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                             }
                             onEditAd(ad);
                           }}
-                          className={`px-2.5 py-1.5 font-bold text-xs rounded-xl transition-all flex items-center gap-1 border cursor-pointer ${
+                          className={`min-h-[44px] px-3 py-2 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 border cursor-pointer ${
                             isRejected
                               ? 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-300'
                               : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
@@ -1363,23 +1378,23 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         </button>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {ad.status === 'SUSPENDED' && (!ad.suspensionReason || ad.suspensionReason === 'FORFAIT_EXPIRE_QUOTA') && (
                           <>
                             <button
                               onClick={() => setAdToReactivate(ad)}
-                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                              className="min-h-[44px] px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
                               title="Payer la réactivation à l'unité selon vos jours restants gelés"
                             >
-                              <CreditCard className="w-3 h-3 text-amber-300" />
+                              <CreditCard className="w-3.5 h-3.5 text-amber-300" />
                               <span>Réactiver</span>
                             </button>
                             <button
                               onClick={() => setDashboardTab('SUBSCRIPTIONS')}
-                              className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                              className="min-h-[44px] px-3 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
                               title="Renouveler votre forfait pour réactiver toutes vos annonces"
                             >
-                              <Crown className="w-3 h-3 fill-slate-950" />
+                              <Crown className="w-3.5 h-3.5 fill-slate-950" />
                               <span>Forfait</span>
                             </button>
                           </>
@@ -1389,14 +1404,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         {isActive && (
                           <button
                             onClick={() => handleOpenBoostModal(ad)}
-                            className={`px-2.5 py-1.5 font-bold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer ${
+                            className={`min-h-[44px] px-3 py-2 font-bold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${
                               isBoosted
                                 ? 'bg-amber-100 text-amber-900 border border-amber-300'
                                 : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black'
                             }`}
                             title="Booster cette annonce en tête de liste"
                           >
-                            <Sparkles className="w-3 h-3 fill-slate-950" />
+                            <Sparkles className="w-3.5 h-3.5 fill-slate-950" />
                             <span>{isBoosted ? 'En tête' : 'Booster'}</span>
                           </button>
                         )}
@@ -1404,19 +1419,19 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                         {Boolean(ad.expiresAt && (ad.status === 'ACTIVE' || ad.status === 'EXPIRED')) && (
                           <button
                             onClick={() => onOpenExtendModal(ad)}
-                            className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                            className="min-h-[44px] px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
                           >
-                            <RefreshCw className="w-3 h-3 text-amber-400" />
+                            <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
                             <span>Prolonger</span>
                           </button>
                         )}
 
                         <button
                           onClick={() => onDeleteAd(ad.id)}
-                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                          className="min-h-[44px] min-w-[44px] p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer flex items-center justify-center border border-slate-200"
                           title="Supprimer mon annonce"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </div>

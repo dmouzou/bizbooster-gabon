@@ -99,9 +99,9 @@ export const ReportAdModal: React.FC<ReportAdModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-60 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in motion-reduce:animate-none fade-in duration-200">
+    <div className="fixed inset-0 z-60 bg-slate-950/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto animate-in motion-reduce:animate-none fade-in duration-200">
       <div
-        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden"
+        className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden max-h-[92dvh] sm:max-h-none sm:my-auto pb-[env(safe-area-inset-bottom)] sm:pb-0"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

@@ -89,12 +89,12 @@ export const UserPreferencesModal: React.FC<UserPreferencesModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/75 backdrop-blur-md animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/75 backdrop-blur-md animate-in fade-in duration-200"
       role="dialog"
       aria-modal="true"
       aria-labelledby="pref-modal-title"
     >
-      <div className="bg-white rounded-2xl sm:rounded-3xl max-w-lg w-full max-h-[90dvh] sm:max-h-[85vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl max-w-lg w-full max-h-[92dvh] sm:max-h-[85vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0 animate-in slide-in-from-bottom-6 sm:zoom-in-95 duration-200">
         {/* Header - Fixed at top */}
         <div className="shrink-0 p-4 sm:p-6 pb-3 border-b border-slate-100 flex items-start justify-between gap-3 bg-white">
           <div className="flex items-center gap-3">

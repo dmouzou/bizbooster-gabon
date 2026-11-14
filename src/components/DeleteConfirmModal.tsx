@@ -36,9 +36,9 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-60 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-60 bg-slate-950/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-150">
       <div
-        className="bg-white w-full max-w-sm rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative my-auto animate-in zoom-in-95 p-6 space-y-4"
+        className="bg-white w-full max-w-sm rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col relative my-0 sm:my-auto animate-in zoom-in-95 p-6 space-y-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:pb-6"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
