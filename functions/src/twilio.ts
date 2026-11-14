@@ -897,7 +897,9 @@ export const verifyTwilioOtp = onCall(
       if (!targetAuthUser) {
         try {
           targetAuthUser = await authAdmin.getUser(targetUid);
-        } catch {}
+        } catch (err) {
+          console.warn("Recherche compte Auth secondaire non bloquante:", err);
+        }
       }
 
       const roleInDoc = String(targetUserData.role || "").toUpperCase();

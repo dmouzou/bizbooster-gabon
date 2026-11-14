@@ -546,8 +546,6 @@ export async function getSingPayConfig(): Promise<SingPayConfigData> {
   return cachedSingPayConfig;
 }
 
-
-
 export function maskNumber(val?: string): string {
   if (!val) return "";
   const digits = val.replace(/\D/g, "");
