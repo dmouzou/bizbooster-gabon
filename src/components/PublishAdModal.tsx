@@ -687,17 +687,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     // Étape 1 -> Étape 2
     if (step === 1) {
       if (isUltimateCeilingReached) return;
-      if (mainCategory === 'EVENEMENTS') {
-        const scheduleCheck = validateEventSchedule(eventDate, eventTime);
-        if (!scheduleCheck.isValid) {
-          setMediaError(scheduleCheck.error || "La date et l'heure de l'événement doivent être valides et dans le futur.");
-          return;
-        }
-        if (!eventVenue.trim()) {
-          setMediaError("Veuillez indiquer le lieu de l'événement (salle, établissement ou adresse).");
-          return;
-        }
-      }
+      // Les champs date, heure et lieu d'un événement sont saisis à l'étape 3 : ils y sont validés.
       if (!neighborhood.trim()) {
         setMediaError('Veuillez préciser ou détailler le quartier de votre bien ou service.');
         return;
@@ -758,6 +748,18 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
       if (mainCategory === 'AVIS_DE_RECHERCHE' && !avisTargetName.trim()) {
         setMediaError('Veuillez préciser le nom ou la désignation de la cible recherchée.');
         return;
+      }
+
+      if (mainCategory === 'EVENEMENTS') {
+        const scheduleCheck = validateEventSchedule(eventDate, eventTime);
+        if (!scheduleCheck.isValid) {
+          setMediaError(scheduleCheck.error || "La date et l'heure de l'événement doivent être valides et dans le futur.");
+          return;
+        }
+        if (!eventVenue.trim()) {
+          setMediaError("Veuillez indiquer le lieu de l'événement (salle, établissement ou adresse).");
+          return;
+        }
       }
 
       const trimmedDesc = description.trim();
@@ -1085,6 +1087,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
               maxQuota={maxQuota}
               isUltimateCeilingReached={isUltimateCeilingReached}
               requiresSubscription={requiresSubscription}
+              error={mediaError}
             />
           )}
 
@@ -1221,6 +1224,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
               totalBillCalculated={totalBillCalculated}
               photoCount={photos.length}
               hasVideo={hasVideo}
+              error={mediaError}
             />
           )}
 

@@ -34,6 +34,7 @@ interface Step1CategoryProps {
   maxQuota: number;
   isUltimateCeilingReached: boolean;
   requiresSubscription: boolean;
+  error?: string | null;
 }
 
 export const Step1Category: React.FC<Step1CategoryProps> = ({
@@ -54,6 +55,7 @@ export const Step1Category: React.FC<Step1CategoryProps> = ({
   maxQuota,
   isUltimateCeilingReached,
   requiresSubscription,
+  error,
 }) => {
   const profileNeighborhood = currentUser?.location?.neighborhood?.trim() || '';
   const profileProvince = currentUser?.location?.province?.trim() || '';
@@ -407,6 +409,16 @@ export const Step1Category: React.FC<Step1CategoryProps> = ({
               ))}
             </datalist>
           </div>
+
+          {error && (
+            <div
+              role="alert"
+              className="mt-2 bg-red-50 border border-red-300 rounded-xl p-3 flex items-start gap-2.5 text-xs text-red-800"
+            >
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
 
           {currentCityData.neighborhoods.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5 items-center">

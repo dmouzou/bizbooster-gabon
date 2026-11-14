@@ -36,6 +36,7 @@ interface Step4PricingProps {
   totalBillCalculated: number;
   photoCount: number;
   hasVideo: boolean;
+  error?: string | null;
 }
 
 export const Step4Pricing: React.FC<Step4PricingProps> = ({
@@ -61,6 +62,7 @@ export const Step4Pricing: React.FC<Step4PricingProps> = ({
   totalBillCalculated,
   photoCount,
   hasVideo,
+  error,
 }) => {
   const isFreeCategory =
     mainCategory === 'NECROLOGIE' ||
@@ -157,6 +159,16 @@ export const Step4Pricing: React.FC<Step4PricingProps> = ({
               placeholder="Ex: 350000"
               className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-emerald-500 min-h-[44px]"
             />
+          </div>
+        )}
+
+        {error && (
+          <div
+            role="alert"
+            className="bg-red-50 border border-red-300 rounded-xl p-3 flex items-start gap-2.5 text-xs text-red-800"
+          >
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <span>{error}</span>
           </div>
         )}
       </div>
