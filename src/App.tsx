@@ -40,6 +40,8 @@ import { AdCard } from './components/AdCard';
 import { AdCardCompact } from './components/AdCardCompact';
 import { BottomTabBar, BottomNavTab } from './components/navigation/BottomTabBar';
 import { CategoryChipsRow } from './components/navigation/CategoryChipsRow';
+import { SearchRow } from './components/navigation/SearchRow';
+import { ActiveFilterChips } from './components/ActiveFilterChips';
 import { ExtendAdModal } from './components/ExtendAdModal';
 import { ConfirmEditOnlineModal } from './components/ConfirmEditOnlineModal';
 import { LogoutConfirmModal } from './components/LogoutConfirmModal';
@@ -50,6 +52,7 @@ import { ToastContainer } from './components/ui/Toast';
 // Lazy-loaded heavy modal components for bundle optimization (F3)
 const AdDetailModal = React.lazy(() => import('./components/AdDetailModal').then((m) => ({ default: m.AdDetailModal })));
 const AdDetailPage = React.lazy(() => import('./components/AdDetailPage').then((m) => ({ default: m.AdDetailPage })));
+const FilterSheet = React.lazy(() => import('./components/FilterSheet').then((m) => ({ default: m.FilterSheet })));
 const PublishAdModal = React.lazy(() => import('./components/PublishAdModal').then((m) => ({ default: m.PublishAdModal })));
 const EditAdModal = React.lazy(() => import('./components/EditAdModal').then((m) => ({ default: m.EditAdModal })));
 const UserDashboard = React.lazy(() => import('./components/UserDashboard').then((m) => ({ default: m.UserDashboard })));
@@ -578,7 +581,8 @@ function PublicApp({
   // Événements specific filters
   const [eventFilterType, setEventFilterType] = useState<string>('ALL');
 
-  // Modals state
+  // Modals and Sheets state
+  const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [isCguModalOpen, setIsCguModalOpen] = useState(false);
   const [isPhoneAuthOpen, setIsPhoneAuthOpen] = useState(false);
@@ -1195,6 +1199,240 @@ function PublicApp({
     personalizationTick,
     showTestAds,
   ]);
+
+  // Active Filter Chips computation for Search row and Filter Sheet (Section 5.5)
+  const activeFilterChips = useMemo(() => {
+    const chips: { id: string; label: string; onRemove: () => void }[] = [];
+
+    if (searchQuery.trim()) {
+      chips.push({
+        id: 'search',
+        label: `"${searchQuery.slice(0, 16)}${searchQuery.length > 16 ? '...' : ''}"`,
+        onRemove: () => setSearchQuery(''),
+      });
+    }
+
+    if (isVipCornerActive) {
+      chips.push({
+        id: 'vip',
+        label: 'Coin VIP',
+        onRemove: () => setIsVipCornerActive(false),
+      });
+    }
+
+    if (globalTransaction !== 'ALL' && activeCategory === 'ALL') {
+      chips.push({
+        id: 'global-trans',
+        label: globalTransaction === 'LOCATION' ? 'À Louer' : 'À Vendre',
+        onRemove: () => setGlobalTransaction('ALL'),
+      });
+    }
+
+    if (activeCategory === 'IMMOBILIER') {
+      if (immoTransaction !== 'ALL') {
+        chips.push({
+          id: 'immo-trans',
+          label: immoTransaction === 'LOCATION' ? 'À Louer' : 'À Vendre',
+          onRemove: () => setImmoTransaction('ALL'),
+        });
+      }
+      if (immoPropertyType !== 'ALL') {
+        chips.push({
+          id: 'immo-type',
+          label: immoPropertyType,
+          onRemove: () => setImmoPropertyType('ALL'),
+        });
+      }
+      if (immoProvince) {
+        chips.push({
+          id: 'immo-prov',
+          label: immoProvince,
+          onRemove: () => {
+            setImmoProvince('');
+            setImmoCity('');
+            setImmoNeighborhood('');
+          },
+        });
+      }
+      if (immoCity) {
+        chips.push({
+          id: 'immo-city',
+          label: immoCity,
+          onRemove: () => {
+            setImmoCity('');
+            setImmoNeighborhood('');
+          },
+        });
+      }
+      if (immoNeighborhood) {
+        chips.push({
+          id: 'immo-neigh',
+          label: immoNeighborhood,
+          onRemove: () => setImmoNeighborhood(''),
+        });
+      }
+    }
+
+    if (activeCategory === 'MATERIEL_ROULANT') {
+      if (vehicleSubcategory !== 'ALL') {
+        chips.push({
+          id: 'veh-sub',
+          label: vehicleSubcategory,
+          onRemove: () => setVehicleSubcategory('ALL'),
+        });
+      }
+      if (vehicleTransaction !== 'ALL') {
+        chips.push({
+          id: 'veh-trans',
+          label: vehicleTransaction === 'LOCATION' ? 'À Louer' : 'À Vendre',
+          onRemove: () => setVehicleTransaction('ALL'),
+        });
+      }
+      if (vehicleBrand) {
+        chips.push({
+          id: 'veh-brand',
+          label: vehicleBrand,
+          onRemove: () => {
+            setVehicleBrand('');
+            setVehicleModel('');
+          },
+        });
+      }
+      if (vehicleModel) {
+        chips.push({
+          id: 'veh-model',
+          label: vehicleModel,
+          onRemove: () => setVehicleModel(''),
+        });
+      }
+    }
+
+    if (activeCategory === 'EMPLOI') {
+      if (emploiJobKind !== 'ALL') {
+        chips.push({
+          id: 'emp-kind',
+          label: emploiJobKind === 'OFFRE_EMPLOI' ? 'Offres d\'emploi' : 'Demandeurs',
+          onRemove: () => setEmploiJobKind('ALL'),
+        });
+      }
+      if (emploiJobType !== 'ALL') {
+        chips.push({
+          id: 'emp-type',
+          label: emploiJobType,
+          onRemove: () => setEmploiJobType('ALL'),
+        });
+      }
+    }
+
+    if (activeCategory === 'COURS_A_DOMICILE') {
+      if (tutoringKind !== 'ALL') {
+        chips.push({
+          id: 'tut-kind',
+          label: tutoringKind === 'OFFRE' ? 'Propose cours' : 'Cherche cours',
+          onRemove: () => setTutoringKind('ALL'),
+        });
+      }
+      if (tutoringSubject !== 'ALL') {
+        chips.push({
+          id: 'tut-subj',
+          label: tutoringSubject,
+          onRemove: () => setTutoringSubject('ALL'),
+        });
+      }
+      if (tutoringLevel !== 'ALL') {
+        chips.push({
+          id: 'tut-lvl',
+          label: tutoringLevel,
+          onRemove: () => setTutoringLevel('ALL'),
+        });
+      }
+    }
+
+    if (activeCategory === 'NECROLOGIE' && necroMinistry !== 'ALL') {
+      chips.push({
+        id: 'necro-min',
+        label: necroMinistry,
+        onRemove: () => setNecroMinistry('ALL'),
+      });
+    }
+
+    if (activeCategory === 'AVIS_DE_RECHERCHE' && avisFilterCategory !== 'ALL') {
+      chips.push({
+        id: 'avis-cat',
+        label: avisFilterCategory,
+        onRemove: () => setAvisFilterCategory('ALL'),
+      });
+    }
+
+    if (activeCategory === 'AUTRES_EMPLOIS' && autresEmploisFilterSub !== 'ALL') {
+      chips.push({
+        id: 'autres-emp',
+        label: autresEmploisFilterSub,
+        onRemove: () => setAutresEmploisFilterSub('ALL'),
+      });
+    }
+
+    if (activeCategory === 'EVENEMENTS' && eventFilterType !== 'ALL') {
+      chips.push({
+        id: 'event-type',
+        label: eventFilterType,
+        onRemove: () => setEventFilterType('ALL'),
+      });
+    }
+
+    return chips;
+  }, [
+    searchQuery,
+    isVipCornerActive,
+    globalTransaction,
+    activeCategory,
+    immoTransaction,
+    immoPropertyType,
+    immoProvince,
+    immoCity,
+    immoNeighborhood,
+    vehicleSubcategory,
+    vehicleTransaction,
+    vehicleBrand,
+    vehicleModel,
+    emploiJobKind,
+    emploiJobType,
+    tutoringKind,
+    tutoringSubject,
+    tutoringLevel,
+    necroMinistry,
+    avisFilterCategory,
+    autresEmploisFilterSub,
+    eventFilterType,
+  ]);
+
+  const handleResetAllCategoryFilters = () => {
+    setSearchQuery('');
+    setIsVipCornerActive(false);
+    setGlobalTransaction('ALL');
+    setImmoTransaction('ALL');
+    setImmoPropertyType('ALL');
+    setImmoProvince('');
+    setImmoCity('');
+    setImmoNeighborhood('');
+    setVehicleSubcategory('ALL');
+    setVehicleBrand('');
+    setVehicleModel('');
+    setVehicleTransaction('ALL');
+    setEmploiJobKind('ALL');
+    setEmploiJobType('ALL');
+    setEmploiProvince('');
+    setEmploiCity('');
+    setTutoringKind('ALL');
+    setTutoringSubject('ALL');
+    setTutoringLevel('ALL');
+    setTutoringProvince('');
+    setTutoringCity('');
+    setNecroMinistry('ALL');
+    setAvisFilterCategory('ALL');
+    setAutresEmploisFilterSub('ALL');
+    setEventFilterType('ALL');
+  };
 
   const currentBottomTab: BottomNavTab = useMemo(() => {
     if (frontendTab === 'user-dashboard') return 'account';
@@ -1854,8 +2092,27 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
               <div className="absolute right-0 top-0 bottom-0 w-1/3 opacity-10 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none" />
             </div>
 
-            {/* Global Search & Transaction Mode Toggle */}
-            <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-xs border border-slate-200 space-y-4">
+            {/* Mobile Search Row, Active Filter Chips & Category Chips Row (Section 5.1 & 5.5) */}
+            <div className="md:hidden space-y-2 -mx-4 pb-1">
+              <SearchRow
+                value={searchQuery}
+                onChange={setSearchQuery}
+                onOpenFilterSheet={() => setIsFilterSheetOpen(true)}
+                hasActiveFilters={activeFilterChips.length > 0}
+              />
+              <ActiveFilterChips
+                chips={activeFilterChips}
+                onResetAll={handleResetAllCategoryFilters}
+              />
+              <CategoryChipsRow
+                selectedCategory={activeCategory}
+                onSelectCategory={handleSelectCategory}
+                categoryCounts={categoryCounts}
+              />
+            </div>
+
+            {/* Global Search & Transaction Mode Toggle (Desktop) */}
+            <div className="hidden md:block bg-white rounded-2xl p-4 sm:p-5 shadow-xs border border-slate-200 space-y-4">
               <div className="flex flex-col md:flex-row gap-3 items-center">
                 {/* Search Input */}
                 <div className="relative flex-1 w-full">
@@ -1960,24 +2217,13 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
               </div>
 
               {/* Main Categories Bar (Desktop) */}
-              <div className="hidden md:block">
-                <CategoryBar
-                  activeCategory={activeCategory}
-                  onSelectCategory={handleSelectCategory}
-                  setActiveCategory={handleSelectCategory}
-                  categoryCounts={categoryCounts}
-                  onOpenMobileCategoryMenu={() => setIsMobileArcMenuOpen(true)}
-                />
-              </div>
-
-              {/* Category Chips Row (Mobile, Section 5.1) */}
-              <div className="md:hidden -mx-4 pt-1">
-                <CategoryChipsRow
-                  selectedCategory={activeCategory}
-                  onSelectCategory={handleSelectCategory}
-                  categoryCounts={categoryCounts}
-                />
-              </div>
+              <CategoryBar
+                activeCategory={activeCategory}
+                onSelectCategory={handleSelectCategory}
+                setActiveCategory={handleSelectCategory}
+                categoryCounts={categoryCounts}
+                onOpenMobileCategoryMenu={() => setIsMobileArcMenuOpen(true)}
+              />
             </div>
 
             {/* Explanatory Banner when user enters the VIP Coin (Point 4) */}
@@ -2013,258 +2259,263 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
               </div>
             )}
 
-            {/* Specialized Filters: IMMOBILIER */}
-            {activeCategory === 'IMMOBILIER' && (
-              <ImmobilierFilterBar
-                selectedProvince={immoProvince}
-                onChangeProvince={setImmoProvince}
-                selectedCity={immoCity}
-                onChangeCity={setImmoCity}
-                selectedNeighborhood={immoNeighborhood}
-                onChangeNeighborhood={setImmoNeighborhood}
-                selectedTransaction={immoTransaction}
-                onChangeTransaction={setImmoTransaction}
-                selectedPropertyType={immoPropertyType}
-                onChangePropertyType={setImmoPropertyType}
-                onResetFilters={handleResetImmoFilters}
-              />
-            )}
+            {/* Specialized Desktop Filters (Replaced by FilterSheet on Mobile, Section 5.5) */}
+            {isDesktop && (
+              <>
+                {/* Specialized Filters: IMMOBILIER */}
+                {activeCategory === 'IMMOBILIER' && (
+                  <ImmobilierFilterBar
+                    selectedProvince={immoProvince}
+                    onChangeProvince={setImmoProvince}
+                    selectedCity={immoCity}
+                    onChangeCity={setImmoCity}
+                    selectedNeighborhood={immoNeighborhood}
+                    onChangeNeighborhood={setImmoNeighborhood}
+                    selectedTransaction={immoTransaction}
+                    onChangeTransaction={setImmoTransaction}
+                    selectedPropertyType={immoPropertyType}
+                    onChangePropertyType={setImmoPropertyType}
+                    onResetFilters={handleResetImmoFilters}
+                  />
+                )}
 
-            {/* Specialized Filters: MATERIEL ROULANT */}
-            {activeCategory === 'MATERIEL_ROULANT' && (
-              <VehiclesFilterBar
-                selectedSubcategory={vehicleSubcategory}
-                onChangeSubcategory={setVehicleSubcategory}
-                selectedBrand={vehicleBrand}
-                onChangeBrand={setVehicleBrand}
-                selectedModel={vehicleModel}
-                onChangeModel={setVehicleModel}
-                selectedTransaction={vehicleTransaction}
-                onChangeTransaction={setVehicleTransaction}
-                onResetFilters={handleResetVehiclesFilters}
-              />
-            )}
+                {/* Specialized Filters: MATERIEL ROULANT */}
+                {activeCategory === 'MATERIEL_ROULANT' && (
+                  <VehiclesFilterBar
+                    selectedSubcategory={vehicleSubcategory}
+                    onChangeSubcategory={setVehicleSubcategory}
+                    selectedBrand={vehicleBrand}
+                    onChangeBrand={setVehicleBrand}
+                    selectedModel={vehicleModel}
+                    onChangeModel={setVehicleModel}
+                    selectedTransaction={vehicleTransaction}
+                    onChangeTransaction={setVehicleTransaction}
+                    onResetFilters={handleResetVehiclesFilters}
+                  />
+                )}
 
-            {/* Specialized Filters: COURS A DOMICILE (Point 9) */}
-            {activeCategory === 'COURS_A_DOMICILE' && (
-              <TutoringFilterBar
-                selectedKind={tutoringKind}
-                onChangeKind={setTutoringKind}
-                selectedSubject={tutoringSubject}
-                onChangeSubject={setTutoringSubject}
-                selectedLevel={tutoringLevel}
-                onChangeLevel={setTutoringLevel}
-                selectedProvince={tutoringProvince}
-                onChangeProvince={setTutoringProvince}
-                selectedCity={tutoringCity}
-                onChangeCity={setTutoringCity}
-                onResetFilters={() => {
-                  setTutoringKind('ALL');
-                  setTutoringSubject('ALL');
-                  setTutoringLevel('ALL');
-                  setTutoringProvince('');
-                  setTutoringCity('');
-                }}
-              />
-            )}
+                {/* Specialized Filters: COURS A DOMICILE (Point 9) */}
+                {activeCategory === 'COURS_A_DOMICILE' && (
+                  <TutoringFilterBar
+                    selectedKind={tutoringKind}
+                    onChangeKind={setTutoringKind}
+                    selectedSubject={tutoringSubject}
+                    onChangeSubject={setTutoringSubject}
+                    selectedLevel={tutoringLevel}
+                    onChangeLevel={setTutoringLevel}
+                    selectedProvince={tutoringProvince}
+                    onChangeProvince={setTutoringProvince}
+                    selectedCity={tutoringCity}
+                    onChangeCity={setTutoringCity}
+                    onResetFilters={() => {
+                      setTutoringKind('ALL');
+                      setTutoringSubject('ALL');
+                      setTutoringLevel('ALL');
+                      setTutoringProvince('');
+                      setTutoringCity('');
+                    }}
+                  />
+                )}
 
-            {/* Specialized Filters: NECROLOGIE (Point 1: Diffusion nationale, sans filtre province) */}
-            {activeCategory === 'NECROLOGIE' && (
-              <NecrologieFilterBar
-                selectedMinistry={necroMinistry}
-                onChangeMinistry={setNecroMinistry}
-                onResetFilters={() => {
-                  setNecroMinistry('ALL');
-                }}
-              />
-            )}
+                {/* Specialized Filters: NECROLOGIE (Point 1: Diffusion nationale, sans filtre province) */}
+                {activeCategory === 'NECROLOGIE' && (
+                  <NecrologieFilterBar
+                    selectedMinistry={necroMinistry}
+                    onChangeMinistry={setNecroMinistry}
+                    onResetFilters={() => {
+                      setNecroMinistry('ALL');
+                    }}
+                  />
+                )}
 
-            {/* Specialized Filters: EMPLOI (Point 8: Distinction Offre vs Demande) */}
-            {activeCategory === 'EMPLOI' && (
-              <EmploiFilterBar
-                selectedJobKind={emploiJobKind}
-                onChangeJobKind={setEmploiJobKind}
-                selectedKind={emploiJobKind}
-                onChangeKind={setEmploiJobKind}
-                selectedJobType={emploiJobType}
-                onChangeJobType={setEmploiJobType}
-                selectedProvince={emploiProvince}
-                onChangeProvince={setEmploiProvince}
-                selectedCity={emploiCity}
-                onChangeCity={setEmploiCity}
-                onResetFilters={handleResetEmploiFilters}
-              />
-            )}
+                {/* Specialized Filters: EMPLOI (Point 8: Distinction Offre vs Demande) */}
+                {activeCategory === 'EMPLOI' && (
+                  <EmploiFilterBar
+                    selectedJobKind={emploiJobKind}
+                    onChangeJobKind={setEmploiJobKind}
+                    selectedKind={emploiJobKind}
+                    onChangeKind={setEmploiJobKind}
+                    selectedJobType={emploiJobType}
+                    onChangeJobType={setEmploiJobType}
+                    selectedProvince={emploiProvince}
+                    onChangeProvince={setEmploiProvince}
+                    selectedCity={emploiCity}
+                    onChangeCity={setEmploiCity}
+                    onResetFilters={handleResetEmploiFilters}
+                  />
+                )}
 
-            {/* Specialized Filters: AVIS DE RECHERCHE (Point 2) */}
-            {activeCategory === 'AVIS_DE_RECHERCHE' && (
-              <div className="bg-red-950/90 text-white rounded-2xl p-4 border border-red-800 shadow-md space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-red-800/80 pb-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className="p-1.5 bg-red-600 rounded-lg text-white">
-                      <Search className="w-4 h-4" />
-                    </span>
-                    <div>
-                      <h4 className="font-black text-sm text-white">
-                        Avis de Recherche & Signalements Publics
-                      </h4>
-                      <p className="text-[11px] text-red-200">
-                        Disparitions, objets ou documents officiels perdus, animaux et signalements urgents au Gabon
-                      </p>
+                {/* Specialized Filters: AVIS DE RECHERCHE (Point 2) */}
+                {activeCategory === 'AVIS_DE_RECHERCHE' && (
+                  <div className="bg-red-950/90 text-white rounded-2xl p-4 border border-red-800 shadow-md space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-red-800/80 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1.5 bg-red-600 rounded-lg text-white">
+                          <Search className="w-4 h-4" />
+                        </span>
+                        <div>
+                          <h4 className="font-black text-sm text-white">
+                            Avis de Recherche & Signalements Publics
+                          </h4>
+                          <p className="text-[11px] text-red-200">
+                            Disparitions, objets ou documents officiels perdus, animaux et signalements urgents au Gabon
+                          </p>
+                        </div>
+                      </div>
+                      {avisFilterCategory !== 'ALL' && (
+                        <button
+                          type="button"
+                          onClick={() => setAvisFilterCategory('ALL')}
+                          className="text-xs font-bold text-red-300 hover:text-white cursor-pointer"
+                        >
+                          Réinitialiser le filtre ✕
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setAvisFilterCategory('ALL')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          avisFilterCategory === 'ALL'
+                            ? 'bg-red-600 text-white shadow-xs'
+                            : 'bg-red-900/50 hover:bg-red-900 text-red-200 border border-red-800'
+                        }`}
+                      >
+                        Tous les avis
+                      </button>
+                      {AVIS_RECHERCHE_CATEGORIES.map((cat) => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => setAvisFilterCategory(cat)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            avisFilterCategory === cat
+                              ? 'bg-red-600 text-white shadow-xs'
+                              : 'bg-red-900/50 hover:bg-red-900 text-red-200 border border-red-800'
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  {avisFilterCategory !== 'ALL' && (
-                    <button
-                      type="button"
-                      onClick={() => setAvisFilterCategory('ALL')}
-                      className="text-xs font-bold text-red-300 hover:text-white cursor-pointer"
-                    >
-                      Réinitialiser le filtre ✕
-                    </button>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setAvisFilterCategory('ALL')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                      avisFilterCategory === 'ALL'
-                        ? 'bg-red-600 text-white shadow-xs'
-                        : 'bg-red-900/50 hover:bg-red-900 text-red-200 border border-red-800'
-                    }`}
-                  >
-                    Tous les avis
-                  </button>
-                  {AVIS_RECHERCHE_CATEGORIES.map((cat) => (
-                    <button
-                      key={cat}
-                      type="button"
-                      onClick={() => setAvisFilterCategory(cat)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        avisFilterCategory === cat
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'bg-red-900/50 hover:bg-red-900 text-red-200 border border-red-800'
-                      }`}
-                    >
-                      {cat}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+                )}
 
-            {/* Specialized Filters: AUTRES EMPLOIS (Point 2) */}
-            {activeCategory === 'AUTRES_EMPLOIS' && (
-              <div className="bg-teal-950/90 text-white rounded-2xl p-4 border border-teal-800 shadow-md space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-teal-800/80 pb-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className="p-1.5 bg-teal-600 rounded-lg text-white">
-                      <Briefcase className="w-4 h-4" />
-                    </span>
-                    <div>
-                      <h4 className="font-black text-sm text-white">
-                        Autres Emplois, Métiers & Recrutement
-                      </h4>
-                      <p className="text-[11px] text-teal-200">
-                        Consultez les profils de demandeurs d'emploi (avec CV téléchargeable) et les offres de recrutement
-                      </p>
+                {/* Specialized Filters: AUTRES EMPLOIS (Point 2) */}
+                {activeCategory === 'AUTRES_EMPLOIS' && (
+                  <div className="bg-teal-950/90 text-white rounded-2xl p-4 border border-teal-800 shadow-md space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-teal-800/80 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1.5 bg-teal-600 rounded-lg text-white">
+                          <Briefcase className="w-4 h-4" />
+                        </span>
+                        <div>
+                          <h4 className="font-black text-sm text-white">
+                            Autres Emplois, Métiers & Recrutement
+                          </h4>
+                          <p className="text-[11px] text-teal-200">
+                            Consultez les profils de demandeurs d'emploi (avec CV téléchargeable) et les offres de recrutement
+                          </p>
+                        </div>
+                      </div>
+                      {autresEmploisFilterSub !== 'ALL' && (
+                        <button
+                          type="button"
+                          onClick={() => setAutresEmploisFilterSub('ALL')}
+                          className="text-xs font-bold text-teal-300 hover:text-white cursor-pointer"
+                        >
+                          Réinitialiser le filtre ✕
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setAutresEmploisFilterSub('ALL')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          autresEmploisFilterSub === 'ALL'
+                            ? 'bg-teal-600 text-white shadow-xs'
+                            : 'bg-teal-900/50 hover:bg-teal-900 text-teal-200 border border-teal-800'
+                        }`}
+                      >
+                        Toutes les offres & profils
+                      </button>
+                      {AUTRES_EMPLOIS_SUBCATEGORIES.map((sub) => (
+                        <button
+                          key={sub}
+                          type="button"
+                          onClick={() => setAutresEmploisFilterSub(sub)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            autresEmploisFilterSub === sub
+                              ? 'bg-teal-600 text-white shadow-xs'
+                              : 'bg-teal-900/50 hover:bg-teal-900 text-teal-200 border border-teal-800'
+                          }`}
+                        >
+                          {sub === "Demandeur d'emploi" ? "📄 Demandeurs d'emploi (CVs)" : sub}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  {autresEmploisFilterSub !== 'ALL' && (
-                    <button
-                      type="button"
-                      onClick={() => setAutresEmploisFilterSub('ALL')}
-                      className="text-xs font-bold text-teal-300 hover:text-white cursor-pointer"
-                    >
-                      Réinitialiser le filtre ✕
-                    </button>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setAutresEmploisFilterSub('ALL')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                      autresEmploisFilterSub === 'ALL'
-                        ? 'bg-teal-600 text-white shadow-xs'
-                        : 'bg-teal-900/50 hover:bg-teal-900 text-teal-200 border border-teal-800'
-                    }`}
-                  >
-                    Toutes les offres & profils
-                  </button>
-                  {AUTRES_EMPLOIS_SUBCATEGORIES.map((sub) => (
-                    <button
-                      key={sub}
-                      type="button"
-                      onClick={() => setAutresEmploisFilterSub(sub)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        autresEmploisFilterSub === sub
-                          ? 'bg-teal-600 text-white shadow-xs'
-                          : 'bg-teal-900/50 hover:bg-teal-900 text-teal-200 border border-teal-800'
-                      }`}
-                    >
-                      {sub === "Demandeur d'emploi" ? "📄 Demandeurs d'emploi (CVs)" : sub}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+                )}
 
-            {/* Specialized Filters: ÉVÉNEMENTS */}
-            {activeCategory === 'EVENEMENTS' && (
-              <div className="bg-fuchsia-950/90 text-white rounded-2xl p-4 border border-fuchsia-800 shadow-md space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-fuchsia-800/80 pb-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className="p-1.5 bg-fuchsia-600 rounded-lg text-white shrink-0">
-                      <PartyPopper className="w-4 h-4" />
-                    </span>
-                    <div>
-                      <h4 className="font-black text-sm text-white">
-                        Événements au Gabon
-                      </h4>
-                      <p className="text-[11px] text-fuchsia-200">
-                        Mariages, soirées, anniversaires, galas, concerts et cérémonies à venir. Les événements passés sont retirés automatiquement.
-                      </p>
+                {/* Specialized Filters: ÉVÉNEMENTS */}
+                {activeCategory === 'EVENEMENTS' && (
+                  <div className="bg-fuchsia-950/90 text-white rounded-2xl p-4 border border-fuchsia-800 shadow-md space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-fuchsia-800/80 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1.5 bg-fuchsia-600 rounded-lg text-white shrink-0">
+                          <PartyPopper className="w-4 h-4" />
+                        </span>
+                        <div>
+                          <h4 className="font-black text-sm text-white">
+                            Événements au Gabon
+                          </h4>
+                          <p className="text-[11px] text-fuchsia-200">
+                            Mariages, soirées, anniversaires, galas, concerts et cérémonies à venir. Les événements passés sont retirés automatiquement.
+                          </p>
+                        </div>
+                      </div>
+                      {eventFilterType !== 'ALL' && (
+                        <button
+                          type="button"
+                          onClick={() => setEventFilterType('ALL')}
+                          className="text-xs font-bold text-fuchsia-300 hover:text-white cursor-pointer self-start sm:self-auto"
+                        >
+                          Réinitialiser le filtre ✕
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setEventFilterType('ALL')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          eventFilterType === 'ALL'
+                            ? 'bg-fuchsia-600 text-white shadow-xs'
+                            : 'bg-fuchsia-900/50 hover:bg-fuchsia-900 text-fuchsia-200 border border-fuchsia-800'
+                        }`}
+                      >
+                        Tous les événements
+                      </button>
+                      {EVENT_TYPES.map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setEventFilterType(type)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            eventFilterType === type
+                              ? 'bg-fuchsia-600 text-white shadow-xs'
+                              : 'bg-fuchsia-900/50 hover:bg-fuchsia-900 text-fuchsia-200 border border-fuchsia-800'
+                          }`}
+                        >
+                          {type}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  {eventFilterType !== 'ALL' && (
-                    <button
-                      type="button"
-                      onClick={() => setEventFilterType('ALL')}
-                      className="text-xs font-bold text-fuchsia-300 hover:text-white cursor-pointer self-start sm:self-auto"
-                    >
-                      Réinitialiser le filtre ✕
-                    </button>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setEventFilterType('ALL')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                      eventFilterType === 'ALL'
-                        ? 'bg-fuchsia-600 text-white shadow-xs'
-                        : 'bg-fuchsia-900/50 hover:bg-fuchsia-900 text-fuchsia-200 border border-fuchsia-800'
-                    }`}
-                  >
-                    Tous les événements
-                  </button>
-                  {EVENT_TYPES.map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setEventFilterType(type)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        eventFilterType === type
-                          ? 'bg-fuchsia-600 text-white shadow-xs'
-                          : 'bg-fuchsia-900/50 hover:bg-fuchsia-900 text-fuchsia-200 border border-fuchsia-800'
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
-              </div>
+                )}
+              </>
             )}
 
             {/* Ads Grid Section Header */}
@@ -2613,6 +2864,65 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
           onClose={() => setAdToEdit(null)}
           onSave={handleSaveEditedAd}
         />
+
+        {/* 7. Mobile Unified Filter Sheet (Section 5.5) */}
+        {isFilterSheetOpen && (
+          <FilterSheet
+            isOpen={isFilterSheetOpen}
+            onClose={() => setIsFilterSheetOpen(false)}
+            activeCategory={activeCategory}
+            resultsCount={filteredAds.length}
+            immoTransaction={immoTransaction}
+            onChangeImmoTransaction={setImmoTransaction}
+            immoPropertyType={immoPropertyType}
+            onChangeImmoPropertyType={setImmoPropertyType}
+            immoProvince={immoProvince}
+            onChangeImmoProvince={setImmoProvince}
+            immoCity={immoCity}
+            onChangeImmoCity={setImmoCity}
+            immoNeighborhood={immoNeighborhood}
+            onChangeImmoNeighborhood={setImmoNeighborhood}
+            vehicleSubcategory={vehicleSubcategory}
+            onChangeVehicleSubcategory={setVehicleSubcategory}
+            vehicleBrand={vehicleBrand}
+            onChangeVehicleBrand={setVehicleBrand}
+            vehicleModel={vehicleModel}
+            onChangeVehicleModel={setVehicleModel}
+            vehicleTransaction={vehicleTransaction}
+            onChangeVehicleTransaction={setVehicleTransaction}
+            emploiJobKind={emploiJobKind}
+            onChangeEmploiJobKind={setEmploiJobKind}
+            emploiJobType={emploiJobType}
+            onChangeEmploiJobType={setEmploiJobType}
+            emploiProvince={emploiProvince}
+            onChangeEmploiProvince={setEmploiProvince}
+            emploiCity={emploiCity}
+            onChangeEmploiCity={setEmploiCity}
+            tutoringKind={tutoringKind}
+            onChangeTutoringKind={setTutoringKind}
+            tutoringSubject={tutoringSubject}
+            onChangeTutoringSubject={setTutoringSubject}
+            tutoringLevel={tutoringLevel}
+            onChangeTutoringLevel={setTutoringLevel}
+            tutoringProvince={tutoringProvince}
+            onChangeTutoringProvince={setTutoringProvince}
+            tutoringCity={tutoringCity}
+            onChangeTutoringCity={setTutoringCity}
+            necroMinistry={necroMinistry}
+            onChangeNecroMinistry={setNecroMinistry}
+            avisFilterCategory={avisFilterCategory}
+            onChangeAvisFilterCategory={setAvisFilterCategory}
+            autresEmploisFilterSub={autresEmploisFilterSub}
+            onChangeAutresEmploisFilterSub={setAutresEmploisFilterSub}
+            eventFilterType={eventFilterType}
+            onChangeEventFilterType={setEventFilterType}
+            globalTransaction={globalTransaction}
+            onChangeGlobalTransaction={setGlobalTransaction}
+            isVipCornerActive={isVipCornerActive}
+            onToggleVipCorner={() => setIsVipCornerActive(!isVipCornerActive)}
+            onResetAllFilters={handleResetAllCategoryFilters}
+          />
+        )}
       </React.Suspense>
 
       {/* 5. Logout Confirmation Modal */}

@@ -124,7 +124,7 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 
 ## [Phase 4] : Fiche Détail Mobile & Routage par Liens Profonds
 - **Date** : 14 novembre 2026
-- **Commit** : En cours de validation P4 (UI)
+- **Commit** : `87699d8`
 - **Ce qui est livré** :
   - Composant mobile dédié pleine page `src/components/AdDetailPage.tsx` monté sur les écrans `< 1024px`, tandis que `AdDetailModal` est conservé pour les écrans bureau (`>= 1024px`) :
     - En-tête fixe avec bouton retour 44x44 px, titre et catégorie, bouton favori et bouton de partage rapide.
@@ -157,6 +157,32 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
   - ✅ Pas d'em dash dans le code, les commentaires ou les textes.
   - ✅ `AdDetailModal` préservé pour desktop (>= 1024px).
   - ✅ Marché Gabon, FCFA.
+## [Phase 5] : Tiroir de Filtrage Mobile Unifié & Puces Actives
+- **Date** : 14 novembre 2026
+- **Commit** : En cours de validation P5 (UI)
+- **Ce qui est livré** :
+  - Composant tiroir de filtrage mobile unifié `src/components/FilterSheet.tsx` basé sur le primitif accessible `Sheet` (Drawer coulissant avec swipe down et respect de la zone de sécurité) :
+    - Piloté dynamiquement selon la catégorie active (Immobilier, Matériel Roulant, Emploi, Cours à Domicile, Nécrologie, Avis de Recherche, Autres Métiers, Événements, Global).
+    - Sections repliables (Accordéons) avec chevrons d'état : Opération & Bien, Localisation en cascade au Gabon (9 provinces, villes et quartiers), Spécificités (marques, modèles, niveaux, ministères, types).
+    - Bascule accessible dédiée pour le Coin VIP Gabon.
+    - Pied de page collant sécurisé avec bouton secondaire "Réinitialiser" et bouton d'action principal dynamique "Voir N résultats".
+  - Ligne de puces de filtres actifs amovibles `src/components/ActiveFilterChips.tsx` positionnée immédiatement sous la barre de recherche :
+    - Affiche chaque critère filtré avec libellé clair et icône de suppression directe (`X`).
+    - Bouton global "Effacer tout" dès que 2 filtres ou plus sont actifs.
+  - Intégration ergonomique dans `src/App.tsx` :
+    - Sur mobile (`md:hidden`), remplacement des 5 barres de filtres encombrantes par le bouton de filtre 48px dans `SearchRow` (avec point indicateur orange dès qu'un filtre est actif) et la rangée `ActiveFilterChips`.
+    - Sur bureau (`isDesktop` / `hidden md:block`), préservation complète des barres de filtres détaillées pour les utilisateurs sur grand écran.
+  - Suite de tests unitaires et d'accessibilité dédiée `tests/filter_sheet.test.ts` (8 nouveaux tests unitaires).
+- **Résultats des tests & validations locales** :
+  - `npm run lint` (`tsc --noEmit`) : 🟢 0 erreur.
+  - `npm test` : 🟢 25 fichiers testés, 147/147 tests unitaires passés (+8 tests).
+  - `npm run build` : 🟢 0 erreur (`dist-frontend` et `dist-admin`).
+  - Chunk `FilterSheet` découpé et chargé à la demande (2.85 KB gzip), poids de `index.js` initial maintenu à **77.74 KB gzip** (très inférieur au budget de 150 KB).
+- **Vérification des contraintes dures (Section 2 du brief)** :
+  - ✅ Commits UI strictement séparés du code backend (`functions/` et règles inchangées).
+  - ✅ Cibles tactiles strictement `>= 44x44 px`.
+  - ✅ Pas d'em dash dans le code, les commentaires ou les textes.
+  - ✅ Marché Gabon, FCFA.
 - **Prochaine étape** :
-  - **Phase 5 (Filter Sheet)** : Tiroir de filtrage mobile unifié remplaçant les barres séparées, piloté par un schéma de configuration par catégorie avec accordéons repliables, bouton fixe "Réinitialiser" et "Voir N résultats", et puces de filtres actifs amovibles sous la barre de recherche.
+  - **Phase 6 (Publish Stepper Refactoring)** : Refonte de `PublishAdModal` en assistant par étapes plein écran sur mobile avec schéma de données par catégorie (`src/features/publish/schemas/*`), sauvegarde automatique de brouillon dans `localStorage` avec invite de restauration, quotas stricts de photos (3 Standard/Pro, 4 Élite, 5 Business), et conservation intégrale du flux de validation de paiement PIN USSD push.
 
