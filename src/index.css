@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+@theme {
+  --color-brand-primary: #047857;
+  --color-brand-hover: #059669;
+  --color-brand-surface: #ecfdf5;
+  --color-accent-primary: #f59e0b;
+  --color-accent-hover: #fbbf24;
+  --color-canvas: #f8fafc;
+  --color-card: #ffffff;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --radius-chip: 8px;
+  --radius-card: 12px;
+  --radius-sheet: 16px;
+}
+
 /* Custom visible scrollbar for horizontal categories & filters */
 .custom-scrollbar {
   scrollbar-width: thin;

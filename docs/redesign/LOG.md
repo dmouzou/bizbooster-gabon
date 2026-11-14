@@ -28,7 +28,7 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 
 ## [Phase 1] — Quick Wins & Fondations d'Optimisation Frontend
 - **Date** : 14 novembre 2026
-- **Commit** : En cours de validation P1 (UI)
+- **Commit** : `5b1ca3c`
 - **Ce qui est livré** :
   - Nettoyage des dépendances : déplacement de `docx` et `pdfkit` en `devDependencies`, élimination d'`express` et `dotenv` non utilisés côté client.
   - Découpage fin des bundles vendor dans `vite.config.ts` : `vendor-react` (80.21 KB gzip), `vendor-charts` (113.53 KB gzip, isolé et non chargé sur l'accueil public), `vendor-firebase` (181.24 KB gzip).
@@ -53,6 +53,35 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
   - ✅ Commits UI strictement séparés du code backend (`functions/` et règles inchangées).
   - ✅ Aucune régression sur le flux de paiement, aucun em dash dans les textes ou commentaires.
   - ✅ Cibles tactiles et tailles de polices préservées.
+
+---
+
+## [Phase 2] — Design Foundation & Primitives UI Accessibles
+- **Date** : 14 novembre 2026
+- **Commit** : En cours de validation P2 (UI)
+- **Ce qui est livré** :
+  - Jetons de design dans `@theme` (`src/index.css`) via Tailwind v4 : couleurs de marque (`--color-brand-primary: #047857`, hover `#059669`, surface `#ecfdf5`), accents (`--color-accent-primary: #f59e0b`, hover `#fbbf24`), canevas `#f8fafc`, surface carte `#ffffff`, police `Inter` avec pile système robuste, et rayons d'arrondis calibrés.
+  - Ensemble complet de composants primitifs réutilisables dans `src/components/ui/` :
+    - `Button` : variantes (`primary`, `secondary`, `outline`, `ghost`, `danger`), cibles tactiles strictement `>= 44x44 px`, spinner de chargement accessible.
+    - `IconButton` : zone cliquable minimale garantie `>= 44x44 px`, attribut `aria-label` obligatoire, états de survol et focus-visible.
+    - `Chip` : sélecteur de catégorie/filtre accessible (`role="radio"` / `aria-checked`), badge de compteur d'annonces, navigation clavier et défilement horizontal fluide.
+    - `Pill` : badges de statut haute visibilité (`vip`, `verified`, `success`, `warning`, `error`, `urgent`, `neutral`), typographie micro 11px uppercase bold, contraste renforcé.
+    - `Skeleton` : squelettes animés de préchargement avec support des ratios d'aspect pour éliminer le CLS.
+    - `EmptyState` : affichage élégant d'état vide avec icône, titre, description et bouton d'action contextuel.
+    - `Price` : formatage monétaire certifié FCFA (marché Gabon) basé sur `Intl.NumberFormat('fr-FR')` avec suffixe optionnel (`/mois`, `/jour`).
+    - `Sheet` : tiroir coulissant mobile (pattern Drawer) avec détection du glissement vers le bas (swipe down), verrouillage du scroll, gestion de la touche Échap, respect de `safe-area-inset-bottom`, et conversion responsive automatique en dialogue centré au-dessus de 640px.
+  - Page de revue visuelle et d'accessibilité sans dépendance externe (`src/components/ui/UiKitchenSink.tsx`) accessible via la route de dev `/__ui`.
+  - Suite de tests unitaires et d'accessibilité dédiée `tests/ui_primitives.test.ts` (10 nouveaux tests unitaires).
+- **Résultats des tests & validations locales** :
+  - `npm run lint` (`tsc --noEmit`) : 🟢 0 erreur.
+  - `npm test` : 🟢 22 fichiers testés, 124/124 tests unitaires passés (+10 tests).
+  - `npm run build` : 🟢 0 erreur (`dist-frontend` et `dist-admin`).
+  - Découpage code-split : `UiKitchenSink` isolé dans son propre micro-chunk de 5.41 KB gzip, zéro surcoût sur le chargement initial de l'accueil.
+- **Vérification des contraintes dures (Section 2 du brief)** :
+  - ✅ Commits UI strictement séparés du code backend.
+  - ✅ Aucun texte interactif en dessous de 12 px (10 px proscrit).
+  - ✅ Cibles tactiles strictement `>= 44x44 px`.
+  - ✅ Aucun em dash dans le code ou les libellés.
 - **Prochaine étape** :
-  - **Phase 2 (Design Foundation)** : Jetons de design dans `@theme` (`src/index.css`), création des composants primitifs dans `src/components/ui/` (`Button`, `IconButton`, `Chip`, `Pill`, `Sheet`, `Skeleton`, `EmptyState`, `Price`), remplacement des emojis par des icônes `lucide-react`, page de test visuel `/__ui`.
+  - **Phase 3 (Shell & Feed)** : Barre supérieure (wordmark + notifications), ligne de recherche (debounce 250ms + bouton filtres), chips de catégories avec défilement snap horizontal, barre d'onglets inférieure fixe (Accueil, Recherche, Publier 56px centré, Favoris, Compte), nouvelle carte `AdCard` et variante `AdCardCompact`.
 

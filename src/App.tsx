@@ -48,6 +48,7 @@ const PublishAdModal = React.lazy(() => import('./components/PublishAdModal').th
 const EditAdModal = React.lazy(() => import('./components/EditAdModal').then((m) => ({ default: m.EditAdModal })));
 const UserDashboard = React.lazy(() => import('./components/UserDashboard').then((m) => ({ default: m.UserDashboard })));
 const PhoneAuthModal = React.lazy(() => import('./components/PhoneAuthModal').then((m) => ({ default: m.PhoneAuthModal })));
+const UiKitchenSink = React.lazy(() => import('./components/ui/UiKitchenSink').then((m) => ({ default: m.UiKitchenSink })));
 import { isAdOwner } from './utils/formatters';
 import { sortAdsPersonalized, sortAdsRecent, sortAdsByPriceAsc, recordCategoryInterest } from './utils/personalization';
 import { isAdVipCornerEligible, VIP_CORNER_INFO } from './utils/vipCorner';
@@ -2665,6 +2666,21 @@ export default function App() {
     // Point 5: Use replaceState so /admin is NOT kept in browser history behind frontend
     window.history.replaceState(null, '', '/');
   };
+
+  if (typeof window !== 'undefined' && window.location.pathname === '/__ui') {
+    return (
+      <React.Suspense
+        fallback={
+          <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-slate-500 text-sm">
+            Chargement de la bibliothèque de composants...
+          </div>
+        }
+      >
+        <UiKitchenSink />
+        <ToastContainer />
+      </React.Suspense>
+    );
+  }
 
   if (currentView === 'admin') {
     if (!authReady) {
