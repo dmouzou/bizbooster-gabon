@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { MainCategory, UserProfile, isUserAdmin } from '../types';
 import { BizboosterLogo } from './BizboosterLogo';
+import { SearchRow } from './navigation/SearchRow';
 
 interface HeaderProps {
   currentTab: 'catalog' | 'user-dashboard';
@@ -20,6 +21,14 @@ interface HeaderProps {
   onLogout: () => void;
   totalActiveAdsCount: number;
   onSwitchToAdmin?: () => void;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  showTopSearchBar?: boolean;
+  onOpenFilterSheet?: () => void;
+  hasActiveFilters?: boolean;
+  topSearchInputRef?: React.RefObject<HTMLInputElement>;
+  isSearchFocused?: boolean;
+  setIsSearchFocused?: (focused: boolean) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -31,6 +40,13 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   totalActiveAdsCount,
   onSwitchToAdmin,
+  searchQuery,
+  onSearchChange,
+  showTopSearchBar = true,
+  onOpenFilterSheet,
+  hasActiveFilters = false,
+  topSearchInputRef,
+  setIsSearchFocused,
 }) => {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
@@ -217,6 +233,31 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Top Search Bar (s'affiche lorsqu'on clique sur recherche ou revient a l'en-tete de la page) */}
+      {currentTab === 'catalog' && onSearchChange && (
+        <div
+          id="top-search-bar"
+          className={`transition-all duration-300 ease-in-out border-t border-slate-100 bg-white ${
+            showTopSearchBar
+              ? 'max-h-24 opacity-100 py-2 sm:py-2.5 px-1 sm:px-4'
+              : 'max-h-0 opacity-0 py-0 px-1 sm:px-4 overflow-hidden pointer-events-none'
+          }`}
+        >
+          <div className="max-w-7xl mx-auto">
+            <SearchRow
+              value={searchQuery || ''}
+              onChange={onSearchChange}
+              onOpenFilterSheet={onOpenFilterSheet}
+              hasActiveFilters={hasActiveFilters}
+              placeholder="Rechercher une annonce (ex: Toyota, Studio, Terrain...)"
+              inputRef={topSearchInputRef}
+              onFocus={() => setIsSearchFocused?.(true)}
+              onBlur={() => setIsSearchFocused?.(false)}
+            />
+          </div>
+        </div>
+      )}
     </header>
   );
 };

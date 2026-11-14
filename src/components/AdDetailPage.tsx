@@ -32,7 +32,7 @@ import {
   isJobAd,
 } from '../utils/formatters';
 import { isAdVipCornerEligible } from '../utils/vipCorner';
-import { isValidStorageUrl } from '../utils/ads';
+import { isValidStorageUrl, isTrustedMediaUrl } from '../utils/ads';
 import { Pill } from './ui/Pill';
 import { IconButton } from './ui/IconButton';
 import { Button } from './ui/Button';
@@ -75,7 +75,7 @@ export const AdDetailPage: React.FC<AdDetailPageProps> = ({
     if (!ad?.images || !Array.isArray(ad.images) || ad.images.length === 0) {
       return [FALLBACK_SVG];
     }
-    const valid = ad.images.filter((img) => isValidStorageUrl(img) || img.startsWith('data:'));
+    const valid = ad.images.filter((img) => isTrustedMediaUrl(img));
     return valid.length > 0 ? valid : [FALLBACK_SVG];
   }, [ad?.images]);
 
@@ -188,7 +188,7 @@ export const AdDetailPage: React.FC<AdDetailPageProps> = ({
               onClick={() => setIsLightboxOpen(true)}
             >
               <img
-                src={idx === 0 && ad.mediumUrl ? ad.mediumUrl : img}
+                src={idx === 0 && ad.mediumUrl && isTrustedMediaUrl(ad.mediumUrl) ? ad.mediumUrl : img}
                 alt={`${ad.title || 'Annonce'} - Photo ${idx + 1}`}
                 className="w-full h-full object-contain"
                 loading={idx === 0 ? 'eager' : 'lazy'}

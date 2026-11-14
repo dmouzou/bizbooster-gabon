@@ -3,7 +3,7 @@ import { X, MapPin, Phone, MessageSquare, Clock, Calendar, CheckCircle2, Refresh
 import { Ad, UserProfile } from '../types';
 import { formatFCFA, formatRemainingTime, getWhatsAppUrl, isAdOwner, formatPriceDisplay, formatAdPrice, formatEventDate, getPriceOrSalaryLabel, formatPriceUnit, isJobAd, getAdTransactionBadge } from '../utils/formatters';
 import { isAdVipCornerEligible } from '../utils/vipCorner';
-import { isValidStorageUrl } from '../utils/ads';
+import { isValidStorageUrl, isTrustedMediaUrl } from '../utils/ads';
 import { ReportAdModal } from './ReportAdModal';
 import { ShareAdModal } from './ShareAdModal';
 import { VerifiedAdvertiserModal } from './VerifiedAdvertiserModal';
@@ -12,34 +12,7 @@ import { showToast } from './ui/Toast';
 
 export const FALLBACK_IMAGE = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 250' width='400' height='250'%3E%3Crect width='100%25' height='100%25' fill='%23DCE3EA'/%3E%3Cpath d='M180 110l20 25 15-18 25 33h-80z' fill='%2394A3B8'/%3E%3Ccircle cx='185' cy='95' r='8' fill='%2394A3B8'/%3E%3C/svg%3E";
 
-/**
- * Validation d'origine de médias (S-14)
- * Autorise Firebase/Google Cloud Storage ainsi que le domaine Unsplash pour les images de test initiales.
- */
-export function isTrustedMediaUrl(url?: string): boolean {
-  if (!url || typeof url !== 'string') return false;
-  if (isValidStorageUrl(url)) return true;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'https:') {
-      if (
-        [
-          'firebasestorage.googleapis.com',
-          'storage.googleapis.com',
-          'storage.cloud.google.com',
-        ].includes(parsed.hostname)
-      ) {
-        return true;
-      }
-      if (parsed.hostname === 'images.unsplash.com' || parsed.hostname.endsWith('.unsplash.com')) {
-        return true;
-      }
-    }
-  } catch {
-    return false;
-  }
-  return false;
-}
+export { isTrustedMediaUrl };
 
 interface AdDetailModalProps {
   ad: Ad | null;

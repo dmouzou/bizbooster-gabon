@@ -137,6 +137,36 @@ export function isValidStorageUrl(url?: string): boolean {
 }
 
 /**
+ * Validation d'origine de médias (S-14)
+ * Autorise Firebase / Google Cloud Storage, les images data/blob, ainsi que le domaine Unsplash pour les images de démonstration.
+ */
+export function isTrustedMediaUrl(url?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  if (url.startsWith('data:image/') || url.startsWith('blob:')) return true;
+  if (isValidStorageUrl(url)) return true;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'https:') {
+      if (
+        [
+          'firebasestorage.googleapis.com',
+          'storage.googleapis.com',
+          'storage.cloud.google.com',
+        ].includes(parsed.hostname)
+      ) {
+        return true;
+      }
+      if (parsed.hostname === 'images.unsplash.com' || parsed.hostname.endsWith('.unsplash.com')) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/**
  * FORBIDDEN_AD_CREATE_KEYS: Clés strictement interdites lors de la création d'une annonce
  * selon firestore.rules (pas d'échéance, pas de publication anticipée, pas de ranking/boost/tier auto-attribués).
  */

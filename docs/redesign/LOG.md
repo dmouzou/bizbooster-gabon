@@ -319,6 +319,27 @@ Ce journal consigne de manière continue l'état des livraisons, résultats CI/C
 - **Statut final** :
   - 🎉 **Toutes les phases P0 à P9 de la refonte mobile BIZBOOSTER Gabon sont entièrement livrées, testées et validées.**
 
+---
+
+## [Correctifs UX & Finitions Visuelles] : Pied de page, barre de recherche haute, affichage photos et contraste icône
+- **Date** : 14 novembre 2026
+- **Ce qui est livré** :
+  - **Problème 1 (Image 1 & Barre de recherche)** :
+    - Dégagement du pied de page : ajustement des espacements `pb-36 lg:pb-8` et ajout d'une cale `h-16 lg:hidden` pour que la barre de navigation flottante mobile / tablette (`BottomTabBar`, active jusqu'à `lg`) ne masque plus jamais le pied de page (CGU, mentions Gabon).
+    - Positionnement sécurisé du bouton de retour en haut de page (`bottom-20 lg:bottom-8`).
+    - Barre de recherche en haut de l'écran : intégration d'une barre de recherche dynamique (`SearchRow`) au sommet de l'en-tête (`Header`). Elle s'affiche automatiquement à l'en-tête de la page ou lors du défilement vers le haut, et se replie lors du défilement profond dans le catalogue pour maximiser la surface d'affichage des annonces.
+    - Activation via l'onglet "Recherche" de la `BottomTabBar` : le clic sur l'onglet déclenche l'affichage immédiat de la barre haute, le défilement instantané vers le sommet et le focus automatique sur le champ de saisie avec ouverture du clavier.
+  - **Problème 2 (Image 2 - Affichage des photos d'annonces)** :
+    - Remplacement du filtre restrictif `isValidStorageUrl` dans `src/components/AdDetailPage.tsx` par la fonction validée `isTrustedMediaUrl` (partagée depuis `src/utils/ads.ts`).
+    - Les annonces de démonstration hébergées sur Unsplash ainsi que les images Firebase Storage et data URIs s'affichent désormais parfaitement au lieu d'afficher l'icône de secours grise.
+  - **Problème 3 (Image 3 - Contraste icône Profil)** :
+    - Correction du contraste de l'icône `<User />` dans le contrôle segmenté de l'espace annonceur (`src/components/UserDashboard.tsx`) : passage de `text-emerald-600` fixe à `text-white` lorsque l'onglet Profil est actif sur fond vert `bg-emerald-600`.
+- **Résultats des tests & validations locales** :
+  - `npm run lint` (`tsc --noEmit`) : 🟢 0 erreur.
+  - `npm test` : 🟢 27 fichiers testés, 165/165 tests unitaires passés.
+  - `npm run build && npm run check:budget` : 🟢 76.31 KB gzip (budget max : 150 KB).
+  - Aucune régression, zéro em dash.
+
 
 
 

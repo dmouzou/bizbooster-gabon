@@ -532,6 +532,9 @@ function PublicApp({
   // Filter States for Frontend
   const [activeCategory, setActiveCategory] = useState<MainCategory | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showTopSearchBar, setShowTopSearchBar] = useState(true);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const topSearchInputRef = useRef<HTMLInputElement>(null);
   const [isFavoritesOnly, setIsFavoritesOnly] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'compact'>('grid');
 
@@ -634,6 +637,41 @@ function PublicApp({
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, [frontendTab]);
+
+  // Barre de recherche en haut de l'ecran (affiche a l'en-tete ou lors du retour vers l'en-tete)
+  useEffect(() => {
+    let lastScrollY = typeof window !== 'undefined' ? window.scrollY : 0;
+    let ticking = false;
+
+    const handleScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          const currentScrollY = window.scrollY;
+
+          // Toujours afficher en haut de page (a l'en-tete)
+          if (currentScrollY <= 80) {
+            setShowTopSearchBar(true);
+          } else if (isSearchFocused || searchQuery.trim().length > 0) {
+            // Maintenir affiche si la recherche est active ou a le focus
+            setShowTopSearchBar(true);
+          } else if (currentScrollY < lastScrollY - 10) {
+            // Defilement vers le haut (revient a l'en-tete de la page)
+            setShowTopSearchBar(true);
+          } else if (currentScrollY > lastScrollY + 10 && currentScrollY > 150) {
+            // Defilement vers le bas dans le catalogue
+            setShowTopSearchBar(false);
+          }
+
+          lastScrollY = currentScrollY;
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [isSearchFocused, searchQuery]);
 
   // Restore scroll position when returning to catalogue
   useEffect(() => {
@@ -1437,9 +1475,9 @@ function PublicApp({
   const currentBottomTab: BottomNavTab = useMemo(() => {
     if (frontendTab === 'user-dashboard') return 'account';
     if (isFavoritesOnly) return 'favorites';
-    if (searchQuery.trim().length > 0) return 'search';
+    if (isSearchFocused || searchQuery.trim().length > 0) return 'search';
     return 'home';
-  }, [frontendTab, isFavoritesOnly, searchQuery]);
+  }, [frontendTab, isFavoritesOnly, isSearchFocused, searchQuery]);
 
   // Handle open publish flow with mandatory auth check
   const handleTriggerPublish = () => {
@@ -2038,9 +2076,17 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
         onLogout={handleLogout}
         totalActiveAdsCount={activeAdsCount}
         onSwitchToAdmin={onSwitchToAdmin}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        showTopSearchBar={showTopSearchBar}
+        onOpenFilterSheet={() => setIsFilterSheetOpen(true)}
+        hasActiveFilters={activeFilterChips.length > 0}
+        topSearchInputRef={topSearchInputRef}
+        isSearchFocused={isSearchFocused}
+        setIsSearchFocused={setIsSearchFocused}
       />
 
-      <main className="flex-1 max-w-7xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 w-full space-y-5 sm:space-y-6 pb-28 md:pb-8">
+      <main className="flex-1 max-w-7xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 w-full space-y-5 sm:space-y-6 pb-28 lg:pb-8">
         {profileError && (
           <div className="bg-red-50 border border-red-300 text-red-800 text-xs p-4 rounded-2xl flex items-center justify-between gap-3 shadow-xs">
             <div className="flex items-center gap-2">
@@ -2092,14 +2138,8 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
               <div className="absolute right-0 top-0 bottom-0 w-1/3 opacity-10 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none" />
             </div>
 
-            {/* Mobile Search Row, Active Filter Chips & Category Chips Row (Section 5.1 & 5.5) */}
+            {/* Mobile Active Filter Chips & Category Chips Row (Section 5.1 & 5.5) */}
             <div className="md:hidden space-y-2 -mx-4 pb-1">
-              <SearchRow
-                value={searchQuery}
-                onChange={setSearchQuery}
-                onOpenFilterSheet={() => setIsFilterSheetOpen(true)}
-                hasActiveFilters={activeFilterChips.length > 0}
-              />
               <ActiveFilterChips
                 chips={activeFilterChips}
                 onResetAll={handleResetAllCategoryFilters}
@@ -2756,8 +2796,8 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
         )}
       </main>
 
-      {/* Frontend Footer - Extra bottom padding on mobile so floating bottom nav doesn't overlap footer (Point 2, Image 3) */}
-      <footer className="bg-white border-t border-slate-200 mt-12 py-8 pb-32 md:pb-8 text-xs text-slate-500">
+      {/* Frontend Footer - Extra bottom padding on mobile/tablet so floating bottom nav doesn't overlap footer */}
+      <footer className="bg-white border-t border-slate-200 mt-12 py-8 pb-36 lg:pb-8 text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-800 flex items-center justify-center text-white font-black text-sm shadow-sm">
@@ -2786,6 +2826,8 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
             <span className="text-blue-600">✓ Moov Money Gabon</span>
           </div>
         </div>
+        {/* Spacer guarantee: BottomTabBar on mobile/tablet will never cover footer content */}
+        <div className="h-16 lg:hidden" aria-hidden="true" />
       </footer>
 
       {/* MODALS */}
@@ -2993,7 +3035,7 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
       {frontendTab === 'catalog' && showScrollTop && (
         <button
           onClick={scrollToTopInstant}
-          className="fixed bottom-20 md:bottom-8 right-5 z-30 bg-emerald-700 hover:bg-emerald-800 text-white p-3.5 rounded-full shadow-2xl border-2 border-emerald-400/50 hover:scale-110 active:scale-95 transition-all cursor-pointer flex items-center justify-center group"
+          className="fixed bottom-20 lg:bottom-8 right-5 z-30 bg-emerald-700 hover:bg-emerald-800 text-white p-3.5 rounded-full shadow-2xl border-2 border-emerald-400/50 hover:scale-110 active:scale-95 transition-all cursor-pointer flex items-center justify-center group"
           title="Retour immédiat en haut de page"
           aria-label="Retour immédiat en haut du catalogue"
           id="scroll-to-top-button"
@@ -3009,15 +3051,18 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
           if (tab === 'home') {
             setIsFavoritesOnly(false);
             setFrontendTab('catalog');
+            setIsSearchFocused(false);
+            setShowTopSearchBar(true);
             scrollToTopInstant();
           } else if (tab === 'search') {
             setIsFavoritesOnly(false);
             setFrontendTab('catalog');
-            const searchInput = document.querySelector('input[type="search"]') as HTMLInputElement | null;
-            if (searchInput) {
-              searchInput.focus();
-              searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
+            setShowTopSearchBar(true);
+            setIsSearchFocused(true);
+            scrollToTopInstant();
+            setTimeout(() => {
+              topSearchInputRef.current?.focus();
+            }, 60);
           } else if (tab === 'favorites') {
             setIsFavoritesOnly(true);
             setFrontendTab('catalog');

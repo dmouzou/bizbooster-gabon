@@ -8,6 +8,9 @@ export interface SearchRowProps {
   hasActiveFilters?: boolean;
   placeholder?: string;
   className?: string;
+  inputRef?: React.Ref<HTMLInputElement>;
+  onFocus?: () => void;
+  onBlur?: () => void;
 }
 
 export const SearchRow: React.FC<SearchRowProps> = ({
@@ -17,6 +20,9 @@ export const SearchRow: React.FC<SearchRowProps> = ({
   hasActiveFilters = false,
   placeholder = 'Rechercher une annonce...',
   className = '',
+  inputRef,
+  onFocus,
+  onBlur,
 }) => {
   const [internalValue, setInternalValue] = useState(value);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -52,9 +58,13 @@ export const SearchRow: React.FC<SearchRowProps> = ({
       <div className="relative flex-1 flex items-center">
         <Search className="absolute left-3.5 w-5 h-5 text-slate-400 pointer-events-none" />
         <input
+          ref={inputRef}
           type="search"
+          data-top-search="true"
           value={internalValue}
           onChange={handleInputChange}
+          onFocus={onFocus}
+          onBlur={onBlur}
           placeholder={placeholder}
           aria-label="Recherche textuelle"
           className="w-full h-12 min-h-[48px] pl-10 pr-9 bg-white border border-slate-200/90 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 shadow-2xs focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 transition-all"

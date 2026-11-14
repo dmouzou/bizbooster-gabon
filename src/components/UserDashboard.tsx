@@ -885,7 +885,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               : 'text-slate-700 hover:text-emerald-800 hover:bg-white/60'
           }`}
         >
-          <User className="w-4 h-4 shrink-0 text-emerald-600" />
+          <User className={`w-4 h-4 shrink-0 ${dashboardTab === 'PROFILE' ? 'text-white' : 'text-emerald-600'}`} />
           <span className="truncate">Profil</span>
         </button>
       </div>
