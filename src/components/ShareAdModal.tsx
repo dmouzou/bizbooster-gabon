@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Copy, Check, Share2, Smartphone } from 'lucide-react';
 import { Ad } from '../types';
 import { formatFCFA } from '../utils/formatters';
+import { BizboosterLogo } from './BizboosterLogo';
 
 interface ShareAdModalProps {
   isOpen: boolean;
@@ -143,8 +144,8 @@ const ShareAdModalContent: React.FC<{ ad: Ad; onClose: () => void }> = ({ ad, on
                 className="w-16 h-16 rounded-xl object-cover border border-slate-200 shrink-0"
               />
             ) : (
-              <div className="w-16 h-16 rounded-xl bg-slate-200 flex items-center justify-center text-slate-400 text-xs font-bold shrink-0">
-                BZ
+              <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center shrink-0 border border-slate-200">
+                <BizboosterLogo variant="mark" iconSize={28} />
               </div>
             )}
             <div className="overflow-hidden flex-1 min-w-0">

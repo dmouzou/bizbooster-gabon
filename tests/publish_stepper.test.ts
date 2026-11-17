@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import React from 'react';
+import { renderToString } from 'react-dom/server';
 import { getMaxPhotosAllowed } from '../src/features/publish/schemas/types';
 import { buildAdPayload, BuildAdPayloadParams } from '../src/features/publish/payloadBuilder';
 import { CATEGORY_SCHEMAS, getCategorySchema } from '../src/features/publish/schemas';
+import { PublishHeader } from '../src/features/publish/components/PublishHeader';
+import { PublishFooter } from '../src/features/publish/components/PublishFooter';
 import { MainCategory } from '../src/types';
 
 describe('Phase 6: Publish Stepper & Per-Category Schemas', () => {
@@ -259,6 +263,54 @@ describe('Phase 6: Publish Stepper & Per-Category Schemas', () => {
         dressCode: 'Tenue de soirée ou pagne traditionnel',
       });
       expect(payload.contactPhone).toBe('+24166998877');
+    });
+  });
+
+  describe('Publish Stepper Step Ordering', () => {
+    it('affiche Détails & Caractéristiques à l étape 2 et Photos & Médias descriptifs à l étape 3', () => {
+      const step2Html = renderToString(
+        React.createElement(PublishHeader, {
+          step: 2,
+          onPrevStep: () => {},
+          onClose: () => {},
+          isSubmitting: false,
+          isWaitingPayment: false,
+        })
+      );
+      expect(step2Html).toContain('2. Détails &amp; Caractéristiques');
+
+      const step3Html = renderToString(
+        React.createElement(PublishHeader, {
+          step: 3,
+          onPrevStep: () => {},
+          onClose: () => {},
+          isSubmitting: false,
+          isWaitingPayment: false,
+        })
+      );
+      expect(step3Html).toContain('3. Photos &amp; Médias descriptifs');
+    });
+
+    it('affiche le libellé de bouton Passer aux détails à l étape 1 et Passer aux photos à l étape 2', () => {
+      const step1Footer = renderToString(
+        React.createElement(PublishFooter, {
+          step: 1,
+          onPrevStep: () => {},
+          onNextStep: () => {},
+          isSubmitting: false,
+        })
+      );
+      expect(step1Footer).toContain('Passer aux détails');
+
+      const step2Footer = renderToString(
+        React.createElement(PublishFooter, {
+          step: 2,
+          onPrevStep: () => {},
+          onNextStep: () => {},
+          isSubmitting: false,
+        })
+      );
+      expect(step2Footer).toContain('Passer aux photos');
     });
   });
 });

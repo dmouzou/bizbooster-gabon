@@ -13,8 +13,8 @@ interface PublishHeaderProps {
 
 const STEP_TITLES: Record<PublishStep, string> = {
   1: '1. Catégorie & Localisation spatiale',
-  2: '2. Photos & Médias descriptifs',
-  3: '3. Détails & Caractéristiques',
+  2: '2. Détails & Caractéristiques',
+  3: '3. Photos & Médias descriptifs',
   4: '4. Prix, Durée & Options',
   5: "5. Aperçu de l'annonce",
   6: '6. Facturation & Paiement Mobile',

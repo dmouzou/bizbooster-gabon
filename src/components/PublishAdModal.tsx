@@ -95,8 +95,8 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
 }) => {
   // Wizard Steps:
   // 1 = Catégorie & Localisation
-  // 2 = Photos & Médias
-  // 3 = Détails & Caractéristiques
+  // 2 = Détails & Caractéristiques
+  // 3 = Photos & Médias
   // 4 = Prix & Durée
   // 5 = Aperçu
   // 6 = Paiement & Facturation
@@ -687,7 +687,7 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
     // Étape 1 -> Étape 2
     if (step === 1) {
       if (isUltimateCeilingReached) return;
-      // Les champs date, heure et lieu d'un événement sont saisis à l'étape 3 : ils y sont validés.
+      // Les champs date, heure et lieu d'un événement sont saisis à l'étape 2 : ils y sont validés.
       if (!neighborhood.trim()) {
         setMediaError('Veuillez préciser ou détailler le quartier de votre bien ou service.');
         return;
@@ -696,40 +696,8 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
       return;
     }
 
-    // Étape 2 -> Étape 3
+    // Étape 2 (Détails & Caractéristiques) -> Étape 3 (Photos & Médias)
     if (step === 2) {
-      const isDemandeurEmploi =
-        mainCategory === 'AUTRES_EMPLOIS' &&
-        (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI');
-
-      if (isDemandeurEmploi && !cvFile && !cvDataUrl) {
-        setMediaError("L'attachement d'un CV (.pdf, .docx ou .md) est obligatoire pour les demandeurs d'emploi.");
-        return;
-      }
-
-      if (hasVideo && !videoFile && !videoPreviewUrl) {
-        setMediaError("Vous avez activé l'option vidéo. Veuillez sélectionner un fichier vidéo ou désactiver l'option.");
-        return;
-      }
-
-      const hasAttachedJobDoc = mainCategory === 'AUTRES_EMPLOIS' && (cvFile || cvDataUrl);
-      if (!isDemandeurEmploi && !hasAttachedJobDoc && photos.length === 0) {
-        setMediaError('Veuillez ajouter au moins une photo pour votre annonce (ou joindre la fiche de poste).');
-        return;
-      }
-
-      const maxPhotos = getMaxPhotosAllowed(currentUser?.subscriptionTier);
-      if (photos.length > maxPhotos) {
-        setMediaError(`Votre forfait autorise au maximum ${maxPhotos} photos.`);
-        return;
-      }
-
-      setStep(3);
-      return;
-    }
-
-    // Étape 3 -> Étape 4
-    if (step === 3) {
       if (!contactName.trim()) {
         setMediaError('Veuillez renseigner votre nom ou le nom de votre agence.');
         return;
@@ -772,6 +740,38 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
 
       if (!title.trim()) {
         handleAutoGenerateTitle();
+      }
+
+      setStep(3);
+      return;
+    }
+
+    // Étape 3 (Photos & Médias descriptifs) -> Étape 4 (Prix & Durée)
+    if (step === 3) {
+      const isDemandeurEmploi =
+        mainCategory === 'AUTRES_EMPLOIS' &&
+        (autresEmploisSubCategory === "Demandeur d'emploi" || (autresEmploisSubCategory as any) === 'DEMANDE_EMPLOI');
+
+      if (isDemandeurEmploi && !cvFile && !cvDataUrl) {
+        setMediaError("L'attachement d'un CV (.pdf, .docx ou .md) est obligatoire pour les demandeurs d'emploi.");
+        return;
+      }
+
+      if (hasVideo && !videoFile && !videoPreviewUrl) {
+        setMediaError("Vous avez activé l'option vidéo. Veuillez sélectionner un fichier vidéo ou désactiver l'option.");
+        return;
+      }
+
+      const hasAttachedJobDoc = mainCategory === 'AUTRES_EMPLOIS' && (cvFile || cvDataUrl);
+      if (!isDemandeurEmploi && !hasAttachedJobDoc && photos.length === 0) {
+        setMediaError('Veuillez ajouter au moins une photo pour votre annonce (ou joindre la fiche de poste).');
+        return;
+      }
+
+      const maxPhotos = getMaxPhotosAllowed(currentUser?.subscriptionTier);
+      if (photos.length > maxPhotos) {
+        setMediaError(`Votre forfait autorise au maximum ${maxPhotos} photos.`);
+        return;
       }
 
       setStep(4);
@@ -1091,33 +1091,8 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
             />
           )}
 
-          {/* STEP 2: Photos & Médias */}
+          {/* STEP 2: Détails & Caractéristiques */}
           {step === 2 && (
-            <Step2Photos
-              photos={photos}
-              onPhotosChange={setPhotos}
-              tier={currentUser?.subscriptionTier}
-              mainCategory={mainCategory}
-              autresEmploisSubCategory={autresEmploisSubCategory}
-              hasVideo={hasVideo}
-              onHasVideoChange={setHasVideo}
-              videoFile={videoFile}
-              videoPreviewUrl={videoPreviewUrl}
-              videoDuration={videoDuration}
-              onVideoFileSelect={handleVideoFileSelect}
-              onRemoveVideo={handleRemoveVideo}
-              cvFile={cvFile}
-              cvFileName={cvFileName}
-              cvFileSize={cvFileSize}
-              onCvFileSelect={handleCvFileSelect}
-              onRemoveCv={handleRemoveCv}
-              mediaError={mediaError}
-              setMediaError={setMediaError}
-            />
-          )}
-
-          {/* STEP 3: Détails & Caractéristiques */}
-          {step === 3 && (
             <Step3Details
               mainCategory={mainCategory}
               transactionType={transactionType}
@@ -1196,6 +1171,31 @@ const PublishAdModalContent: React.FC<PublishAdModalProps> = ({
               isOwnerVerified={isOwnerVerified}
               onAutoGenerateTitle={handleAutoGenerateTitle}
               error={mediaError}
+            />
+          )}
+
+          {/* STEP 3: Photos & Médias descriptifs */}
+          {step === 3 && (
+            <Step2Photos
+              photos={photos}
+              onPhotosChange={setPhotos}
+              tier={currentUser?.subscriptionTier}
+              mainCategory={mainCategory}
+              autresEmploisSubCategory={autresEmploisSubCategory}
+              hasVideo={hasVideo}
+              onHasVideoChange={setHasVideo}
+              videoFile={videoFile}
+              videoPreviewUrl={videoPreviewUrl}
+              videoDuration={videoDuration}
+              onVideoFileSelect={handleVideoFileSelect}
+              onRemoveVideo={handleRemoveVideo}
+              cvFile={cvFile}
+              cvFileName={cvFileName}
+              cvFileSize={cvFileSize}
+              onCvFileSelect={handleCvFileSelect}
+              onRemoveCv={handleRemoveCv}
+              mediaError={mediaError}
+              setMediaError={setMediaError}
             />
           )}
 

@@ -73,7 +73,14 @@ export interface PublishFormState {
   autresEmploisContractType: string;
   autresEmploisExperience: string;
 
-  // Step 2: Photos & Médias
+  // Step 2: Détails & Caractéristiques
+  title: string;
+  description: string;
+  contactName: string;
+  contactPhone: string;
+  phoneChoice: 'ACCOUNT' | 'CUSTOM';
+
+  // Step 3: Photos & Médias descriptifs
   photos: PhotoMediaItem[];
   hasVideo: boolean;
   videoFile: File | null;
@@ -84,13 +91,6 @@ export interface PublishFormState {
   cvFileName: string;
   cvFileType: string;
   cvFileSize: number;
-
-  // Step 3: Détails
-  title: string;
-  description: string;
-  contactName: string;
-  contactPhone: string;
-  phoneChoice: 'ACCOUNT' | 'CUSTOM';
 
   // Step 4: Prix & Durée
   price: number | '';

@@ -25,9 +25,9 @@ export const PublishFooter: React.FC<PublishFooterProps> = ({
 
   const defaultNextLabel =
     step === 1
-      ? 'Passer aux photos'
-      : step === 2
       ? 'Passer aux détails'
+      : step === 2
+      ? 'Passer aux photos'
       : step === 3
       ? 'Définir prix et durée'
       : step === 4

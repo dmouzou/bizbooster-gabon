@@ -52,10 +52,24 @@ export const SearchRow: React.FC<SearchRowProps> = ({
     onChange('');
   };
 
+  const handleTriggerSearch = () => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    onChange(internalValue);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleTriggerSearch();
+    }
+  };
+
   return (
-    <div className={`flex items-center gap-2.5 px-4 w-full select-none ${className}`}>
+    <div className={`flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-4 w-full select-none ${className}`}>
       {/* 48 px high search input box */}
-      <div className="relative flex-1 flex items-center">
+      <div className="relative flex-1 flex items-center min-w-0">
         <Search className="absolute left-3.5 w-5 h-5 text-slate-400 pointer-events-none" />
         <input
           ref={inputRef}
@@ -63,6 +77,7 @@ export const SearchRow: React.FC<SearchRowProps> = ({
           data-top-search="true"
           value={internalValue}
           onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
           onFocus={onFocus}
           onBlur={onBlur}
           placeholder={placeholder}
@@ -80,6 +95,18 @@ export const SearchRow: React.FC<SearchRowProps> = ({
           </button>
         )}
       </div>
+
+      {/* Bouton Recherche connecté */}
+      <button
+        type="button"
+        onClick={handleTriggerSearch}
+        aria-label="Recherche"
+        id="search-row-submit-button"
+        className="h-12 min-h-[48px] px-3 sm:px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 shrink-0 shadow-2xs transition-colors cursor-pointer select-none"
+      >
+        <Search className="w-4 h-4 shrink-0" />
+        <span>Recherche</span>
+      </button>
 
       {/* 48x48 px Filter button */}
       {onOpenFilterSheet && (

@@ -489,8 +489,8 @@ export default function AdminApp({ currentUser, onSwitchToFrontend }: AdminAppPr
   if (status === 'loading') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white p-4 space-y-4">
-        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center font-black text-2xl text-white shadow-xl shadow-emerald-500/20 animate-pulse">
-          BZ
+        <div className="flex flex-col items-center justify-center animate-pulse">
+          <BizboosterLogo variant="stacked" iconSize={52} theme="dark" />
         </div>
         <div className="flex items-center gap-2.5 text-emerald-400 text-sm font-bold">
           <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />

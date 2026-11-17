@@ -48,6 +48,7 @@ import { LogoutConfirmModal } from './components/LogoutConfirmModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastContainer } from './components/ui/Toast';
+import { BizboosterLogo } from './components/BizboosterLogo';
 
 // Lazy-loaded heavy modal components for bundle optimization (F3)
 const AdDetailModal = React.lazy(() => import('./components/AdDetailModal').then((m) => ({ default: m.AdDetailModal })));
@@ -2148,31 +2149,16 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
               />
             </div>
 
-            {/* Global Search & Transaction Mode Toggle (Desktop) */}
+            {/* Global Transaction Mode Toggle & VIP Corner (Desktop) */}
             <div className="hidden md:block bg-white rounded-2xl p-4 sm:p-5 shadow-xs border border-slate-200 space-y-4">
-              <div className="flex flex-col md:flex-row gap-3 items-center">
-                {/* Search Input */}
-                <div className="relative flex-1 w-full">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Recherche générale (ex: Appartement Angondjé, Hilux, Terrain titré, Téléviseur...)"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-emerald-600 focus:outline-hidden transition-all"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 font-bold"
-                    >
-                      Effacer
-                    </button>
-                  )}
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-slate-700 text-xs font-bold">
+                  <SlidersHorizontal className="w-4 h-4 text-emerald-600" />
+                  <span>Type d'opération :</span>
                 </div>
 
                 {/* Global Transaction Quick Toggle */}
-                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl shrink-0 w-full md:w-auto justify-center">
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl shrink-0">
                   <button
                     onClick={() => setGlobalTransaction('ALL')}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
@@ -2797,9 +2783,7 @@ function cleanUndefined(obj: any, mapNullToDelete = false): any {
       <footer className="bg-white border-t border-slate-200 mt-12 py-8 pb-36 lg:pb-8 text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-800 flex items-center justify-center text-white font-black text-sm shadow-sm">
-              BZ
-            </div>
+            <BizboosterLogo variant="mark" iconSize={36} className="shrink-0" />
             <div>
               <p className="font-extrabold text-slate-900 text-sm">
                 BIZBOOSTER GABON • Solution anti-perte de temps
@@ -3179,9 +3163,14 @@ export default function App() {
       <ErrorBoundary fallbackTitle="Anomalie d'affichage dans le Cockpit Administrateur" onReset={switchToFrontend}>
         <React.Suspense
           fallback={
-            <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white p-6">
-              <div className="w-10 h-10 border-4 border-amber-400 border-t-transparent rounded-full animate-spin mb-4" />
-              <p className="text-sm font-semibold text-slate-300">Chargement du Cockpit Administrateur...</p>
+            <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-6 space-y-4">
+              <div className="flex flex-col items-center justify-center animate-pulse">
+                <BizboosterLogo variant="stacked" iconSize={52} theme="dark" />
+              </div>
+              <div className="flex items-center gap-2.5 text-emerald-400 text-sm font-bold">
+                <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                <span>Chargement du Cockpit Administrateur…</span>
+              </div>
             </div>
           }
         >

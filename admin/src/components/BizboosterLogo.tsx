@@ -59,8 +59,9 @@ export const BizboosterLogo: React.FC<BizboosterLogoProps> = ({
       <div className={`flex flex-col items-center text-center ${className}`}>
         <div className="mb-2">{LogoMark}</div>
         <div className="font-black text-2xl tracking-wider leading-none whitespace-nowrap">
-          <span className="text-[#E5A000] font-black drop-shadow-[0_0.5px_0.5px_rgba(0,0,0,0.1)]">BIZ</span>
-          <span className="text-[#009E60] font-black">BOOSTER</span>
+          <span className="text-[#009E60] font-black">BIZ</span>
+          <span className="text-[#E5A000] font-black drop-shadow-[0_0.5px_0.5px_rgba(0,0,0,0.1)]">BOOST</span>
+          <span className="text-[#4664B2] font-black">ER</span>
         </div>
         {showTagline && (
           <div className={`text-[10px] font-bold tracking-[0.25em] mt-1.5 uppercase ${subtextColor}`}>
@@ -77,8 +78,9 @@ export const BizboosterLogo: React.FC<BizboosterLogoProps> = ({
       <div className="min-w-0 flex flex-col justify-center">
         <div className="flex items-center gap-1.5">
           <span className="font-black text-lg sm:text-xl tracking-tight leading-none whitespace-nowrap">
-            <span className="text-[#E5A000] font-black drop-shadow-[0_0.5px_0.5px_rgba(0,0,0,0.1)]">BIZ</span>
-            <span className="text-[#009E60] font-black">BOOSTER</span>
+            <span className="text-[#009E60] font-black">BIZ</span>
+            <span className="text-[#E5A000] font-black drop-shadow-[0_0.5px_0.5px_rgba(0,0,0,0.1)]">BOOST</span>
+            <span className="text-[#4664B2] font-black">ER</span>
           </span>
         </div>
         {showTagline && (

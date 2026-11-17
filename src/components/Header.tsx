@@ -234,14 +234,14 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Top Search Bar (s'affiche lorsqu'on clique sur recherche ou revient a l'en-tete de la page) */}
+      {/* Top Search Bar (Barre de recherche unique du catalogue, connectee au bouton Recherche) */}
       {currentTab === 'catalog' && onSearchChange && (
         <div
           id="top-search-bar"
           className={`transition-all duration-300 ease-in-out border-t border-slate-100 bg-white ${
             showTopSearchBar
               ? 'max-h-24 opacity-100 py-2 sm:py-2.5 px-1 sm:px-4'
-              : 'max-h-0 opacity-0 py-0 px-1 sm:px-4 overflow-hidden pointer-events-none'
+              : 'max-h-0 opacity-0 py-0 px-1 sm:px-4 overflow-hidden pointer-events-none md:max-h-24 md:opacity-100 md:py-2.5 md:pointer-events-auto'
           }`}
         >
           <div className="max-w-7xl mx-auto">

@@ -5,6 +5,7 @@ import { AdCard } from '../src/components/AdCard';
 import { AdCardCompact } from '../src/components/AdCardCompact';
 import { BottomTabBar } from '../src/components/navigation/BottomTabBar';
 import { SearchRow } from '../src/components/navigation/SearchRow';
+import { BizboosterLogo } from '../src/components/BizboosterLogo';
 import { CategoryChipsRow, CATEGORY_ITEMS } from '../src/components/navigation/CategoryChipsRow';
 import { Ad } from '../src/types';
 
@@ -148,7 +149,7 @@ describe('Phase 3 : Shell & Feed Components', () => {
   });
 
   describe('SearchRow (Ligne de Recherche 48px)', () => {
-    it('rend un champ de recherche et un bouton de filtre de 48px minimum', () => {
+    it('rend un champ de recherche, le bouton Recherche connecté et un bouton de filtre de 48px minimum', () => {
       const html = renderToString(
         React.createElement(SearchRow, {
           value: '',
@@ -160,6 +161,25 @@ describe('Phase 3 : Shell & Feed Components', () => {
 
       expect(html).toContain('min-h-[48px]');
       expect(html).toContain('aria-label="Ouvrir les filtres avancés"');
+      expect(html).toContain('id="search-row-submit-button"');
+      expect(html).toContain('Recherche');
+    });
+  });
+
+  describe('BizboosterLogo (Wordmark Officiel)', () => {
+    it('applique les couleurs nationales gabonaises au wordmark : BIZ en vert (#009E60), BOOST en jaune (#E5A000) et ER en bleu (#4664B2)', () => {
+      const html = renderToString(
+        React.createElement(BizboosterLogo, {
+          variant: 'horizontal',
+        })
+      );
+
+      expect(html).toContain('text-[#009E60]');
+      expect(html).toContain('BIZ');
+      expect(html).toContain('text-[#E5A000]');
+      expect(html).toContain('BOOST');
+      expect(html).toContain('text-[#4664B2]');
+      expect(html).toContain('ER');
     });
   });
 });
